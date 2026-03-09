@@ -412,6 +412,25 @@ func (s *Store) InsertArtifact(ctx context.Context, rec core.ArtifactRecord) err
 	return nil
 }
 
+func (s *Store) UpsertNativeSession(ctx context.Context, sessionID, adapter, nativeSessionID string, resumable bool) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO native_sessions (session_id, adapter, native_session_id, resumable)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(session_id, adapter, native_session_id)
+		 DO UPDATE SET resumable = excluded.resumable`,
+		sessionID,
+		adapter,
+		nativeSessionID,
+		boolToInt(resumable),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert native session: %w", err)
+	}
+
+	return nil
+}
+
 func (s *Store) UpdateSessionLatestJob(ctx context.Context, sessionID, latestJobID string, updatedAt time.Time) error {
 	return s.updateSessionLatestJob(ctx, s.db, sessionID, latestJobID, updatedAt)
 }
@@ -749,6 +768,13 @@ func retryableSQLiteErr(err error) bool {
 
 	text := err.Error()
 	return strings.Contains(text, "SQLITE_BUSY") || strings.Contains(text, "UNIQUE constraint failed: events.job_id, events.seq")
+}
+
+func boolToInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
 }
 
 const schema = `

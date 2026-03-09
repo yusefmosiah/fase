@@ -517,6 +517,9 @@ func mapServiceError(err error) error {
 	if errors.Is(err, service.ErrInvalidInput) {
 		return exitf(2, "%v", err)
 	}
+	if errors.Is(err, service.ErrVendorProcess) {
+		return exitf(8, "%v", err)
+	}
 
 	var exitErr *ExitError
 	if errors.As(err, &exitErr) {

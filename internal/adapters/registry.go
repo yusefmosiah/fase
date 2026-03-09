@@ -1,44 +1,28 @@
 package adapters
 
 import (
+	"context"
 	"os/exec"
 	"sort"
 
+	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/cagent/internal/adapters/claude"
+	"github.com/yusefmosiah/cagent/internal/adapters/codex"
 	"github.com/yusefmosiah/cagent/internal/core"
 )
 
-type Capabilities struct {
-	HeadlessRun      bool `json:"headless_run"`
-	StreamJSON       bool `json:"stream_json"`
-	NativeResume     bool `json:"native_resume"`
-	NativeFork       bool `json:"native_fork"`
-	StructuredOutput bool `json:"structured_output"`
-	InteractiveMode  bool `json:"interactive_mode"`
-	RPCMode          bool `json:"rpc_mode"`
-	MCP              bool `json:"mcp"`
-	Checkpointing    bool `json:"checkpointing"`
-	SessionExport    bool `json:"session_export"`
-}
+type Capabilities = adapterapi.Capabilities
+type Diagnosis = adapterapi.Diagnosis
 
-type Descriptor struct {
-	Adapter      string       `json:"adapter"`
-	Binary       string       `json:"binary"`
-	Version      *string      `json:"version"`
-	Available    bool         `json:"available"`
-	Enabled      bool         `json:"enabled"`
-	Implemented  bool         `json:"implemented"`
-	Capabilities Capabilities `json:"capabilities"`
-}
-
-func CatalogFromConfig(cfg core.Config) []Descriptor {
-	entries := []Descriptor{
-		makeDescriptor("claude", cfg.Adapters.Claude),
-		makeDescriptor("codex", cfg.Adapters.Codex),
-		makeDescriptor("factory", cfg.Adapters.Factory),
-		makeDescriptor("gemini", cfg.Adapters.Gemini),
-		makeDescriptor("opencode", cfg.Adapters.OpenCode),
-		makeDescriptor("pi", cfg.Adapters.Pi),
-		makeDescriptor("pi_rust", cfg.Adapters.PiRust),
+func CatalogFromConfig(cfg core.Config) []Diagnosis {
+	entries := []Diagnosis{
+		describeAdapter(context.Background(), claude.New(cfg.Adapters.Claude.Binary, cfg.Adapters.Claude.Enabled)),
+		describeStatic("factory", cfg.Adapters.Factory),
+		describeStatic("gemini", cfg.Adapters.Gemini),
+		describeStatic("opencode", cfg.Adapters.OpenCode),
+		describeStatic("pi", cfg.Adapters.Pi),
+		describeStatic("pi_rust", cfg.Adapters.PiRust),
+		describeAdapter(context.Background(), codex.New(cfg.Adapters.Codex.Binary, cfg.Adapters.Codex.Enabled)),
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
@@ -48,24 +32,57 @@ func CatalogFromConfig(cfg core.Config) []Descriptor {
 	return entries
 }
 
-func Lookup(cfg core.Config, name string) (Descriptor, bool) {
-	for _, entry := range CatalogFromConfig(cfg) {
-		if entry.Adapter == name {
-			return entry, true
+func Resolve(ctx context.Context, cfg core.Config, name string) (adapterapi.Adapter, Diagnosis, bool) {
+	var adapter adapterapi.Adapter
+
+	switch name {
+	case "claude":
+		adapter = claude.New(cfg.Adapters.Claude.Binary, cfg.Adapters.Claude.Enabled)
+	case "codex":
+		adapter = codex.New(cfg.Adapters.Codex.Binary, cfg.Adapters.Codex.Enabled)
+	default:
+		return nil, Diagnosis{}, false
+	}
+
+	diag, err := adapter.Detect(ctx)
+	if err != nil {
+		diag = Diagnosis{
+			Adapter:      adapter.Name(),
+			Binary:       adapter.Binary(),
+			Available:    false,
+			Enabled:      diag.Enabled,
+			Implemented:  adapter.Implemented(),
+			Capabilities: adapter.Capabilities(),
 		}
 	}
 
-	return Descriptor{}, false
+	return adapter, diag, true
 }
 
-func makeDescriptor(name string, cfg core.AdapterConfig) Descriptor {
+func describeAdapter(ctx context.Context, adapter adapterapi.Adapter) Diagnosis {
+	diag, err := adapter.Detect(ctx)
+	if err == nil {
+		return diag
+	}
+
+	return Diagnosis{
+		Adapter:      adapter.Name(),
+		Binary:       adapter.Binary(),
+		Available:    false,
+		Enabled:      true,
+		Implemented:  adapter.Implemented(),
+		Capabilities: adapter.Capabilities(),
+	}
+}
+
+func describeStatic(name string, cfg core.AdapterConfig) Diagnosis {
 	_, err := exec.LookPath(cfg.Binary)
-	return Descriptor{
+	return Diagnosis{
 		Adapter:      name,
 		Binary:       cfg.Binary,
 		Available:    err == nil,
 		Enabled:      cfg.Enabled,
 		Implemented:  false,
-		Capabilities: Capabilities{},
+		Capabilities: adapterapi.Capabilities{},
 	}
 }

@@ -1,0 +1,4 @@
+{"type":"session.started","session_id":"codex-session-123"}
+{"type":"assistant_message","role":"assistant","content":"Codex completed the task"}
+{"type":"tool_call","name":"Bash","input":{"cmd":"go test ./..."}}
+{"type":"tool_result","name":"Bash","output":"ok"}

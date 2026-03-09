@@ -1,0 +1,39 @@
+[
+  {
+    "kind": "session.discovered",
+    "phase": "translation",
+    "native_session_id": "claude-session-456",
+    "payload": {
+      "adapter": "claude",
+      "native_session_id": "claude-session-456",
+      "stream": "stdout"
+    }
+  },
+  {
+    "kind": "assistant.message",
+    "phase": "translation",
+    "payload": {
+      "stream": "stdout",
+      "text": "Claude completed the task"
+    }
+  },
+  {
+    "kind": "tool.call",
+    "phase": "execution",
+    "payload": {
+      "input": {
+        "file": "main.go"
+      },
+      "name": "Read",
+      "type": "tool_use"
+    }
+  },
+  {
+    "kind": "tool.result",
+    "phase": "execution",
+    "payload": {
+      "content": "done",
+      "type": "tool_result"
+    }
+  }
+]

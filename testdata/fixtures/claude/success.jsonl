@@ -1,0 +1,4 @@
+{"type":"system","session_id":"claude-session-456"}
+{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Claude completed the task"}]}}
+{"type":"tool_use","name":"Read","input":{"file":"main.go"}}
+{"type":"tool_result","content":"done"}

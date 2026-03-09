@@ -1,17 +1,22 @@
 package service
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/yusefmosiah/cagent/internal/adapterapi"
 	"github.com/yusefmosiah/cagent/internal/adapters"
 	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/cagent/internal/events"
 	"github.com/yusefmosiah/cagent/internal/store"
 )
 
@@ -20,6 +25,7 @@ var (
 	ErrUnsupported        = errors.New("unsupported operation")
 	ErrAdapterUnavailable = errors.New("adapter not available")
 	ErrInvalidInput       = errors.New("invalid input")
+	ErrVendorProcess      = errors.New("vendor process failed")
 )
 
 type Service struct {
@@ -58,6 +64,11 @@ type RawLogEntry struct {
 	Stream  string `json:"stream"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type lineItem struct {
+	stream string
+	line   string
 }
 
 func Open(ctx context.Context, configPath string) (*Service, error) {
@@ -111,9 +122,18 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		return nil, fmt.Errorf("%w: prompt must not be empty", ErrInvalidInput)
 	}
 
-	descriptor, ok := adapters.Lookup(s.Config, req.Adapter)
+	adapter, descriptor, ok := adapters.Resolve(ctx, s.Config, req.Adapter)
 	if !ok {
-		return nil, fmt.Errorf("%w: unknown adapter %q", ErrInvalidInput, req.Adapter)
+		for _, entry := range adapters.CatalogFromConfig(s.Config) {
+			if entry.Adapter == req.Adapter {
+				descriptor = entry
+				ok = true
+				break
+			}
+		}
+		if !ok {
+			return nil, fmt.Errorf("%w: unknown adapter %q", ErrInvalidInput, req.Adapter)
+		}
 	}
 	if !descriptor.Enabled {
 		return nil, fmt.Errorf("%w: adapter %q is disabled in config", ErrUnsupported, req.Adapter)
@@ -222,29 +242,41 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		result.Message = message
 		runErr = fmt.Errorf("%w: %s", ErrUnsupported, message)
 	default:
-		result.Message = "adapter run execution is not implemented yet"
-		runErr = fmt.Errorf("%w: adapter execution path is not implemented", ErrUnsupported)
+		result.Message, runErr = s.executeAdapterRun(ctx, adapter, &job, req)
 	}
 
-	if _, err := s.emitEvent(ctx, job, "diagnostic", "translation", map[string]any{
-		"message": result.Message,
-	}, "", nil); err != nil {
-		return result, err
-	}
-	if _, err := s.emitEvent(ctx, job, "process.stderr", "execution", map[string]any{
-		"message": result.Message,
-	}, "stderr", []byte(result.Message+"\n")); err != nil {
-		return result, err
+	if runErr != nil {
+		if _, err := s.emitEvent(ctx, job, "diagnostic", "translation", map[string]any{
+			"message": result.Message,
+		}, "", nil); err != nil {
+			return result, err
+		}
+		if _, err := s.emitEvent(ctx, job, "process.stderr", "execution", map[string]any{
+			"message": result.Message,
+		}, "stderr", []byte(result.Message+"\n")); err != nil {
+			return result, err
+		}
 	}
 
 	job.Summary["message"] = result.Message
-	if err := s.finishJob(ctx, &job, core.JobStateFailed); err != nil {
-		return result, err
-	}
-	if _, err := s.emitEvent(ctx, job, "job.failed", "lifecycle", map[string]any{
-		"message": result.Message,
-	}, "", nil); err != nil {
-		return result, err
+	if runErr != nil {
+		if err := s.finishJob(ctx, &job, core.JobStateFailed); err != nil {
+			return result, err
+		}
+		if _, err := s.emitEvent(ctx, job, "job.failed", "lifecycle", map[string]any{
+			"message": result.Message,
+		}, "", nil); err != nil {
+			return result, err
+		}
+	} else {
+		if err := s.finishJob(ctx, &job, core.JobStateCompleted); err != nil {
+			return result, err
+		}
+		if _, err := s.emitEvent(ctx, job, "job.completed", "lifecycle", map[string]any{
+			"message": result.Message,
+		}, "", nil); err != nil {
+			return result, err
+		}
 	}
 
 	result.Job = job
@@ -336,6 +368,107 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 	return &job, nil
 }
 
+func (s *Service) executeAdapterRun(
+	ctx context.Context,
+	adapter adapterapi.Adapter,
+	job *core.JobRecord,
+	req RunRequest,
+) (string, error) {
+	handle, err := adapter.StartRun(ctx, adapterapi.StartRunRequest{
+		CWD:     job.CWD,
+		Prompt:  req.Prompt,
+		Model:   req.Model,
+		Profile: req.Profile,
+	})
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", ErrAdapterUnavailable, err)
+	}
+	defer func() {
+		if handle.Cleanup != nil {
+			_ = handle.Cleanup()
+		}
+	}()
+
+	if _, err := s.emitEvent(ctx, *job, "process.spawned", "execution", map[string]any{
+		"argv": handle.Cmd.Args,
+		"pid":  handle.Cmd.Process.Pid,
+	}, "", nil); err != nil {
+		return "", err
+	}
+
+	lineCh := make(chan lineItem, 64)
+	errCh := make(chan error, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go s.scanStream(handle.Stdout, "stdout", lineCh, errCh, &wg)
+	go s.scanStream(handle.Stderr, "stderr", lineCh, errCh, &wg)
+	go func() {
+		wg.Wait()
+		close(lineCh)
+		close(errCh)
+	}()
+
+	var lastAssistant string
+	for item := range lineCh {
+		if _, err := s.emitEvent(ctx, *job, "process."+item.stream, "execution", map[string]any{
+			"line": item.line,
+		}, item.stream, []byte(item.line+"\n")); err != nil {
+			return lastAssistant, err
+		}
+
+		hints := events.TranslateLine(job.Adapter, item.stream, item.line)
+		for _, hint := range hints {
+			if hint.NativeSessionID != "" && job.NativeSessionID == "" {
+				job.NativeSessionID = hint.NativeSessionID
+				if err := s.store.UpdateJob(ctx, *job); err != nil {
+					return lastAssistant, err
+				}
+				if err := s.store.UpsertNativeSession(ctx, job.SessionID, job.Adapter, hint.NativeSessionID, adapter.Capabilities().NativeResume); err != nil {
+					return lastAssistant, err
+				}
+			}
+			if text, ok := hint.Payload["text"].(string); ok && text != "" && hint.Kind == "assistant.message" {
+				lastAssistant = text
+			}
+			if _, err := s.emitEvent(ctx, *job, hint.Kind, hint.Phase, hint.Payload, "", nil); err != nil {
+				return lastAssistant, err
+			}
+		}
+	}
+
+	for scanErr := range errCh {
+		if scanErr != nil {
+			return lastAssistant, scanErr
+		}
+	}
+
+	waitErr := handle.Cmd.Wait()
+	if lastMessage, err := s.readLastMessage(handle.LastMessagePath); err == nil && lastMessage != "" && lastMessage != lastAssistant {
+		if _, emitErr := s.emitEvent(ctx, *job, "assistant.message", "translation", map[string]any{
+			"text":   lastMessage,
+			"source": "last_message_file",
+		}, "", nil); emitErr != nil {
+			return lastAssistant, emitErr
+		}
+		lastAssistant = lastMessage
+	}
+
+	if waitErr != nil {
+		if _, err := s.emitEvent(ctx, *job, "diagnostic", "execution", map[string]any{
+			"message": waitErr.Error(),
+		}, "", nil); err != nil {
+			return lastAssistant, err
+		}
+		return lastAssistant, fmt.Errorf("%w: %v", ErrVendorProcess, waitErr)
+	}
+
+	if lastAssistant == "" {
+		lastAssistant = "adapter completed without a translated assistant message"
+	}
+
+	return lastAssistant, nil
+}
+
 func (s *Service) transitionJob(ctx context.Context, job *core.JobRecord, state core.JobState, payload map[string]any) error {
 	job.State = state
 	job.UpdatedAt = time.Now().UTC()
@@ -415,6 +548,24 @@ func (s *Service) emitEvent(
 	return event, nil
 }
 
+func (s *Service) scanStream(
+	reader io.Reader,
+	stream string,
+	lineCh chan<- lineItem,
+	errCh chan<- error,
+	wg *sync.WaitGroup,
+) {
+	defer wg.Done()
+
+	scanner := bufio.NewScanner(reader)
+	buffer := make([]byte, 0, 64*1024)
+	scanner.Buffer(buffer, 1024*1024)
+	for scanner.Scan() {
+		lineCh <- lineItem{stream: stream, line: scanner.Text()}
+	}
+	errCh <- scanner.Err()
+}
+
 func (s *Service) writeRawArtifact(job core.JobRecord, stream string, seq int64, data []byte) (string, error) {
 	dir := filepath.Join(s.Paths.RawDir, stream, job.JobID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -428,6 +579,22 @@ func (s *Service) writeRawArtifact(job core.JobRecord, stream string, seq int64,
 	}
 
 	return filepath.ToSlash(filepath.Join("raw", stream, job.JobID, name)), nil
+}
+
+func (s *Service) readLastMessage(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return "", nil
+		}
+		return "", err
+	}
+
+	return strings.TrimSpace(string(data)), nil
 }
 
 func normalizeStoreError(kind, id string, err error) error {

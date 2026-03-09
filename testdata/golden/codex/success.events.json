@@ -1,0 +1,40 @@
+[
+  {
+    "kind": "session.discovered",
+    "phase": "translation",
+    "native_session_id": "codex-session-123",
+    "payload": {
+      "adapter": "codex",
+      "native_session_id": "codex-session-123",
+      "stream": "stdout"
+    }
+  },
+  {
+    "kind": "assistant.message",
+    "phase": "translation",
+    "payload": {
+      "stream": "stdout",
+      "text": "Codex completed the task"
+    }
+  },
+  {
+    "kind": "tool.call",
+    "phase": "execution",
+    "payload": {
+      "input": {
+        "cmd": "go test ./..."
+      },
+      "name": "Bash",
+      "type": "tool_call"
+    }
+  },
+  {
+    "kind": "tool.result",
+    "phase": "execution",
+    "payload": {
+      "name": "Bash",
+      "output": "ok",
+      "type": "tool_result"
+    }
+  }
+]
