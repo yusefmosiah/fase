@@ -44,35 +44,14 @@ func Resolve(ctx context.Context, cfg core.Config, name string) (adapterapi.Adap
 		return nil, Diagnosis{}, false
 	}
 
-	diag, err := adapter.Detect(ctx)
-	if err != nil {
-		diag = Diagnosis{
-			Adapter:      adapter.Name(),
-			Binary:       adapter.Binary(),
-			Available:    false,
-			Enabled:      diag.Enabled,
-			Implemented:  adapter.Implemented(),
-			Capabilities: adapter.Capabilities(),
-		}
-	}
+	diag, _ := adapter.Detect(ctx)
 
 	return adapter, diag, true
 }
 
 func describeAdapter(ctx context.Context, adapter adapterapi.Adapter) Diagnosis {
-	diag, err := adapter.Detect(ctx)
-	if err == nil {
-		return diag
-	}
-
-	return Diagnosis{
-		Adapter:      adapter.Name(),
-		Binary:       adapter.Binary(),
-		Available:    false,
-		Enabled:      true,
-		Implemented:  adapter.Implemented(),
-		Capabilities: adapter.Capabilities(),
-	}
+	diag, _ := adapter.Detect(ctx)
+	return diag
 }
 
 func describeStatic(name string, cfg core.AdapterConfig) Diagnosis {

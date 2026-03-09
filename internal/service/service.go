@@ -217,14 +217,6 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	if err := s.transitionJob(ctx, &job, core.JobStateStarting, map[string]any{"message": "job starting"}); err != nil {
 		return nil, err
 	}
-	if _, err := s.emitEvent(ctx, job, "job.started", "lifecycle", map[string]any{
-		"message": "job entered running state",
-	}, "", nil); err != nil {
-		return nil, err
-	}
-	if err := s.transitionJob(ctx, &job, core.JobStateRunning, map[string]any{"message": "job running"}); err != nil {
-		return nil, err
-	}
 
 	result := &RunResult{
 		Job:     job,
@@ -393,6 +385,14 @@ func (s *Service) executeAdapterRun(
 		"argv": handle.Cmd.Args,
 		"pid":  handle.Cmd.Process.Pid,
 	}, "", nil); err != nil {
+		return "", err
+	}
+	if _, err := s.emitEvent(ctx, *job, "job.started", "lifecycle", map[string]any{
+		"message": "job entered running state",
+	}, "", nil); err != nil {
+		return "", err
+	}
+	if err := s.transitionJob(ctx, job, core.JobStateRunning, map[string]any{"message": "job running"}); err != nil {
 		return "", err
 	}
 
