@@ -58,6 +58,7 @@ func (a *Adapter) Detect(ctx context.Context) (adapterapi.Diagnosis, error) {
 func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) (*adapterapi.RunHandle, error) {
 	args := []string{
 		"--print",
+		"--verbose",
 		"--output-format", "stream-json",
 		"--permission-mode", "auto",
 	}

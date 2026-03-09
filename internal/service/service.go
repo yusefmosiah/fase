@@ -418,20 +418,27 @@ func (s *Service) executeAdapterRun(
 
 		hints := events.TranslateLine(job.Adapter, item.stream, item.line)
 		for _, hint := range hints {
-			if hint.NativeSessionID != "" && job.NativeSessionID == "" {
-				job.NativeSessionID = hint.NativeSessionID
-				if err := s.store.UpdateJob(ctx, *job); err != nil {
-					return lastAssistant, err
-				}
-				if err := s.store.UpsertNativeSession(ctx, job.SessionID, job.Adapter, hint.NativeSessionID, adapter.Capabilities().NativeResume); err != nil {
-					return lastAssistant, err
+			emitHint := true
+			if hint.NativeSessionID != "" {
+				if job.NativeSessionID == "" {
+					job.NativeSessionID = hint.NativeSessionID
+					if err := s.store.UpdateJob(ctx, *job); err != nil {
+						return lastAssistant, err
+					}
+					if err := s.store.UpsertNativeSession(ctx, job.SessionID, job.Adapter, hint.NativeSessionID, adapter.Capabilities().NativeResume); err != nil {
+						return lastAssistant, err
+					}
+				} else if hint.Kind == "session.discovered" && job.NativeSessionID == hint.NativeSessionID {
+					emitHint = false
 				}
 			}
 			if text, ok := hint.Payload["text"].(string); ok && text != "" && hint.Kind == "assistant.message" {
 				lastAssistant = text
 			}
-			if _, err := s.emitEvent(ctx, *job, hint.Kind, hint.Phase, hint.Payload, "", nil); err != nil {
-				return lastAssistant, err
+			if emitHint {
+				if _, err := s.emitEvent(ctx, *job, hint.Kind, hint.Phase, hint.Payload, "", nil); err != nil {
+					return lastAssistant, err
+				}
 			}
 		}
 	}

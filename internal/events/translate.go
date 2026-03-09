@@ -102,6 +102,14 @@ func extractDelta(payload map[string]any) string {
 }
 
 func extractAssistantMessage(payload map[string]any) string {
+	if item, ok := payload["item"].(map[string]any); ok {
+		if strings.ToLower(firstString(item, "type")) == "agent_message" {
+			if value := firstString(item, "text", "content", "message"); value != "" {
+				return value
+			}
+		}
+	}
+
 	role := strings.ToLower(firstString(payload, "role"))
 	if role == "assistant" {
 		if value := firstString(payload, "content", "text", "message"); value != "" {
@@ -126,6 +134,12 @@ func extractAssistantMessage(payload map[string]any) string {
 		}
 		if content := extractContent(payload["content"]); content != "" {
 			return content
+		}
+	}
+
+	if strings.ToLower(firstString(payload, "type")) == "result" {
+		if value := firstString(payload, "result"); value != "" {
+			return value
 		}
 	}
 
