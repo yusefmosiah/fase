@@ -43,7 +43,6 @@ The implementation language should be Go.
    - Claude Code
    - Factory Droid
    - Pi
-   - pi_agent_rust
    - Gemini CLI
    - OpenCode
 8. Added implementation order, testing strategy, and packaging guidance.
@@ -60,7 +59,6 @@ The implementation language should be Go.
 4. Implement fake adapter fixtures and golden event translation tests.
 5. Implement Tier 2 adapters:
    - Gemini CLI
-   - pi_agent_rust
 6. Implement the OpenCode adapter as experimental.
 7. Publish a stable `--json` contract before adding daemon/server mode.
 8. Add Nix packaging and reproducible integration tests.
@@ -236,7 +234,6 @@ cagent/
     claude/
     factory/
     pi/
-    pi_rust/
     gemini/
     opencode/
   testdata/
@@ -677,7 +674,6 @@ Implement first:
 
 Implement after Tier 1:
 - Gemini CLI
-- pi_agent_rust
 
 ### Tier 3
 
@@ -837,36 +833,6 @@ Notes:
   native session metadata
 - do not flatten Pi branch semantics into fake linear resume
 
-### pi_agent_rust Adapter
-
-Status:
-- Tier 2
-
-Docs:
-- https://github.com/Dicklesworthstone/pi_agent_rust
-
-Observed surfaces from current README:
-- interactive mode
-- `--continue`
-- `-p`
-- session-oriented CLI flow
-
-Spec rule:
-- implement this as a separate adapter from Pi, even if session concepts are
-  similar
-
-Rationale:
-- flags, output behavior, session storage, and transport may diverge
-
-v0 implementation choice:
-- use `-p` for one-shot runs
-- use `--continue` only after session discovery behavior is verified in tests
-
-Important note:
-- the current README clearly advertises session continuation but does not, by
-  itself, define a full stable machine-facing protocol
-- mark unsupported capabilities conservatively until fixtures confirm them
-
 ### Gemini CLI Adapter
 
 Status:
@@ -930,8 +896,7 @@ Rationale:
 3. Factory Droid
 4. Pi
 5. Gemini CLI
-6. pi_agent_rust
-7. OpenCode
+6. OpenCode
 
 ## Runtime Behavior
 
@@ -1033,10 +998,6 @@ enabled = true
 binary = "pi"
 enabled = true
 
-[adapters.pi_rust]
-binary = "pi"
-enabled = false
-
 [adapters.gemini]
 binary = "gemini"
 enabled = true
@@ -1128,7 +1089,6 @@ Each adapter must ship with:
 - handoff export
 - handoff run
 - Gemini adapter
-- pi_agent_rust adapter
 
 ### Milestone 5
 
@@ -1177,10 +1137,6 @@ Mitigation:
 
 - https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent
 - https://shittycodingagent.ai
-
-### pi_agent_rust
-
-- https://github.com/Dicklesworthstone/pi_agent_rust
 
 ### Gemini CLI
 

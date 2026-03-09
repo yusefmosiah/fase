@@ -28,7 +28,6 @@ type AdaptersConfig struct {
 	Claude   AdapterConfig `toml:"claude"`
 	Factory  AdapterConfig `toml:"factory"`
 	Pi       AdapterConfig `toml:"pi"`
-	PiRust   AdapterConfig `toml:"pi_rust"`
 	Gemini   AdapterConfig `toml:"gemini"`
 	OpenCode AdapterConfig `toml:"opencode"`
 }
@@ -52,7 +51,6 @@ func DefaultConfig(paths Paths) Config {
 			Claude:   AdapterConfig{Binary: "claude", Enabled: true},
 			Factory:  AdapterConfig{Binary: "droid", Enabled: true},
 			Pi:       AdapterConfig{Binary: "pi", Enabled: true},
-			PiRust:   AdapterConfig{Binary: "pi", Enabled: false},
 			Gemini:   AdapterConfig{Binary: "gemini", Enabled: true},
 			OpenCode: AdapterConfig{Binary: "opencode", Enabled: false},
 		},

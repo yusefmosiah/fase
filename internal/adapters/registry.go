@@ -23,7 +23,6 @@ func CatalogFromConfig(cfg core.Config) []Diagnosis {
 		describeStatic("gemini", cfg.Adapters.Gemini),
 		describeStatic("opencode", cfg.Adapters.OpenCode),
 		describeAdapter(context.Background(), pi.New(cfg.Adapters.Pi.Binary, cfg.Adapters.Pi.Enabled)),
-		describeStatic("pi_rust", cfg.Adapters.PiRust),
 		describeAdapter(context.Background(), codex.New(cfg.Adapters.Codex.Binary, cfg.Adapters.Codex.Enabled)),
 	}
 
