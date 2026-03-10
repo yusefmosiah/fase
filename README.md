@@ -78,6 +78,7 @@ Commands currently wired:
 - `cagent debrief`
 - `cagent artifacts list`
 - `cagent artifacts show`
+- `cagent history search`
 - `cagent cancel`
 - `cagent list`
 - `cagent session`
@@ -168,6 +169,7 @@ Run:
 ./bin/cagent status --wait <job-id>
 ./bin/cagent logs --follow <job-id>
 ./bin/cagent artifacts list --job <job-id>
+./bin/cagent history search --query "provider outage" --adapter claude
 ./bin/cagent adapters --json
 ./bin/cagent catalog sync --json
 ./bin/cagent catalog show --json
@@ -202,6 +204,19 @@ Rules:
 - Treat estimated cost as a routing/debugging hint, not a billing ledger.
 
 The staged release matrix for contract, fake, live low-cost, recovery, and recursive orchestration lanes is documented in [docs/release-test-matrix.md](/Users/wiz/cagent/docs/release-test-matrix.md).
+
+## History
+
+`history search` is the lightweight canonical search path over `cagent`'s own local store.
+
+It searches existing jobs, turns, events, and persisted artifacts without requiring a separate index or importer.
+
+Use it for:
+- recalling prior work launched through `cagent`,
+- finding debrief/transfer artifacts by content,
+- mining recent canonical sessions before deciding whether adapter-native import is needed.
+
+Adapter-native history import remains a future special case for sessions that were never created by `cagent`.
 
 ## Configuration
 

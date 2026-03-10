@@ -9,6 +9,7 @@ Use it when the host agent wants:
 - same-vendor continuation through `send`,
 - a model-authored debrief from a still-live session,
 - explicit cross-vendor failover through `transfer`.
+- lightweight canonical history search through `history search`.
 
 ## Recommended host workflow
 
@@ -19,6 +20,7 @@ cagent runtime --json
 cagent catalog sync --json
 cagent catalog show --json
 cagent catalog probe --json --adapter opencode --provider openai
+cagent history search --json --query "retry after test failure"
 ```
 
 2. Choose an adapter based on:
@@ -79,6 +81,7 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cw
 - `catalog probe --json` is the preferred machine-facing entitlement check when discovery alone is not enough.
 - `catalog show --json` now includes recent local usage history per entry, so routing can prefer models that succeeded recently on this machine.
 - Use `status`, `logs --follow`, `session`, and `cancel` as the control surface after launch.
+- Use `history search --json` before inventing your own recall layer.
 - Use `status --wait` when the host wants a blocking wait without writing its own polling loop.
 - Use `status --json` when routing or debugging based on token usage or cost.
 - Use `artifacts list/show` to inspect transfer and debrief outputs directly.
@@ -86,3 +89,4 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cw
 - Treat `transfer` as explicit failover/recovery, not as the normal orchestration path.
 - The transfer prompt should explicitly disclose the source adapter and reason for transfer.
 - Treat `catalog show` as discoverability and `catalog probe` as best-effort runnability verification.
+- Treat adapter-native history import as a special case for sessions `cagent` did not launch.

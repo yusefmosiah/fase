@@ -542,8 +542,45 @@ func (s *Store) ListEventsBySession(ctx context.Context, sessionID string, limit
 	return events, nil
 }
 
+func (s *Store) ListRecentEvents(ctx context.Context, limit int) ([]core.EventRecord, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT event_id, seq, ts, job_id, session_id, adapter, kind, phase, native_session_id,
+		        correlation_id, payload_json, raw_ref
+		   FROM events
+		  ORDER BY ts DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recent events: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var events []core.EventRecord
+	for rows.Next() {
+		rec, err := scanEvent(rows)
+		if err != nil {
+			return nil, err
+		}
+		events = append(events, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent events: %w", err)
+	}
+	return events, nil
+}
+
 func (s *Store) ListArtifactsByJob(ctx context.Context, jobID string, limit int) ([]core.ArtifactRecord, error) {
 	return s.listArtifactsWhere(ctx, "job_id = ?", []any{jobID}, limit, "")
+}
+
+func (s *Store) ListRecentArtifacts(ctx context.Context, limit int) ([]core.ArtifactRecord, error) {
+	return s.listArtifactsWhere(ctx, "", nil, limit, "")
 }
 
 func (s *Store) GetArtifact(ctx context.Context, artifactID string) (core.ArtifactRecord, error) {
@@ -818,6 +855,41 @@ func (s *Store) ListTurnsBySession(ctx context.Context, sessionID string, limit 
 
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate turns: %w", err)
+	}
+
+	return turns, nil
+}
+
+func (s *Store) ListRecentTurns(ctx context.Context, limit int) ([]core.TurnRecord, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT turn_id, session_id, job_id, adapter, started_at, completed_at,
+		        input_text, input_source, result_summary, status, native_session_id, stats_json
+		   FROM turns
+		  ORDER BY started_at DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query recent turns: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var turns []core.TurnRecord
+	for rows.Next() {
+		rec, err := scanTurn(rows)
+		if err != nil {
+			return nil, err
+		}
+		turns = append(turns, rec)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate recent turns: %w", err)
 	}
 
 	return turns, nil

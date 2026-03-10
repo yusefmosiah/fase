@@ -208,6 +208,21 @@ type ListSessionsRequest struct {
 	Status  string
 }
 
+type HistorySearchRequest struct {
+	Query     string
+	Adapter   string
+	Model     string
+	CWD       string
+	SessionID string
+	Kinds     []string
+	Limit     int
+	ScanLimit int
+}
+
+type HistorySearchResult struct {
+	Matches []core.HistoryMatch `json:"matches"`
+}
+
 type lineItem struct {
 	stream string
 	line   string
@@ -930,6 +945,200 @@ func (s *Service) ListJobs(ctx context.Context, req ListJobsRequest) ([]core.Job
 
 func (s *Service) ListSessions(ctx context.Context, req ListSessionsRequest) ([]core.SessionRecord, error) {
 	return s.store.ListSessions(ctx, req.Limit, req.Adapter, req.Status)
+}
+
+func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (*HistorySearchResult, error) {
+	query := strings.TrimSpace(req.Query)
+	if query == "" {
+		return nil, fmt.Errorf("%w: query must not be empty", ErrInvalidInput)
+	}
+
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	scanLimit := req.ScanLimit
+	if scanLimit <= 0 {
+		scanLimit = 500
+	}
+	if scanLimit < limit {
+		scanLimit = limit
+	}
+
+	allowedKinds := map[string]bool{}
+	if len(req.Kinds) > 0 {
+		for _, kind := range req.Kinds {
+			trimmed := strings.ToLower(strings.TrimSpace(kind))
+			if trimmed != "" {
+				allowedKinds[trimmed] = true
+			}
+		}
+	}
+
+	jobs, err := s.store.ListJobs(ctx, scanLimit)
+	if err != nil {
+		return nil, err
+	}
+
+	jobByID := make(map[string]core.JobRecord, len(jobs))
+	var filteredJobs []core.JobRecord
+	for _, job := range jobs {
+		if !historyJobMatches(job, req) {
+			continue
+		}
+		jobByID[job.JobID] = job
+		filteredJobs = append(filteredJobs, job)
+	}
+
+	matches := make([]core.HistoryMatch, 0, limit*2)
+	for _, job := range filteredJobs {
+		if len(allowedKinds) > 0 && !allowedKinds["job"] {
+			continue
+		}
+		text := strings.Join([]string{job.Label, job.CWD, stringifySummary(job.Summary)}, "\n")
+		match, ok := makeHistoryMatch("job", query, text)
+		if !ok {
+			continue
+		}
+		matches = append(matches, core.HistoryMatch{
+			Kind:      "job",
+			ID:        job.JobID,
+			SessionID: job.SessionID,
+			JobID:     job.JobID,
+			Adapter:   job.Adapter,
+			Model:     summaryString(job.Summary, "model"),
+			CWD:       job.CWD,
+			Timestamp: job.UpdatedAt,
+			Title:     job.Label,
+			Snippet:   match,
+			Score:     historyScore(query, text),
+			Source:    "canonical",
+		})
+	}
+
+	if len(allowedKinds) == 0 || allowedKinds["turn"] {
+		turns, err := s.store.ListRecentTurns(ctx, scanLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, turn := range turns {
+			job, ok := jobByID[turn.JobID]
+			if !ok {
+				continue
+			}
+			text := strings.Join([]string{turn.InputText, turn.ResultSummary}, "\n")
+			match, ok := makeHistoryMatch("turn", query, text)
+			if !ok {
+				continue
+			}
+			matches = append(matches, core.HistoryMatch{
+				Kind:      "turn",
+				ID:        turn.TurnID,
+				SessionID: turn.SessionID,
+				JobID:     turn.JobID,
+				Adapter:   turn.Adapter,
+				Model:     summaryString(job.Summary, "model"),
+				CWD:       job.CWD,
+				Timestamp: turn.StartedAt,
+				Title:     turn.InputSource,
+				Snippet:   match,
+				Score:     historyScore(query, text),
+				Source:    "canonical",
+			})
+		}
+	}
+
+	if len(allowedKinds) == 0 || allowedKinds["event"] {
+		events, err := s.store.ListRecentEvents(ctx, scanLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, event := range events {
+			job, ok := jobByID[event.JobID]
+			if !ok {
+				continue
+			}
+			text := event.Kind + "\n" + string(event.Payload)
+			match, ok := makeHistoryMatch("event", query, text)
+			if !ok {
+				continue
+			}
+			matches = append(matches, core.HistoryMatch{
+				Kind:      "event",
+				ID:        event.EventID,
+				SessionID: event.SessionID,
+				JobID:     event.JobID,
+				Adapter:   event.Adapter,
+				Model:     summaryString(job.Summary, "model"),
+				CWD:       job.CWD,
+				Timestamp: event.TS,
+				Title:     event.Kind,
+				Snippet:   match,
+				Score:     historyScore(query, text),
+				Source:    "canonical",
+			})
+		}
+	}
+
+	if len(allowedKinds) == 0 || allowedKinds["artifact"] {
+		artifacts, err := s.store.ListRecentArtifacts(ctx, scanLimit)
+		if err != nil {
+			return nil, err
+		}
+		for _, artifact := range artifacts {
+			job, ok := jobByID[artifact.JobID]
+			if !ok {
+				continue
+			}
+			text := strings.Join([]string{artifact.Kind, artifact.Path, stringifySummary(artifact.Metadata)}, "\n")
+			contentMatch := ""
+			contentText := ""
+			if shouldSearchArtifactContent(artifact.Path) {
+				if data, err := os.ReadFile(artifact.Path); err == nil {
+					contentText = string(data)
+					text += "\n" + contentText
+					if snippet, ok := makeHistoryMatch("artifact", query, contentText); ok {
+						contentMatch = snippet
+					}
+				}
+			}
+			match, ok := makeHistoryMatch("artifact", query, text)
+			if !ok {
+				continue
+			}
+			if contentMatch != "" {
+				match = contentMatch
+			}
+			copyArtifact := artifact
+			matches = append(matches, core.HistoryMatch{
+				Kind:      "artifact",
+				ID:        artifact.ArtifactID,
+				SessionID: artifact.SessionID,
+				JobID:     artifact.JobID,
+				Adapter:   job.Adapter,
+				Model:     summaryString(job.Summary, "model"),
+				CWD:       job.CWD,
+				Timestamp: artifact.CreatedAt,
+				Title:     artifact.Kind,
+				Snippet:   match,
+				Path:      artifact.Path,
+				Score:     historyScore(query, text),
+				Source:    "canonical",
+				Artifact:  &copyArtifact,
+			})
+		}
+	}
+
+	sort.SliceStable(matches, func(i, j int) bool {
+		if matches[i].Score != matches[j].Score {
+			return matches[i].Score > matches[j].Score
+		}
+		return matches[i].Timestamp.After(matches[j].Timestamp)
+	})
+	if len(matches) > limit {
+		matches = matches[:limit]
+	}
+	return &HistorySearchResult{Matches: matches}, nil
 }
 
 func (s *Service) Logs(ctx context.Context, jobID string, limit int) ([]core.EventRecord, error) {
@@ -2034,6 +2243,98 @@ func compareTimes(a, b *time.Time) int {
 	default:
 		return 0
 	}
+}
+
+func historyJobMatches(job core.JobRecord, req HistorySearchRequest) bool {
+	if req.Adapter != "" && job.Adapter != req.Adapter {
+		return false
+	}
+	if req.SessionID != "" && job.SessionID != req.SessionID {
+		return false
+	}
+	if req.CWD != "" && job.CWD != req.CWD {
+		return false
+	}
+	if req.Model != "" && !strings.EqualFold(summaryString(job.Summary, "model"), req.Model) {
+		return false
+	}
+	return true
+}
+
+func stringifySummary(value any) string {
+	if value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		data, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(data)
+	}
+}
+
+func makeHistoryMatch(kind, query, text string) (string, bool) {
+	if text == "" {
+		return "", false
+	}
+	lowerText := strings.ToLower(text)
+	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	if lowerQuery == "" {
+		return "", false
+	}
+	idx := strings.Index(lowerText, lowerQuery)
+	if idx == -1 {
+		return "", false
+	}
+	start := idx - 80
+	if start < 0 {
+		start = 0
+	}
+	end := idx + len(query) + 160
+	if end > len(text) {
+		end = len(text)
+	}
+	snippet := strings.TrimSpace(text[start:end])
+	snippet = strings.ReplaceAll(snippet, "\n", " ")
+	snippet = strings.Join(strings.Fields(snippet), " ")
+	return snippet, true
+}
+
+func historyScore(query, text string) int {
+	lowerText := strings.ToLower(text)
+	lowerQuery := strings.ToLower(strings.TrimSpace(query))
+	if lowerQuery == "" {
+		return 0
+	}
+	count := strings.Count(lowerText, lowerQuery)
+	if count == 0 {
+		return 0
+	}
+	score := count * 10
+	if idx := strings.Index(lowerText, lowerQuery); idx >= 0 {
+		score += max(0, 1000-idx)
+	}
+	return score
+}
+
+func shouldSearchArtifactContent(path string) bool {
+	if path == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() || info.Size() > 256*1024 {
+		return false
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	switch ext {
+	case ".md", ".txt", ".json", ".jsonl", ".log", ".yaml", ".yml", ".toml", ".xml", ".csv":
+		return true
+	}
+	return ext == ""
 }
 
 func (s *Service) probeCatalogEntry(ctx context.Context, entry core.CatalogEntry, req ProbeCatalogRequest, timeout time.Duration) (core.CatalogEntry, *core.CatalogIssue) {

@@ -330,6 +330,7 @@ cagent artifacts show
 cagent cancel
 cagent list
 cagent session
+cagent history search
 cagent catalog sync
 cagent catalog show
 cagent catalog probe
@@ -425,6 +426,19 @@ Lists jobs or sessions with filters.
 
 Shows canonical session state, linked native sessions, recent turns, and
 available continuation actions.
+
+### `cagent history search`
+
+Searches canonical local `cagent` history across jobs, turns, events, and
+persisted artifacts.
+
+Rules:
+- must work without any adapter-specific importer
+- must treat canonical `cagent` history as the default/general case
+- should support adapter, model, cwd, session, and record-kind filters
+- should search artifact content for small text artifacts like debriefs and transfers
+- should return machine-readable matches with snippets and stable ids
+- adapter-native history import is a separate special case for sessions not created by `cagent`
 
 ### `cagent artifacts list`
 

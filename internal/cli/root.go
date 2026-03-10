@@ -92,6 +92,17 @@ type artifactsListOptions struct {
 	limit     int
 }
 
+type historySearchOptions struct {
+	query     string
+	adapter   string
+	model     string
+	cwd       string
+	sessionID string
+	kinds     string
+	limit     int
+	scanLimit int
+}
+
 type internalRunJobOptions struct {
 	jobID  string
 	turnID string
@@ -123,6 +134,7 @@ func NewRootCommand() *cobra.Command {
 		newCancelCommand(opts),
 		newListCommand(opts),
 		newArtifactsCommand(opts),
+		newHistoryCommand(opts),
 		newSessionCommand(opts),
 		newTransferCommand(opts, "transfer", "Export and launch explicit cross-vendor transfers", false),
 		newTransferCommand(opts, "handoff", "Deprecated alias for transfer", true),
@@ -561,6 +573,55 @@ func newArtifactsCommand(root *rootOptions) *cobra.Command {
 	listCmd.Flags().StringVar(&listOpts.kind, "kind", "", "filter by artifact kind")
 	listCmd.Flags().IntVar(&listOpts.limit, "limit", 20, "maximum number of artifacts to list")
 
+	return cmd
+}
+
+func newHistoryCommand(root *rootOptions) *cobra.Command {
+	searchOpts := &historySearchOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "history",
+		Short: "Search canonical local cagent history",
+	}
+
+	searchCmd := &cobra.Command{
+		Use:   "search",
+		Short: "Search canonical jobs, turns, events, and artifacts",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			result, err := svc.SearchHistory(context.Background(), service.HistorySearchRequest{
+				Query:     searchOpts.query,
+				Adapter:   searchOpts.adapter,
+				Model:     searchOpts.model,
+				CWD:       searchOpts.cwd,
+				SessionID: searchOpts.sessionID,
+				Kinds:     splitCSV(searchOpts.kinds),
+				Limit:     searchOpts.limit,
+				ScanLimit: searchOpts.scanLimit,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderHistoryMatches(cmd, root.jsonOutput, result.Matches)
+		},
+	}
+
+	searchCmd.Flags().StringVar(&searchOpts.query, "query", "", "search text")
+	searchCmd.Flags().StringVar(&searchOpts.adapter, "adapter", "", "limit to one adapter")
+	searchCmd.Flags().StringVar(&searchOpts.model, "model", "", "limit to one model")
+	searchCmd.Flags().StringVar(&searchOpts.cwd, "cwd", "", "limit to one working directory")
+	searchCmd.Flags().StringVar(&searchOpts.sessionID, "session", "", "limit to one canonical session")
+	searchCmd.Flags().StringVar(&searchOpts.kinds, "kinds", "", "comma-separated kinds: job,turn,event,artifact")
+	searchCmd.Flags().IntVar(&searchOpts.limit, "limit", 20, "maximum matches to return")
+	searchCmd.Flags().IntVar(&searchOpts.scanLimit, "scan-limit", 500, "maximum recent records per kind to scan")
+	_ = searchCmd.MarkFlagRequired("query")
+
+	cmd.AddCommand(searchCmd)
 	return cmd
 }
 
@@ -1104,6 +1165,45 @@ func renderArtifact(cmd *cobra.Command, jsonOutput bool, result *service.Artifac
 	return nil
 }
 
+func renderHistoryMatches(cmd *cobra.Command, jsonOutput bool, matches []core.HistoryMatch) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), matches)
+	}
+
+	for _, match := range matches {
+		if err := writef(
+			cmd.OutOrStdout(),
+			"%s\t%s\t%s\t%s\t%s\n",
+			match.Timestamp.Format("2006-01-02 15:04:05"),
+			match.Kind,
+			match.Adapter,
+			emptyDash(match.Model),
+			match.ID,
+		); err != nil {
+			return err
+		}
+		if err := writef(cmd.OutOrStdout(), "  session=%s job=%s cwd=%s\n", match.SessionID, emptyDash(match.JobID), emptyDash(match.CWD)); err != nil {
+			return err
+		}
+		if match.Path != "" {
+			if err := writef(cmd.OutOrStdout(), "  path=%s\n", match.Path); err != nil {
+				return err
+			}
+		}
+		if match.Title != "" {
+			if err := writef(cmd.OutOrStdout(), "  title=%s\n", match.Title); err != nil {
+				return err
+			}
+		}
+		if match.Snippet != "" {
+			if err := writef(cmd.OutOrStdout(), "  %s\n", match.Snippet); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
 func followEvents(cmd *cobra.Command, svc *service.Service, jobID string, jsonOutput bool, limit int) error {
 	var lastSeq int64
 	for {
@@ -1393,6 +1493,21 @@ func mapServiceError(err error) error {
 func mustJSON(v any) []byte {
 	encoded, _ := json.Marshal(v)
 	return encoded
+}
+
+func splitCSV(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	parts := strings.Split(value, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		trimmed := strings.TrimSpace(part)
+		if trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
 }
 
 const timeLayout = "2006-01-02T15:04:05Z07:00"

@@ -268,3 +268,20 @@ type JobRuntimeRecord struct {
 	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
 	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }
+
+type HistoryMatch struct {
+	Kind      string          `json:"kind"`
+	ID        string          `json:"id"`
+	SessionID string          `json:"session_id"`
+	JobID     string          `json:"job_id,omitempty"`
+	Adapter   string          `json:"adapter"`
+	Model     string          `json:"model,omitempty"`
+	CWD       string          `json:"cwd,omitempty"`
+	Timestamp time.Time       `json:"timestamp"`
+	Title     string          `json:"title,omitempty"`
+	Snippet   string          `json:"snippet,omitempty"`
+	Path      string          `json:"path,omitempty"`
+	Score     int             `json:"score,omitempty"`
+	Source    string          `json:"source,omitempty"`
+	Artifact  *ArtifactRecord `json:"artifact,omitempty"`
+}

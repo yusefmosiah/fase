@@ -1091,6 +1091,93 @@ func TestCatalogReflectsRecentModelHistory(t *testing.T) {
 	}
 }
 
+func TestSearchHistoryFindsTurnsAndArtifacts(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
+	if err != nil {
+		t.Fatalf("resolve fake codex path: %v", err)
+	}
+	if err := os.Chmod(fakeCodex, 0o755); err != nil {
+		t.Fatalf("chmod fake codex: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.codex]\nbinary = \"" + fakeCodex + "\"\nenabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	run, err := svc.Run(context.Background(), RunRequest{
+		Adapter:      "codex",
+		CWD:          t.TempDir(),
+		Prompt:       "history banana workflow",
+		PromptSource: "prompt",
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	waitForTerminalStatus(t, svc, run.Job.JobID)
+
+	artifactPath := filepath.Join(stateDir, "artifacts", "history-note.md")
+	if err := os.MkdirAll(filepath.Dir(artifactPath), 0o755); err != nil {
+		t.Fatalf("mkdir artifact dir: %v", err)
+	}
+	if err := os.WriteFile(artifactPath, []byte("This artifact contains banana recovery notes."), 0o644); err != nil {
+		t.Fatalf("write artifact: %v", err)
+	}
+	artifact := core.ArtifactRecord{
+		ArtifactID: core.GenerateID("art"),
+		JobID:      run.Job.JobID,
+		SessionID:  run.Session.SessionID,
+		Kind:       "debrief_markdown",
+		Path:       artifactPath,
+		CreatedAt:  time.Now().UTC(),
+		Metadata:   map[string]any{"note": "banana"},
+	}
+	if err := svc.store.InsertArtifact(context.Background(), artifact); err != nil {
+		t.Fatalf("InsertArtifact returned error: %v", err)
+	}
+
+	result, err := svc.SearchHistory(context.Background(), HistorySearchRequest{
+		Query: "banana",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("SearchHistory returned error: %v", err)
+	}
+
+	var sawTurn bool
+	var sawArtifact bool
+	for _, match := range result.Matches {
+		switch match.Kind {
+		case "turn":
+			sawTurn = sawTurn || strings.Contains(strings.ToLower(match.Snippet), "banana")
+		case "artifact":
+			sawArtifact = sawArtifact || strings.Contains(strings.ToLower(match.Snippet), "banana")
+		}
+	}
+	if !sawTurn {
+		t.Fatalf("expected turn match in %+v", result.Matches)
+	}
+	if !sawArtifact {
+		t.Fatalf("expected artifact match in %+v", result.Matches)
+	}
+}
+
 func TestTransferExportAndRun(t *testing.T) {
 	stateDir := t.TempDir()
 	configDir := t.TempDir()

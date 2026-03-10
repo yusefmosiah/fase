@@ -111,6 +111,17 @@ type cliCatalogEntry struct {
 	} `json:"pricing"`
 }
 
+type cliHistoryMatch struct {
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	SessionID string `json:"session_id"`
+	JobID     string `json:"job_id"`
+	Adapter   string `json:"adapter"`
+	Model     string `json:"model"`
+	Snippet   string `json:"snippet"`
+	Path      string `json:"path"`
+}
+
 func TestDetachedRunCanBeCancelled(t *testing.T) {
 	binary := buildCagentBinary(t)
 	configPath := writeFakeCodexConfig(t)
@@ -333,6 +344,38 @@ func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
 	}
 	if !strings.Contains(artifact.Content, "# Objective") {
 		t.Fatalf("expected debrief content from artifact show, got:\n%s", artifact.Content)
+	}
+}
+
+func TestHistorySearchFindsCanonicalMatches(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeCodexConfig(t)
+
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "banana search workflow")
+	var runResult cliRunResult
+	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
+		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
+	}
+	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+
+	searchOutput := runCagent(t, binary, configPath, "--json", "history", "search", "--query", "banana", "--adapter", "codex")
+	var matches []cliHistoryMatch
+	if err := json.Unmarshal([]byte(searchOutput), &matches); err != nil {
+		t.Fatalf("unmarshal history search output: %v\n%s", err, searchOutput)
+	}
+	if len(matches) == 0 {
+		t.Fatalf("expected history matches, got none")
+	}
+
+	found := false
+	for _, match := range matches {
+		if match.Kind == "turn" && strings.Contains(strings.ToLower(match.Snippet), "banana") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected banana turn match in %+v", matches)
 	}
 }
 

@@ -17,6 +17,7 @@ Typical cases:
 - ask a still-live session to land the plane with `debrief`,
 - export an explicit transfer bundle and launch it on another adapter when failover is required,
 - inspect durable local session and artifact state.
+- search canonical local history before falling back to vendor-native state.
 
 ## Core workflow
 
@@ -27,6 +28,7 @@ cagent runtime --json
 cagent catalog sync --json
 cagent catalog show --json
 cagent catalog probe --json --adapter opencode --provider openai
+cagent history search --json --query "deployment rollback"
 ```
 
 2. Choose an adapter using:
@@ -90,12 +92,14 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 - Treat `debrief` as a debugging/recovery workflow, not a normal orchestration step.
 - Use `status --wait` when you want `cagent` to own the polling loop.
 - Use `artifacts show` to read a debrief or transfer artifact by id.
+- Use `history search` to query prior canonical jobs, turns, events, and artifact content.
 - Do not assume every adapter supports `send`; inspect capability flags first.
 - Same-vendor continuation is `send`. Cross-vendor failover is `transfer`.
 - Do not expect `cagent` to perform vendor auth flows for you.
 - Persisted session history and raw artifacts are part of the intended model.
 - Prefer fresh `run` jobs for normal orchestration; use `transfer` for failover/recovery.
 - Treat `catalog show` as discovered inventory and `catalog probe` as a best-effort entitlement/runability check.
+- Treat adapter-native history import as a future special case when the session was not created by `cagent`.
 
 ## Adapter selection heuristics
 
