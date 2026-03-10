@@ -25,6 +25,7 @@ cagent catalog show --json
 - `available`
 - capability flags
 - operator-provided traits like `speed`, `cost`, and `tags`
+- best-effort pricing and per-job usage/cost reporting when available
 
 3. Launch work:
 
@@ -76,6 +77,7 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cw
 - `catalog show --json` is the preferred machine-facing provider/model inventory command.
 - Use `status`, `logs --follow`, `session`, and `cancel` as the control surface after launch.
 - Use `status --wait` when the host wants a blocking wait without writing its own polling loop.
+- Use `status --json` when routing or debugging based on token usage or cost.
 - Use `artifacts list/show` to inspect transfer and debrief outputs directly.
 - Use `debrief` when you want the current agent to summarize itself before recovery or debugging.
 - Treat `transfer` as explicit failover/recovery, not as the normal orchestration path.

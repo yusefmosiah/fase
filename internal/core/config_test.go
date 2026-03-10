@@ -22,6 +22,14 @@ summary = "primary code-editing adapter"
 speed = "fast"
 cost = "high"
 tags = ["default", "tools"]
+
+[[pricing.models]]
+provider = "openai"
+model = "gpt-5-mini"
+input_usd_per_mtok = 0.25
+output_usd_per_mtok = 2
+cached_input_usd_per_mtok = 0.025
+source = "manual"
 `)
 	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
@@ -43,5 +51,15 @@ tags = ["default", "tools"]
 	}
 	if len(cfg.Adapters.Codex.Tags) != 2 || cfg.Adapters.Codex.Tags[0] != "default" || cfg.Adapters.Codex.Tags[1] != "tools" {
 		t.Fatalf("unexpected tags: %#v", cfg.Adapters.Codex.Tags)
+	}
+	if len(cfg.Pricing.Models) != 1 {
+		t.Fatalf("expected one pricing override, got %d", len(cfg.Pricing.Models))
+	}
+	override := cfg.Pricing.Models[0]
+	if override.Provider != "openai" || override.Model != "gpt-5-mini" {
+		t.Fatalf("unexpected pricing override: %+v", override)
+	}
+	if override.InputUSDPerMTok != 0.25 || override.OutputUSDPerMTok != 2 {
+		t.Fatalf("unexpected pricing override values: %+v", override)
 	}
 }

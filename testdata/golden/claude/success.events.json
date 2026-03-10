@@ -35,5 +35,19 @@
       "content": "done",
       "type": "tool_result"
     }
+  },
+  {
+    "kind": "usage.reported",
+    "phase": "translation",
+    "payload": {
+      "cache_creation_input_tokens": 400,
+      "cache_read_input_tokens": 300,
+      "cost_usd": 0.001234,
+      "input_tokens": 100,
+      "model": "claude-sonnet-4-6",
+      "output_tokens": 20,
+      "stream": "stdout",
+      "total_tokens": 820
+    }
   }
 ]

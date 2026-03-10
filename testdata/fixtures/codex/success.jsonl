@@ -2,3 +2,4 @@
 {"type":"assistant_message","role":"assistant","content":"Codex completed the task"}
 {"type":"tool_call","name":"Bash","input":{"cmd":"go test ./..."}}
 {"type":"tool_result","name":"Bash","output":"ok"}
+{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":80}}

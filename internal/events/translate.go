@@ -2,6 +2,7 @@ package events
 
 import (
 	"encoding/json"
+	"strconv"
 	"strings"
 )
 
@@ -56,6 +57,9 @@ func TranslateLine(adapter, stream, line string) []Hint {
 	}
 
 	hints = append(hints, extractToolHints(payload)...)
+	if usage := extractUsageHint(payload, stream); usage != nil {
+		hints = append(hints, *usage)
+	}
 
 	eventType := strings.ToLower(firstString(payload, "type", "event"))
 	if strings.Contains(eventType, "error") {
@@ -70,12 +74,16 @@ func TranslateLine(adapter, stream, line string) []Hint {
 }
 
 func extractNativeSessionID(payload map[string]any) string {
+	eventType := strings.ToLower(firstString(payload, "type", "event"))
+	if eventType == "result" {
+		return ""
+	}
+
 	if nativeID := firstString(payload, "session_id", "conversation_id", "thread_id"); nativeID != "" {
 		return nativeID
 	}
 
 	if nativeID := firstString(payload, "sessionID"); nativeID != "" {
-		eventType := strings.ToLower(firstString(payload, "type", "event"))
 		if eventType == "step_start" || eventType == "step-start" || eventType == "init" {
 			return nativeID
 		}
@@ -139,6 +147,188 @@ func extractToolHintsFromContent(value any) []Hint {
 	}
 
 	return hints
+}
+
+func extractUsageHint(payload map[string]any, stream string) *Hint {
+	usage := usagePayload(payload)
+	if len(usage) == 0 {
+		return nil
+	}
+	usage["stream"] = stream
+	return &Hint{
+		Kind:    "usage.reported",
+		Phase:   "translation",
+		Payload: usage,
+	}
+}
+
+func usagePayload(payload map[string]any) map[string]any {
+	result := map[string]any{}
+	appendUsageFields(result, payload)
+
+	if usage, ok := payload["usage"].(map[string]any); ok {
+		appendUsageFields(result, usage)
+	}
+	if usage, ok := payload["usageMetadata"].(map[string]any); ok {
+		appendUsageFields(result, usage)
+	}
+	if usage, ok := payload["tokenUsage"].(map[string]any); ok {
+		appendUsageFields(result, usage)
+	}
+	if message, ok := payload["message"].(map[string]any); ok {
+		appendUsageFields(result, message)
+		if usage, ok := message["usage"].(map[string]any); ok {
+			appendUsageFields(result, usage)
+		}
+	}
+	if completion, ok := payload["completion"].(map[string]any); ok {
+		appendUsageFields(result, completion)
+		if usage, ok := completion["usage"].(map[string]any); ok {
+			appendUsageFields(result, usage)
+		}
+	}
+	if modelUsage, ok := payload["modelUsage"].(map[string]any); ok {
+		for model, value := range modelUsage {
+			entry, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			if result["model"] == nil {
+				result["model"] = model
+			}
+			appendUsageFields(result, entry)
+			if cost, ok := number(entry["costUSD"]); ok {
+				result["cost_usd"] = cost
+			}
+			break
+		}
+	}
+
+	if len(result) == 0 {
+		return nil
+	}
+	if _, ok := result["cost_usd"]; !ok {
+		metrics := []string{
+			"input_tokens",
+			"output_tokens",
+			"total_tokens",
+			"cached_input_tokens",
+			"cache_read_input_tokens",
+			"cache_creation_input_tokens",
+		}
+		hasMetric := false
+		for _, key := range metrics {
+			if _, ok := result[key]; ok {
+				hasMetric = true
+				break
+			}
+		}
+		if !hasMetric {
+			return nil
+		}
+	}
+	if _, ok := result["total_tokens"]; !ok {
+		input, _ := intValue(result["input_tokens"])
+		output, _ := intValue(result["output_tokens"])
+		cached, _ := intValue(result["cached_input_tokens"])
+		cacheRead, _ := intValue(result["cache_read_input_tokens"])
+		cacheCreate, _ := intValue(result["cache_creation_input_tokens"])
+		total := input + output + cached + cacheRead + cacheCreate
+		if total > 0 {
+			result["total_tokens"] = total
+		}
+	}
+	return result
+}
+
+func appendUsageFields(dst map[string]any, src map[string]any) {
+	copyIntField(dst, src, "input_tokens", "input_tokens", "inputTokens", "prompt_token_count")
+	copyIntField(dst, src, "output_tokens", "output_tokens", "outputTokens", "candidates_token_count")
+	copyIntField(dst, src, "total_tokens", "total_tokens", "totalTokens", "total_token_count")
+	copyIntField(dst, src, "cached_input_tokens", "cached_input_tokens", "cachedInputTokens")
+	copyIntField(dst, src, "cache_read_input_tokens", "cache_read_input_tokens", "cacheReadInputTokens")
+	copyIntField(dst, src, "cache_creation_input_tokens", "cache_creation_input_tokens", "cacheCreationInputTokens")
+	copyIntField(dst, src, "cache_read_input_tokens", "cache_read_input_tokens", "cache_read_input_tokens")
+	copyIntField(dst, src, "cache_creation_input_tokens", "cache_creation_input_tokens", "cache_creation_input_tokens")
+	copyFloatField(dst, src, "cost_usd", "total_cost_usd", "costUSD")
+	copyStringField(dst, src, "model", "model")
+	copyStringField(dst, src, "provider", "provider")
+}
+
+func copyIntField(dst, src map[string]any, target string, keys ...string) {
+	if _, ok := dst[target]; ok {
+		return
+	}
+	for _, key := range keys {
+		if value, ok := intValue(src[key]); ok {
+			dst[target] = value
+			return
+		}
+	}
+}
+
+func copyFloatField(dst, src map[string]any, target string, keys ...string) {
+	if _, ok := dst[target]; ok {
+		return
+	}
+	for _, key := range keys {
+		if value, ok := number(src[key]); ok {
+			dst[target] = value
+			return
+		}
+	}
+}
+
+func copyStringField(dst, src map[string]any, target string, keys ...string) {
+	if _, ok := dst[target]; ok {
+		return
+	}
+	for _, key := range keys {
+		if value, ok := src[key].(string); ok && value != "" {
+			dst[target] = value
+			return
+		}
+	}
+}
+
+func intValue(value any) (int64, bool) {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed), true
+	case int64:
+		return typed, true
+	case float64:
+		return int64(typed), true
+	case json.Number:
+		parsed, err := typed.Int64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func number(value any) (float64, bool) {
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case float32:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case int64:
+		return float64(typed), true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func firstString(payload map[string]any, keys ...string) string {

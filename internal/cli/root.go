@@ -926,6 +926,28 @@ func renderStatus(cmd *cobra.Command, jsonOutput bool, status *service.StatusRes
 			return err
 		}
 	}
+	if status.Usage != nil {
+		if err := writef(
+			cmd.OutOrStdout(),
+			"usage: input=%d output=%d total=%d cache_read=%d cache_write=%d\n",
+			status.Usage.InputTokens,
+			status.Usage.OutputTokens,
+			status.Usage.TotalTokens,
+			status.Usage.CacheReadInputTokens,
+			status.Usage.CacheCreationInputTokens,
+		); err != nil {
+			return err
+		}
+	}
+	if status.Cost != nil && status.Cost.TotalCostUSD > 0 {
+		label := "vendor"
+		if status.Cost.Estimated {
+			label = "estimated"
+		}
+		if err := writef(cmd.OutOrStdout(), "cost: $%.6f (%s)\n", status.Cost.TotalCostUSD, label); err != nil {
+			return err
+		}
+	}
 	if len(status.NativeSessions) > 0 {
 		if err := writef(cmd.OutOrStdout(), "native_sessions: %d\n", len(status.NativeSessions)); err != nil {
 			return err
@@ -1226,15 +1248,20 @@ func renderCatalog(cmd *cobra.Command, jsonOutput bool, result *service.CatalogR
 		return err
 	}
 	for _, entry := range result.Snapshot.Entries {
+		pricingText := "-"
+		if entry.Pricing != nil && (entry.Pricing.InputUSDPerMTok > 0 || entry.Pricing.OutputUSDPerMTok > 0) {
+			pricingText = fmt.Sprintf("in=$%.3f/M out=$%.3f/M", entry.Pricing.InputUSDPerMTok, entry.Pricing.OutputUSDPerMTok)
+		}
 		if err := writef(
 			cmd.OutOrStdout(),
-			"%s\t%s\t%s\tselected=%t\tauth=%s\tbilling=%s\tsource=%s\n",
+			"%s\t%s\t%s\tselected=%t\tauth=%s\tbilling=%s\tpricing=%s\tsource=%s\n",
 			entry.Adapter,
 			emptyDash(entry.Provider),
 			emptyDash(entry.Model),
 			entry.Selected,
 			emptyDash(entry.AuthMethod),
 			emptyDash(entry.BillingClass),
+			pricingText,
 			emptyDash(entry.Source),
 		); err != nil {
 			return err

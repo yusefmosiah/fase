@@ -26,6 +26,21 @@ type cliStatusResult struct {
 		JobID string `json:"job_id"`
 		State string `json:"state"`
 	} `json:"job"`
+	Usage *struct {
+		InputTokens              int64  `json:"input_tokens"`
+		OutputTokens             int64  `json:"output_tokens"`
+		TotalTokens              int64  `json:"total_tokens"`
+		CachedInputTokens        int64  `json:"cached_input_tokens"`
+		CacheReadInputTokens     int64  `json:"cache_read_input_tokens"`
+		CacheCreationInputTokens int64  `json:"cache_creation_input_tokens"`
+		Model                    string `json:"model"`
+		Provider                 string `json:"provider"`
+	} `json:"usage"`
+	Cost *struct {
+		TotalCostUSD float64 `json:"total_cost_usd"`
+		Estimated    bool    `json:"estimated"`
+		Source       string  `json:"source"`
+	} `json:"cost"`
 }
 
 type cliJobRecord struct {
@@ -86,6 +101,12 @@ type cliCatalogEntry struct {
 	Model        string `json:"model"`
 	AuthMethod   string `json:"auth_method"`
 	BillingClass string `json:"billing_class"`
+	Pricing      *struct {
+		InputUSDPerMTok    float64 `json:"input_usd_per_mtok"`
+		OutputUSDPerMTok   float64 `json:"output_usd_per_mtok"`
+		CachedInputPerMTok float64 `json:"cached_input_usd_per_mtok"`
+		Source             string  `json:"source"`
+	} `json:"pricing"`
 }
 
 func TestDetachedRunCanBeCancelled(t *testing.T) {
@@ -169,6 +190,57 @@ func TestStatusWaitReturnsTerminalJob(t *testing.T) {
 	}
 	if status.Job.State != "completed" {
 		t.Fatalf("expected completed waited status, got %q", status.Job.State)
+	}
+}
+
+func TestStatusReportsUsageAndEstimatedCost(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeCodexConfig(t)
+
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--model", "gpt-5-nano", "--cwd", t.TempDir(), "--prompt", "usage reporting test")
+	var runResult cliRunResult
+	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
+		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
+	}
+	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+
+	statusOutput := runCagent(t, binary, configPath, "--json", "status", runResult.Job.JobID)
+	var status cliStatusResult
+	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
+		t.Fatalf("unmarshal status output: %v\n%s", err, statusOutput)
+	}
+	if status.Usage == nil || status.Usage.InputTokens == 0 || status.Usage.OutputTokens == 0 {
+		t.Fatalf("expected usage in status, got %+v", status.Usage)
+	}
+	if status.Cost == nil || status.Cost.TotalCostUSD <= 0 {
+		t.Fatalf("expected estimated cost in status, got %+v", status.Cost)
+	}
+	if !status.Cost.Estimated {
+		t.Fatalf("expected estimated cost for codex fake run, got %+v", status.Cost)
+	}
+}
+
+func TestClaudeStatusReportsVendorCost(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeClaudeConfig(t)
+
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "claude", "--model", "claude-sonnet-4-6", "--cwd", t.TempDir(), "--prompt", "vendor cost reporting test")
+	var runResult cliRunResult
+	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
+		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
+	}
+	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+
+	statusOutput := runCagent(t, binary, configPath, "--json", "status", runResult.Job.JobID)
+	var status cliStatusResult
+	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
+		t.Fatalf("unmarshal status output: %v\n%s", err, statusOutput)
+	}
+	if status.Cost == nil || status.Cost.TotalCostUSD <= 0 {
+		t.Fatalf("expected vendor cost in status, got %+v", status.Cost)
+	}
+	if status.Cost.Estimated {
+		t.Fatalf("expected vendor-reported cost, got %+v", status.Cost)
 	}
 }
 
@@ -310,6 +382,14 @@ func TestCatalogSyncAndShow(t *testing.T) {
 	assertEntry("pi", "google", "gemini-2.5-flash", "api_key", "metered_api")
 	assertEntry("factory", "factory", "glm-5", "api_key", "metered_api")
 	assertEntry("gemini", "google", "", "api_key", "metered_api")
+
+	for _, entry := range shown.Snapshot.Entries {
+		if entry.Adapter == "opencode" && entry.Provider == "openai" && entry.Model == "gpt-5-nano" {
+			if entry.Pricing == nil || entry.Pricing.InputUSDPerMTok <= 0 || entry.Pricing.OutputUSDPerMTok <= 0 {
+				t.Fatalf("expected pricing on catalog entry, got %+v", entry)
+			}
+		}
+	}
 }
 
 func buildCagentBinary(t *testing.T) string {
@@ -373,6 +453,32 @@ func writeFakeCodexGeminiConfig(t *testing.T) string {
 
 	configPath := filepath.Join(configDir, "config.toml")
 	configBody := []byte("[store]\nstate_dir = \"" + stateDir + "\"\n\n[adapters.codex]\nbinary = \"" + fakeCodex + "\"\nenabled = true\n\n[adapters.gemini]\nbinary = \"" + fakeGemini + "\"\nenabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	return configPath
+}
+
+func writeFakeClaudeConfig(t *testing.T) string {
+	t.Helper()
+
+	configDir := t.TempDir()
+	stateDir := t.TempDir()
+	cacheDir := t.TempDir()
+	fakeClaude, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "claude"))
+	if err != nil {
+		t.Fatalf("resolve fake claude path: %v", err)
+	}
+	if err := os.Chmod(fakeClaude, 0o755); err != nil {
+		t.Fatalf("chmod fake claude: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[store]\nstate_dir = \"" + stateDir + "\"\n\n[adapters.claude]\nbinary = \"" + fakeClaude + "\"\nenabled = true\n")
 	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
 		t.Fatalf("write config: %v", err)
 	}

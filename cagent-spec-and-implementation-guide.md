@@ -33,6 +33,10 @@ The critical inventory rule is:
 `cagent` must preserve native vendor identities and raw artifacts, while also
 normalizing sessions, jobs, turns, and events into one canonical local model.
 
+When vendor streams expose token usage or cost, `cagent` should normalize and
+persist that too. When cost is not vendor-reported, any estimate must be tied to
+provider/model pricing provenance and clearly labeled as best-effort.
+
 The implementation language should be Go.
 
 ## What Changed
@@ -53,6 +57,7 @@ The implementation language should be Go.
    - OpenCode
 8. Added implementation order, testing strategy, and packaging guidance.
 9. Added a staged low-cost test matrix and a future provider/model catalog.
+10. Added normalized token-usage and best-effort cost-reporting guidance.
 
 ## What To Do Next
 

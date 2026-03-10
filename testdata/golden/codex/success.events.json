@@ -36,5 +36,16 @@
       "output": "ok",
       "type": "tool_result"
     }
+  },
+  {
+    "kind": "usage.reported",
+    "phase": "translation",
+    "payload": {
+      "cached_input_tokens": 200,
+      "input_tokens": 1200,
+      "output_tokens": 80,
+      "stream": "stdout",
+      "total_tokens": 1480
+    }
   }
 ]

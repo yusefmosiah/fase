@@ -23,10 +23,11 @@ Practical summary:
 - Core runtime, SQLite persistence, canonical schemas, session inspection, transfers, and event translation are in place.
 - Codex, Claude, Factory, Pi, Gemini, and OpenCode adapters all exist.
 - A host-agent-facing `runtime` inventory command is available.
-- A richer provider/model catalog is now part of the planned release scope.
+- A provider/model catalog is available, including auth mode, billing class, and best-effort pricing when known.
 - Background execution, real process cancellation, live log follow, and filtered job/session listing are in place.
 - `transfer` is the explicit failover/recovery path when native continuation is not possible.
 - `debrief` is available for model-authored "land the plane" exports on still-live sessions.
+- `status` now exposes normalized token usage and vendor-reported or estimated cost when enough signal exists.
 
 ## Intended Use
 
@@ -113,6 +114,8 @@ Testing currently in repo:
 - unit tests for core/store/service paths
 - fixture-based translation tests
 - fake CLI integration tests for all implemented adapters
+- staged orchestration E2E tests, including recursive `cagent` workflows
+- env-gated live low-cost smoke tests
 - live smoke tests already exercised against real installed CLIs
 
 ## Not Yet Implemented
@@ -182,7 +185,18 @@ Current first-pass behavior:
 - OpenCode, Pi, and Factory enumerate models from local CLI surfaces.
 - Claude and Codex primarily report auth mode plus selected/provider context.
 - Gemini currently reports auth mode conservatively from local environment and config signals.
-- Pricing is intentionally not authoritative in this release; auth mode and billing class are the important routing signals.
+- Pricing is best-effort, provenance-carrying, and not authoritative; auth mode and billing class remain the primary routing signals.
+
+## Usage And Cost Reporting
+
+`status --json` exposes normalized job-level usage and cost data when the adapter emits enough signal.
+
+Rules:
+- Prefer vendor-reported cost when present.
+- Otherwise estimate cost only when provider, model, and pricing are known.
+- Treat estimated cost as a routing/debugging hint, not a billing ledger.
+
+The staged release matrix for contract, fake, live low-cost, recovery, and recursive orchestration lanes is documented in [docs/release-test-matrix.md](/Users/wiz/cagent/docs/release-test-matrix.md).
 
 ## Configuration
 
@@ -230,7 +244,7 @@ Use cases:
 ## Next Recommended Work
 
 The highest-value remaining steps are:
-1. Build the low-cost live test matrix, including recursive `cagent` orchestration.
+1. Expand the low-cost live matrix beyond smoke tests into full multi-agent workflows.
 2. Export richer transfer bundles with stronger evidence references into native session state when available.
 3. Improve event translation depth.
 4. Add richer catalog coverage for vendors with weaker model-enumeration surfaces.

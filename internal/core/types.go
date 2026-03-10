@@ -110,6 +110,44 @@ type ArtifactRecord struct {
 	Metadata   map[string]any `json:"metadata"`
 }
 
+type ModelPricing struct {
+	Currency                string     `json:"currency,omitempty"`
+	InputUSDPerMTok         float64    `json:"input_usd_per_mtok,omitempty"`
+	OutputUSDPerMTok        float64    `json:"output_usd_per_mtok,omitempty"`
+	CachedInputUSDPerMTok   float64    `json:"cached_input_usd_per_mtok,omitempty"`
+	CacheReadUSDPerMTok     float64    `json:"cache_read_usd_per_mtok,omitempty"`
+	CacheCreationUSDPerMTok float64    `json:"cache_creation_usd_per_mtok,omitempty"`
+	Source                  string     `json:"source,omitempty"`
+	SourceURL               string     `json:"source_url,omitempty"`
+	ObservedAt              *time.Time `json:"observed_at,omitempty"`
+}
+
+type UsageReport struct {
+	Provider                 string `json:"provider,omitempty"`
+	Model                    string `json:"model,omitempty"`
+	InputTokens              int64  `json:"input_tokens,omitempty"`
+	OutputTokens             int64  `json:"output_tokens,omitempty"`
+	TotalTokens              int64  `json:"total_tokens,omitempty"`
+	CachedInputTokens        int64  `json:"cached_input_tokens,omitempty"`
+	CacheReadInputTokens     int64  `json:"cache_read_input_tokens,omitempty"`
+	CacheCreationInputTokens int64  `json:"cache_creation_input_tokens,omitempty"`
+	Source                   string `json:"source,omitempty"`
+}
+
+type CostEstimate struct {
+	Currency             string     `json:"currency,omitempty"`
+	InputCostUSD         float64    `json:"input_cost_usd,omitempty"`
+	OutputCostUSD        float64    `json:"output_cost_usd,omitempty"`
+	CachedInputCostUSD   float64    `json:"cached_input_cost_usd,omitempty"`
+	CacheReadCostUSD     float64    `json:"cache_read_cost_usd,omitempty"`
+	CacheCreationCostUSD float64    `json:"cache_creation_cost_usd,omitempty"`
+	TotalCostUSD         float64    `json:"total_cost_usd,omitempty"`
+	Estimated            bool       `json:"estimated"`
+	Source               string     `json:"source,omitempty"`
+	SourceURL            string     `json:"source_url,omitempty"`
+	ObservedAt           *time.Time `json:"observed_at,omitempty"`
+}
+
 type CatalogProvenance struct {
 	Source     string    `json:"source"`
 	Command    string    `json:"command,omitempty"`
@@ -127,6 +165,7 @@ type CatalogEntry struct {
 	BillingClass string            `json:"billing_class,omitempty"`
 	Source       string            `json:"source,omitempty"`
 	Provenance   CatalogProvenance `json:"provenance"`
+	Pricing      *ModelPricing     `json:"pricing,omitempty"`
 	Metadata     map[string]any    `json:"metadata,omitempty"`
 }
 

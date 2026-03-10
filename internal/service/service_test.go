@@ -154,6 +154,112 @@ func TestRunCompletesWithFakeCodexAdapter(t *testing.T) {
 	if !foundAssistant {
 		t.Fatal("expected translated assistant.message event")
 	}
+	if status.Usage == nil || status.Usage.InputTokens == 0 || status.Usage.OutputTokens == 0 {
+		t.Fatalf("expected usage summary, got %+v", status.Usage)
+	}
+	if status.Cost != nil {
+		t.Fatalf("expected no estimated cost without explicit model, got %+v", status.Cost)
+	}
+}
+
+func TestRunStatusEstimatesCostWhenModelPricingKnown(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
+	if err != nil {
+		t.Fatalf("resolve fake codex path: %v", err)
+	}
+	if err := os.Chmod(fakeBinary, 0o755); err != nil {
+		t.Fatalf("chmod fake codex: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.codex]\nbinary = \"" + fakeBinary + "\"\nenabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	result, err := svc.Run(context.Background(), RunRequest{
+		Adapter:      "codex",
+		Model:        "gpt-5-nano",
+		CWD:          t.TempDir(),
+		Prompt:       "build milestone 2",
+		PromptSource: "prompt",
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
+	if status.Cost == nil || status.Cost.TotalCostUSD <= 0 {
+		t.Fatalf("expected estimated cost, got %+v", status.Cost)
+	}
+	if !status.Cost.Estimated {
+		t.Fatalf("expected estimated cost, got %+v", status.Cost)
+	}
+}
+
+func TestClaudeRunStatusUsesVendorCost(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "claude"))
+	if err != nil {
+		t.Fatalf("resolve fake claude path: %v", err)
+	}
+	if err := os.Chmod(fakeBinary, 0o755); err != nil {
+		t.Fatalf("chmod fake claude: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.claude]\nbinary = \"" + fakeBinary + "\"\nenabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	result, err := svc.Run(context.Background(), RunRequest{
+		Adapter:      "claude",
+		Model:        "claude-sonnet-4-6",
+		CWD:          t.TempDir(),
+		Prompt:       "build milestone 2",
+		PromptSource: "prompt",
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
+	if status.Cost == nil || status.Cost.TotalCostUSD <= 0 {
+		t.Fatalf("expected vendor cost, got %+v", status.Cost)
+	}
+	if status.Cost.Estimated {
+		t.Fatalf("expected vendor-reported cost, got %+v", status.Cost)
+	}
 }
 
 func TestWaitStatusReturnsTerminalState(t *testing.T) {
@@ -769,6 +875,14 @@ func TestSyncAndShowCatalog(t *testing.T) {
 	assertCatalogEntry("pi", "google", "gemini-2.5-flash", "api_key", "metered_api")
 	assertCatalogEntry("factory", "factory", "glm-5", "api_key", "metered_api")
 	assertCatalogEntry("gemini", "google", "", "api_key", "metered_api")
+
+	for _, entry := range shown.Snapshot.Entries {
+		if entry.Adapter == "opencode" && entry.Provider == "openai" && entry.Model == "gpt-5-nano" {
+			if entry.Pricing == nil || entry.Pricing.InputUSDPerMTok <= 0 || entry.Pricing.OutputUSDPerMTok <= 0 {
+				t.Fatalf("expected pricing on catalog entry, got %+v", entry)
+			}
+		}
+	}
 }
 
 func TestTransferExportAndRun(t *testing.T) {

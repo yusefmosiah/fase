@@ -7,6 +7,13 @@ mode="run"
 session_id="codex-session-123"
 prompt=""
 
+emit_text() {
+  text="$1"
+  printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
+  printf '%s\n' "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"$text\"}}"
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1200,"cached_input_tokens":200,"output_tokens":80}}'
+}
+
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version|-V)
@@ -41,18 +48,49 @@ if [ "$mode" = "resume" ]; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
   if printf '%s' "$prompt" | grep -qi 'writing a cagent debrief'; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"# Objective\nExplain the current task state.\n\n# Completed\n- Finished the prior task.\n\n# Current State\nThe repository is in a recoverable state.\n\n# Outstanding Work\n- Review the latest changes.\n\n# Risks\n- The next agent should verify behavior before proceeding.\n\n# Important Files\n/tmp/fake-file.go\n\n# Recommended Next Step\nReview the recent changes and continue from there."}}'
+    printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":700,"cached_input_tokens":100,"output_tokens":120}}'
   else
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex continued the task"}}'
+    printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":600,"cached_input_tokens":50,"output_tokens":40}}'
   fi
+elif printf '%s' "$prompt" | grep -qi 'recursive cagent orchestration'; then
+  printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
+  plan_json="$(printf '%s' 'plan stage' | "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  plan_job="$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
+  "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json status --wait "$plan_job" >/dev/null
+  implement_json="$(printf '%s' 'implement stage' | "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  implement_job="$(printf '%s' "$implement_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
+  "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json status --wait "$implement_job" >/dev/null
+  verify_json="$(printf '%s' 'verify stage' | "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  verify_job="$(printf '%s' "$verify_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
+  "$CAGENT_EXECUTABLE" --config "$CAGENT_CONFIG_PATH" --json status --wait "$verify_job" >/dev/null
+  printf '%s\n' "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Recursive orchestration completed. plan=$plan_job implement=$implement_job verify=$verify_job\"}}"
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1800,"cached_input_tokens":500,"output_tokens":120}}'
 elif printf '%s' "$prompt" | grep -qi 'hang'; then
   trap 'exit 130' INT TERM
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
-  sleep 10
+  while :; do
+    sleep 1
+  done
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex hang task completed"}}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":500,"cached_input_tokens":0,"output_tokens":10}}'
 elif printf '%s' "$prompt" | grep -qi 'slow'; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
   sleep 1
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex slow task completed"}}'
+  printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":550,"cached_input_tokens":50,"output_tokens":15}}'
+elif printf '%s' "$prompt" | grep -qi 'plan stage'; then
+  emit_text "Plan stage completed"
+elif printf '%s' "$prompt" | grep -qi 'implement stage'; then
+  emit_text "Implement stage completed"
+elif printf '%s' "$prompt" | grep -qi 'verify stage'; then
+  emit_text "Verify stage completed"
+elif printf '%s' "$prompt" | grep -qi 'review stage'; then
+  emit_text "Review stage completed"
+elif printf '%s' "$prompt" | grep -qi 'red team stage'; then
+  emit_text "Red-team stage completed"
+elif printf '%s' "$prompt" | grep -qi 'security report stage'; then
+  emit_text "Security report stage completed"
 else
   cat "$script_dir/../fixtures/codex/success.jsonl"
 fi

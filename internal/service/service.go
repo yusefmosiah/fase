@@ -23,6 +23,7 @@ import (
 	debriefpkg "github.com/yusefmosiah/cagent/internal/debrief"
 	"github.com/yusefmosiah/cagent/internal/events"
 	transferpkg "github.com/yusefmosiah/cagent/internal/handoff"
+	"github.com/yusefmosiah/cagent/internal/pricing"
 	"github.com/yusefmosiah/cagent/internal/store"
 )
 
@@ -118,6 +119,8 @@ type StatusResult struct {
 	Session        core.SessionRecord         `json:"session"`
 	NativeSessions []core.NativeSessionRecord `json:"native_sessions"`
 	Events         []core.EventRecord         `json:"events"`
+	Usage          *core.UsageReport          `json:"usage,omitempty"`
+	Cost           *core.CostEstimate         `json:"cost,omitempty"`
 }
 
 type SessionAction struct {
@@ -601,6 +604,10 @@ func (s *Service) Runtime(ctx context.Context, adapterName string) (*RuntimeResu
 
 func (s *Service) SyncCatalog(ctx context.Context) (*CatalogResult, error) {
 	snapshot := catalogpkg.Snapshot(ctx, s.Config, nil)
+	for idx := range snapshot.Entries {
+		entry := &snapshot.Entries[idx]
+		entry.Pricing = pricing.Resolve(s.Config, entry.Provider, entry.Model)
+	}
 	if err := s.store.CreateCatalogSnapshot(ctx, snapshot); err != nil {
 		return nil, err
 	}
@@ -787,6 +794,8 @@ func (s *Service) Status(ctx context.Context, jobID string) (*StatusResult, erro
 		Session:        session,
 		NativeSessions: nativeSessions,
 		Events:         events,
+		Usage:          usageFromSummary(job.Summary),
+		Cost:           s.costFromSummary(job),
 	}, nil
 }
 
@@ -1288,6 +1297,11 @@ func (s *Service) executeAdapter(
 					event.NativeSessionID = hint.NativeSessionID
 				}
 			}
+			if hint.Kind == "usage.reported" {
+				if err := s.applyUsageHint(ctx, job, hint.Payload); err != nil {
+					return lastAssistant, err
+				}
+			}
 		}
 	}
 
@@ -1714,6 +1728,266 @@ func summaryString(summary map[string]any, key string) string {
 	}
 	value, _ := summary[key].(string)
 	return value
+}
+
+func (s *Service) applyUsageHint(ctx context.Context, job *core.JobRecord, payload map[string]any) error {
+	if job.Summary == nil {
+		job.Summary = map[string]any{}
+	}
+
+	usage := usageFromPayload(payload)
+	if usage == nil {
+		return nil
+	}
+	if usage.Model != "" && summaryString(job.Summary, "model") == "" {
+		job.Summary["model"] = usage.Model
+	}
+	if usage.Provider != "" && summaryString(job.Summary, "provider") == "" {
+		job.Summary["provider"] = usage.Provider
+	}
+
+	merged := mergeUsageReports(usageFromSummary(job.Summary), *usage)
+	if merged != nil {
+		job.Summary["usage"] = map[string]any{
+			"provider":                    merged.Provider,
+			"model":                       merged.Model,
+			"input_tokens":                merged.InputTokens,
+			"output_tokens":               merged.OutputTokens,
+			"total_tokens":                merged.TotalTokens,
+			"cached_input_tokens":         merged.CachedInputTokens,
+			"cache_read_input_tokens":     merged.CacheReadInputTokens,
+			"cache_creation_input_tokens": merged.CacheCreationInputTokens,
+			"source":                      merged.Source,
+		}
+	}
+
+	if cost := costFromPayload(payload); cost != nil {
+		job.Summary["cost"] = costMap(*cost)
+	} else if estimated := s.costFromSummary(*job); estimated != nil {
+		job.Summary["cost"] = costMap(*estimated)
+	}
+
+	return s.store.UpdateJob(ctx, *job)
+}
+
+func usageFromPayload(payload map[string]any) *core.UsageReport {
+	usage := &core.UsageReport{
+		Provider:                 summaryString(payload, "provider"),
+		Model:                    summaryString(payload, "model"),
+		InputTokens:              summaryInt64(payload, "input_tokens"),
+		OutputTokens:             summaryInt64(payload, "output_tokens"),
+		TotalTokens:              summaryInt64(payload, "total_tokens"),
+		CachedInputTokens:        summaryInt64(payload, "cached_input_tokens"),
+		CacheReadInputTokens:     summaryInt64(payload, "cache_read_input_tokens"),
+		CacheCreationInputTokens: summaryInt64(payload, "cache_creation_input_tokens"),
+		Source:                   "vendor_report",
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
+		return nil
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens + usage.CachedInputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	}
+	return usage
+}
+
+func usageFromSummary(summary map[string]any) *core.UsageReport {
+	if summary == nil {
+		return nil
+	}
+	raw, ok := summary["usage"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	usage := &core.UsageReport{
+		Provider:                 summaryString(raw, "provider"),
+		Model:                    summaryString(raw, "model"),
+		InputTokens:              summaryInt64(raw, "input_tokens"),
+		OutputTokens:             summaryInt64(raw, "output_tokens"),
+		TotalTokens:              summaryInt64(raw, "total_tokens"),
+		CachedInputTokens:        summaryInt64(raw, "cached_input_tokens"),
+		CacheReadInputTokens:     summaryInt64(raw, "cache_read_input_tokens"),
+		CacheCreationInputTokens: summaryInt64(raw, "cache_creation_input_tokens"),
+		Source:                   summaryString(raw, "source"),
+	}
+	if usage.InputTokens == 0 && usage.OutputTokens == 0 && usage.TotalTokens == 0 && usage.CachedInputTokens == 0 && usage.CacheReadInputTokens == 0 && usage.CacheCreationInputTokens == 0 {
+		return nil
+	}
+	if usage.TotalTokens == 0 {
+		usage.TotalTokens = usage.InputTokens + usage.OutputTokens + usage.CachedInputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
+	}
+	return usage
+}
+
+func mergeUsageReports(existing *core.UsageReport, incoming core.UsageReport) *core.UsageReport {
+	if existing == nil {
+		copy := incoming
+		return &copy
+	}
+	merged := *existing
+	merged.InputTokens = max64(merged.InputTokens, incoming.InputTokens)
+	merged.OutputTokens = max64(merged.OutputTokens, incoming.OutputTokens)
+	merged.TotalTokens = max64(merged.TotalTokens, incoming.TotalTokens)
+	merged.CachedInputTokens = max64(merged.CachedInputTokens, incoming.CachedInputTokens)
+	merged.CacheReadInputTokens = max64(merged.CacheReadInputTokens, incoming.CacheReadInputTokens)
+	merged.CacheCreationInputTokens = max64(merged.CacheCreationInputTokens, incoming.CacheCreationInputTokens)
+	if merged.Model == "" {
+		merged.Model = incoming.Model
+	}
+	if merged.Provider == "" {
+		merged.Provider = incoming.Provider
+	}
+	if incoming.Source != "" {
+		merged.Source = incoming.Source
+	}
+	return &merged
+}
+
+func costFromPayload(payload map[string]any) *core.CostEstimate {
+	total := summaryFloat64(payload, "cost_usd")
+	if total == 0 {
+		return nil
+	}
+	return &core.CostEstimate{
+		Currency:     "USD",
+		TotalCostUSD: total,
+		Estimated:    false,
+		Source:       "vendor_report",
+	}
+}
+
+func (s *Service) costFromSummary(job core.JobRecord) *core.CostEstimate {
+	if job.Summary != nil {
+		if raw, ok := job.Summary["cost"].(map[string]any); ok {
+			cost := &core.CostEstimate{
+				Currency:             summaryString(raw, "currency"),
+				InputCostUSD:         summaryFloat64(raw, "input_cost_usd"),
+				OutputCostUSD:        summaryFloat64(raw, "output_cost_usd"),
+				CachedInputCostUSD:   summaryFloat64(raw, "cached_input_cost_usd"),
+				CacheReadCostUSD:     summaryFloat64(raw, "cache_read_cost_usd"),
+				CacheCreationCostUSD: summaryFloat64(raw, "cache_creation_cost_usd"),
+				TotalCostUSD:         summaryFloat64(raw, "total_cost_usd"),
+				Estimated:            summaryBool(raw, "estimated"),
+				Source:               summaryString(raw, "source"),
+				SourceURL:            summaryString(raw, "source_url"),
+			}
+			if cost.Currency == "" {
+				cost.Currency = "USD"
+			}
+			if cost.TotalCostUSD > 0 {
+				return cost
+			}
+		}
+	}
+
+	usage := usageFromSummary(job.Summary)
+	if usage == nil {
+		return nil
+	}
+	provider, model := pricingLookupContext(job, usage)
+	if provider == "" || model == "" {
+		return nil
+	}
+	usage.Provider = provider
+	usage.Model = model
+	return pricing.Estimate(*usage, pricing.Resolve(s.Config, provider, model))
+}
+
+func pricingLookupContext(job core.JobRecord, usage *core.UsageReport) (string, string) {
+	provider := ""
+	model := ""
+	if usage != nil {
+		provider = usage.Provider
+		model = usage.Model
+	}
+	if provider == "" {
+		provider = summaryString(job.Summary, "provider")
+	}
+	if model == "" {
+		model = summaryString(job.Summary, "model")
+	}
+	if strings.Contains(model, "/") {
+		parts := strings.SplitN(model, "/", 2)
+		if provider == "" {
+			provider = parts[0]
+		}
+		model = parts[1]
+	}
+	if provider == "" {
+		switch job.Adapter {
+		case "codex":
+			provider = "openai"
+		case "claude":
+			provider = "anthropic"
+		case "gemini":
+			provider = "google"
+		}
+	}
+	return strings.ToLower(provider), strings.ToLower(model)
+}
+
+func costMap(cost core.CostEstimate) map[string]any {
+	return map[string]any{
+		"currency":                cost.Currency,
+		"input_cost_usd":          cost.InputCostUSD,
+		"output_cost_usd":         cost.OutputCostUSD,
+		"cached_input_cost_usd":   cost.CachedInputCostUSD,
+		"cache_read_cost_usd":     cost.CacheReadCostUSD,
+		"cache_creation_cost_usd": cost.CacheCreationCostUSD,
+		"total_cost_usd":          cost.TotalCostUSD,
+		"estimated":               cost.Estimated,
+		"source":                  cost.Source,
+		"source_url":              cost.SourceURL,
+	}
+}
+
+func summaryInt64(summary map[string]any, key string) int64 {
+	if summary == nil {
+		return 0
+	}
+	value := summary[key]
+	switch typed := value.(type) {
+	case int64:
+		return typed
+	case int:
+		return int64(typed)
+	case float64:
+		return int64(typed)
+	default:
+		return 0
+	}
+}
+
+func summaryFloat64(summary map[string]any, key string) float64 {
+	if summary == nil {
+		return 0
+	}
+	value := summary[key]
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	default:
+		return 0
+	}
+}
+
+func summaryBool(summary map[string]any, key string) bool {
+	if summary == nil {
+		return false
+	}
+	value, _ := summary[key].(bool)
+	return value
+}
+
+func max64(left, right int64) int64 {
+	if right > left {
+		return right
+	}
+	return left
 }
 
 func (s *Service) upsertJobRuntime(ctx context.Context, jobID string, mutate func(*core.JobRuntimeRecord)) error {

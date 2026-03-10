@@ -33,6 +33,7 @@ cagent catalog show --json
 - `available`
 - capability flags
 - configured traits like `speed`, `cost`, `summary`, and `tags`
+- best-effort provider/model pricing when discovered locally
 
 3. Start work:
 
@@ -80,6 +81,7 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 
 - Prefer `runtime --json` as the machine-facing inventory command.
 - Prefer `catalog show --json` when choosing among providers/models and auth modes.
+- Prefer `status --json` when you need normalized token usage or cost for a completed job.
 - Treat `cagent` as machine-facing first. Use `--json` unless a human-readable summary is explicitly better.
 - Treat `run`, `send`, and `transfer run` as launch operations, not blocking operations.
 - Treat `debrief` as a debugging/recovery workflow, not a normal orchestration step.
@@ -94,6 +96,6 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 ## Adapter selection heuristics
 
 - Prefer adapters with `enabled=true` and `available=true`.
-- Use `speed` and `cost` only as operator hints from config, not as measured truth.
+- Treat estimated cost as a routing/debugging hint, not authoritative billing.
 - Prefer adapters with `native_resume=true` when you expect iterative follow-up turns.
 - Prefer adapters with `session_export=true` when durable native-session linkage matters.

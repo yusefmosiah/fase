@@ -12,6 +12,7 @@ type Config struct {
 	Store    StoreConfig    `toml:"store"`
 	Defaults DefaultsConfig `toml:"defaults"`
 	Adapters AdaptersConfig `toml:"adapters"`
+	Pricing  PricingConfig  `toml:"pricing"`
 }
 
 type StoreConfig struct {
@@ -38,6 +39,22 @@ type AdapterConfig struct {
 	Speed   string   `toml:"speed"`
 	Cost    string   `toml:"cost"`
 	Tags    []string `toml:"tags"`
+}
+
+type PricingConfig struct {
+	Models []ModelPricingOverride `toml:"models"`
+}
+
+type ModelPricingOverride struct {
+	Provider                string  `toml:"provider"`
+	Model                   string  `toml:"model"`
+	InputUSDPerMTok         float64 `toml:"input_usd_per_mtok"`
+	OutputUSDPerMTok        float64 `toml:"output_usd_per_mtok"`
+	CachedInputUSDPerMTok   float64 `toml:"cached_input_usd_per_mtok"`
+	CacheReadUSDPerMTok     float64 `toml:"cache_read_usd_per_mtok"`
+	CacheCreationUSDPerMTok float64 `toml:"cache_creation_usd_per_mtok"`
+	Source                  string  `toml:"source"`
+	SourceURL               string  `toml:"source_url"`
 }
 
 func DefaultConfig(paths Paths) Config {

@@ -2,3 +2,4 @@
 {"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"Claude completed the task"}]}}
 {"type":"tool_use","name":"Read","input":{"file":"main.go"}}
 {"type":"tool_result","content":"done"}
+{"type":"result","subtype":"success","session_id":"claude-session-456","total_cost_usd":0.001234,"usage":{"input_tokens":100,"cache_creation_input_tokens":400,"cache_read_input_tokens":300,"output_tokens":20},"modelUsage":{"claude-sonnet-4-6":{"inputTokens":100,"outputTokens":20,"cacheReadInputTokens":300,"cacheCreationInputTokens":400,"costUSD":0.001234}}}
