@@ -13,6 +13,7 @@ Typical cases:
 - choose among Codex, Claude, Pi, Gemini, Factory, or OpenCode at runtime,
 - launch a task through one stable `--json` interface,
 - continue a same-vendor session through `send`,
+- ask a still-live session to land the plane with `debrief`,
 - export an explicit transfer bundle and launch it on another adapter when failover is required,
 - inspect durable local session and artifact state.
 
@@ -54,7 +55,15 @@ cagent send --json --session <session-id> --prompt "Continue from the last resul
 
 `send` always queues a new background job against the existing native session.
 
-6. Transfer only when native continuation is impossible or undesirable:
+6. Ask for a debrief when you need the live agent's own world model:
+
+```bash
+cagent debrief --json --session <session-id> --reason "prepare a debugging summary"
+```
+
+`debrief` queues a continuation job and produces a markdown artifact when it finishes.
+
+7. Transfer only when native continuation is impossible or undesirable:
 
 ```bash
 cagent transfer export --json --job <job-id> --reason "provider outage" --mode recovery
@@ -68,6 +77,7 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 - Prefer `runtime --json` as the machine-facing inventory command.
 - Treat `cagent` as machine-facing first. Use `--json` unless a human-readable summary is explicitly better.
 - Treat `run`, `send`, and `transfer run` as launch operations, not blocking operations.
+- Treat `debrief` as a debugging/recovery workflow, not a normal orchestration step.
 - Do not assume every adapter supports `send`; inspect capability flags first.
 - Same-vendor continuation is `send`. Cross-vendor failover is `transfer`.
 - Do not expect `cagent` to perform vendor auth flows for you.

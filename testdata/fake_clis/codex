@@ -26,13 +26,17 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
-if [ "$mode" = "run" ]; then
+if [ "$mode" = "run" ] || [ "$mode" = "resume" ]; then
   prompt="$(cat || true)"
 fi
 
 if [ "$mode" = "resume" ]; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
-  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex continued the task"}}'
+  if printf '%s' "$prompt" | grep -qi 'writing a cagent debrief'; then
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"# Objective\nExplain the current task state.\n\n# Completed\n- Finished the prior task.\n\n# Current State\nThe repository is in a recoverable state.\n\n# Outstanding Work\n- Review the latest changes.\n\n# Risks\n- The next agent should verify behavior before proceeding.\n\n# Important Files\n/tmp/fake-file.go\n\n# Recommended Next Step\nReview the recent changes and continue from there."}}'
+  else
+    printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex continued the task"}}'
+  fi
 elif printf '%s' "$prompt" | grep -qi 'hang'; then
   trap 'exit 130' INT TERM
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
@@ -47,7 +51,32 @@ else
 fi
 if [ -n "$last_message" ]; then
   if [ "$mode" = "resume" ]; then
-    printf '%s\n' 'Codex continued the task' > "$last_message"
+    if printf '%s' "$prompt" | grep -qi 'writing a cagent debrief'; then
+      cat > "$last_message" <<'EOF'
+# Objective
+Explain the current task state.
+
+# Completed
+- Finished the prior task.
+
+# Current State
+The repository is in a recoverable state.
+
+# Outstanding Work
+- Review the latest changes.
+
+# Risks
+- The next agent should verify behavior before proceeding.
+
+# Important Files
+/tmp/fake-file.go
+
+# Recommended Next Step
+Review the recent changes and continue from there.
+EOF
+    else
+      printf '%s\n' 'Codex continued the task' > "$last_message"
+    fi
   else
     printf '%s\n' 'Codex completed the task' > "$last_message"
   fi

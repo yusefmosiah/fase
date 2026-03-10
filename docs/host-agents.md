@@ -6,6 +6,7 @@ Use it when the host agent wants:
 - one stable JSON CLI instead of vendor-specific command lines,
 - durable local sessions and artifacts,
 - same-vendor continuation through `send`,
+- a model-authored debrief from a still-live session,
 - explicit cross-vendor failover through `transfer`.
 
 ## Recommended host workflow
@@ -46,7 +47,15 @@ cagent send --json --session <session-id> --prompt "Continue from the last resul
 
 `send` also queues background work and returns a new job id immediately.
 
-6. Transfer to another adapter only when native continuation is not possible:
+6. Ask the live source agent to land the plane when needed:
+
+```bash
+cagent debrief --json --session <session-id> --reason "prepare a recovery summary"
+```
+
+`debrief` queues a continuation job and writes a durable markdown artifact when it completes.
+
+7. Transfer to another adapter only when native continuation is not possible:
 
 ```bash
 cagent transfer export --json --job <job-id> --reason "anthropic outage" --mode recovery
@@ -61,5 +70,6 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cw
 - `cagent` preserves native session IDs and raw vendor output.
 - `runtime --json` is the preferred machine-facing inventory command.
 - Use `status`, `logs --follow`, `session`, and `cancel` as the control surface after launch.
+- Use `debrief` when you want the current agent to summarize itself before recovery or debugging.
 - Treat `transfer` as explicit failover/recovery, not as the normal orchestration path.
 - The transfer prompt should explicitly disclose the source adapter and reason for transfer.

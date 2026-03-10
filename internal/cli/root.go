@@ -49,6 +49,15 @@ type sendOptions struct {
 	profile    string
 }
 
+type debriefOptions struct {
+	sessionID string
+	adapter   string
+	model     string
+	profile   string
+	output    string
+	reason    string
+}
+
 type transferExportOptions struct {
 	jobID     string
 	sessionID string
@@ -97,6 +106,7 @@ func NewRootCommand() *cobra.Command {
 		newStatusCommand(opts),
 		newLogsCommand(opts),
 		newSendCommand(opts),
+		newDebriefCommand(opts),
 		newCancelCommand(opts),
 		newListCommand(opts),
 		newSessionCommand(opts),
@@ -315,6 +325,49 @@ func newCancelCommand(root *rootOptions) *cobra.Command {
 			return writef(cmd.OutOrStdout(), "%s: %s\n", job.JobID, job.State)
 		},
 	}
+}
+
+func newDebriefCommand(root *rootOptions) *cobra.Command {
+	opts := &debriefOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "debrief",
+		Short: "Queue a model-authored session debrief",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			result, debriefErr := svc.Debrief(context.Background(), service.DebriefRequest{
+				SessionID:  opts.sessionID,
+				Adapter:    opts.adapter,
+				Model:      opts.model,
+				Profile:    opts.profile,
+				OutputPath: opts.output,
+				Reason:     opts.reason,
+			})
+			if result != nil {
+				if err := renderDebriefResult(cmd, root.jsonOutput, result); err != nil {
+					return err
+				}
+			}
+			if debriefErr != nil {
+				return mapServiceError(debriefErr)
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.sessionID, "session", "", "canonical session to debrief")
+	cmd.Flags().StringVar(&opts.adapter, "adapter", "", "optional adapter override when a session has multiple resumable links")
+	cmd.Flags().StringVar(&opts.model, "model", "", "requested model override")
+	cmd.Flags().StringVar(&opts.profile, "profile", "", "requested adapter profile")
+	cmd.Flags().StringVar(&opts.output, "output", "", "write the debrief artifact to a specific file")
+	cmd.Flags().StringVar(&opts.reason, "reason", "", "operator-supplied focus for the debrief")
+	_ = cmd.MarkFlagRequired("session")
+	return cmd
 }
 
 func newSessionCommand(root *rootOptions) *cobra.Command {
@@ -676,6 +729,36 @@ func renderRunResult(cmd *cobra.Command, jsonOutput bool, result *service.RunRes
 		}
 	}
 
+	return nil
+}
+
+func renderDebriefResult(cmd *cobra.Command, jsonOutput bool, result *service.DebriefResult) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), result)
+	}
+
+	if err := writef(cmd.OutOrStdout(), "job: %s\n", result.Job.JobID); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "session: %s\n", result.Session.SessionID); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "adapter: %s\n", result.Job.Adapter); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "state: %s\n", result.Job.State); err != nil {
+		return err
+	}
+	if result.Path != "" {
+		if err := writef(cmd.OutOrStdout(), "debrief: %s\n", result.Path); err != nil {
+			return err
+		}
+	}
+	if result.Message != "" {
+		if err := writef(cmd.OutOrStdout(), "message: %s\n", result.Message); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

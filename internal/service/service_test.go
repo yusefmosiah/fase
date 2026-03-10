@@ -216,6 +216,9 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 	if secondStatus.Job.NativeSessionID != firstStatus.Job.NativeSessionID {
 		t.Fatalf("expected same native session id, got %q want %q", secondStatus.Job.NativeSessionID, firstStatus.Job.NativeSessionID)
 	}
+	if got, _ := secondStatus.Job.Summary["message"].(string); !strings.Contains(got, "continued") {
+		t.Fatalf("expected continued summary, got %q", got)
+	}
 }
 
 func TestRunCompletesWithFakeFactoryAdapter(t *testing.T) {
@@ -444,6 +447,100 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 	secondStatus := waitForTerminalStatus(t, svc, second.Job.JobID)
 	if secondStatus.Job.NativeSessionID != firstStatus.Job.NativeSessionID {
 		t.Fatalf("expected same opencode native session id, got %q want %q", secondStatus.Job.NativeSessionID, firstStatus.Job.NativeSessionID)
+	}
+}
+
+func TestDebriefContinuesSessionAndWritesArtifact(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
+	if err != nil {
+		t.Fatalf("resolve fake codex path: %v", err)
+	}
+	if err := os.Chmod(fakeBinary, 0o755); err != nil {
+		t.Fatalf("chmod fake codex: %v", err)
+	}
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.codex]\nbinary = \"" + fakeBinary + "\"\nenabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	first, err := svc.Run(context.Background(), RunRequest{
+		Adapter:      "codex",
+		CWD:          t.TempDir(),
+		Prompt:       "initial prompt",
+		PromptSource: "prompt",
+	})
+	if err != nil {
+		t.Fatalf("Run returned error: %v", err)
+	}
+	waitForTerminalStatus(t, svc, first.Job.JobID)
+
+	result, err := svc.Debrief(context.Background(), DebriefRequest{
+		SessionID: first.Session.SessionID,
+		Reason:    "prepare a recovery summary",
+	})
+	if err != nil {
+		t.Fatalf("Debrief returned error: %v", err)
+	}
+	if result.Path == "" {
+		t.Fatal("expected debrief path")
+	}
+
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
+	if status.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed debrief job state, got %s", status.Job.State)
+	}
+
+	data, err := os.ReadFile(result.Path)
+	if err != nil {
+		t.Fatalf("read debrief artifact: %v", err)
+	}
+	if !strings.Contains(string(data), "# Objective") {
+		t.Fatalf("expected markdown debrief artifact, got:\n%s", data)
+	}
+
+	artifacts, err := svc.store.ListArtifactsByJob(context.Background(), result.Job.JobID, 10)
+	if err != nil {
+		t.Fatalf("ListArtifactsByJob returned error: %v", err)
+	}
+	var foundDebrief bool
+	for _, artifact := range artifacts {
+		if artifact.Kind == "debrief" && artifact.Path == result.Path {
+			foundDebrief = true
+		}
+	}
+	if !foundDebrief {
+		t.Fatalf("expected debrief artifact in %+v", artifacts)
+	}
+
+	events, err := svc.Logs(context.Background(), result.Job.JobID, 100)
+	if err != nil {
+		t.Fatalf("Logs returned error: %v", err)
+	}
+	var foundEvent bool
+	for _, event := range events {
+		if event.Kind == "debrief.exported" {
+			foundEvent = true
+		}
+	}
+	if !foundEvent {
+		t.Fatal("expected debrief.exported event")
 	}
 }
 

@@ -286,6 +286,7 @@ cagent run
 cagent status
 cagent logs
 cagent send
+cagent debrief
 cagent cancel
 cagent list
 cagent session
@@ -345,6 +346,17 @@ Rules:
 - only valid if adapter declares `native_resume=true`
 - must acquire a session lock
 - must fail clearly if a run is already active on that session
+
+### `cagent debrief`
+
+Queues a same-vendor continuation that asks the live source agent to produce a
+structured "land the plane" report.
+
+Rules:
+- only valid if adapter declares `native_resume=true`
+- must remain optional and separate from `transfer`
+- must write a durable debrief artifact on success
+- must return immediately with the queued job id and planned artifact path
 
 ### `cagent cancel`
 
@@ -968,7 +980,7 @@ Once discovered:
 
 ### Debrief
 
-`debrief` is future work and must:
+`debrief` must:
 - ask a still-live source agent to summarize its own world model
 - produce a structured artifact for debugging or recovery
 - remain optional and separate from transfer

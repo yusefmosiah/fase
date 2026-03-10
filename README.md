@@ -6,6 +6,7 @@ It gives you one machine-readable interface for:
 - starting jobs on vendor CLIs,
 - persisting canonical jobs, sessions, turns, events, and artifacts,
 - continuing same-vendor sessions when supported,
+- asking a live session to produce a model-authored debrief,
 - exporting explicit cross-vendor transfers,
 - launching new jobs from those transfers.
 
@@ -24,6 +25,7 @@ Practical summary:
 - A host-agent-facing `runtime` inventory command is available.
 - Background execution, real process cancellation, live log follow, and filtered job/session listing are in place.
 - `transfer` is the explicit failover/recovery path when native continuation is not possible.
+- `debrief` is available for model-authored "land the plane" exports on still-live sessions.
 
 ## Intended Use
 
@@ -31,7 +33,7 @@ Practical summary:
 
 That means:
 - the primary public surface is the CLI plus `--json`,
-- `run`, `send`, and `transfer run` queue background jobs and return IDs immediately,
+- `run`, `send`, `debrief`, and `transfer run` queue background jobs and return IDs immediately,
 - host agents should be able to inspect runtime availability before choosing an adapter,
 - adapter-specific auth remains owned by each vendor CLI,
 - `cagent` keeps durable session state and raw artifacts instead of trying to act like a janitor or hosted control plane.
@@ -39,8 +41,8 @@ That means:
 The intended orchestration model is:
 - `run` starts a fresh background subagent.
 - `send` continues a native session on the same adapter.
+- `debrief` asks a still-live agent to export its current world model as a durable artifact.
 - `transfer` is for explicit failover or provider switching when native continuation is not possible.
-- `debrief` is a future debugging/recovery feature for asking a live agent to summarize its own world model.
 
 ## Spec Coverage
 
@@ -71,6 +73,7 @@ Commands currently wired:
 - `cagent status`
 - `cagent logs`
 - `cagent send`
+- `cagent debrief`
 - `cagent cancel`
 - `cagent list`
 - `cagent session`
@@ -114,7 +117,7 @@ Important gaps versus the spec:
 - richer host-agent wait ergonomics such as `status --wait` are not implemented yet
 - `tool.result`, approval, checkpoint, and richer structured event coverage are still incomplete for some vendors
 - transfer bundle ergonomics can still improve, especially richer evidence references into native session state when available
-- model-authored `debrief` does not exist yet
+- dedicated artifact inspection/listing commands do not exist yet
 
 ## Repository Layout
 
@@ -191,18 +194,23 @@ Normal orchestration should not rely on explicit transfers. The host agent is th
 Use cases:
 - normal flow: spawn a fresh subagent with `run`
 - same-vendor follow-up: use `send`
+- debugging or recovery when the source agent is still reachable: use `debrief`
 - failover/provider outage/model switch: use `transfer`
-- debugging or recovery when the source agent is still reachable: use `debrief` later
 
 `transfer` should be treated as:
 - a clearly labeled context transfer, not a native continuation
 - host-authored metadata plus compact inline briefing
 - evidence pointers to local files instead of replaying the full transcript inline
 
+`debrief` should be treated as:
+- an explicit debugging/recovery workflow, not normal orchestration
+- a same-vendor continuation against the live source session
+- a durable markdown artifact that captures the agent's self-reported world model
+
 ## Next Recommended Work
 
 The highest-value remaining steps are:
 1. Export richer transfer bundles with stronger evidence references into native session state when available.
-2. Add a future `debrief` path for model-authored self-summary.
-3. Improve event translation depth.
-4. Add small orchestration ergonomics like `status --wait`.
+2. Add small orchestration ergonomics like `status --wait`.
+3. Add a dedicated artifact inspection command for transfer/debrief debugging.
+4. Improve event translation depth.

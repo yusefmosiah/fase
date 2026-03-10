@@ -19,6 +19,7 @@ import (
 	"github.com/yusefmosiah/cagent/internal/adapterapi"
 	"github.com/yusefmosiah/cagent/internal/adapters"
 	"github.com/yusefmosiah/cagent/internal/core"
+	debriefpkg "github.com/yusefmosiah/cagent/internal/debrief"
 	"github.com/yusefmosiah/cagent/internal/events"
 	transferpkg "github.com/yusefmosiah/cagent/internal/handoff"
 	"github.com/yusefmosiah/cagent/internal/store"
@@ -66,9 +67,25 @@ type SendRequest struct {
 	Profile      string
 }
 
+type DebriefRequest struct {
+	SessionID  string
+	Adapter    string
+	Model      string
+	Profile    string
+	OutputPath string
+	Reason     string
+}
+
 type RunResult struct {
 	Job     core.JobRecord     `json:"job"`
 	Session core.SessionRecord `json:"session"`
+	Message string             `json:"message,omitempty"`
+}
+
+type DebriefResult struct {
+	Job     core.JobRecord     `json:"job"`
+	Session core.SessionRecord `json:"session"`
+	Path    string             `json:"path"`
 	Message string             `json:"message,omitempty"`
 }
 
@@ -171,6 +188,14 @@ type startExecutionOptions struct {
 	Continue          bool
 	NativeSessionID   string
 	NativeSessionMeta map[string]any
+}
+
+type continuationRequest struct {
+	Prompt       string
+	PromptSource string
+	Model        string
+	Profile      string
+	Summary      map[string]any
 }
 
 func Open(ctx context.Context, configPath string) (*Service, error) {
@@ -378,91 +403,77 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 		return nil, fmt.Errorf("%w: adapter %q does not support continuation", ErrUnsupported, target.Adapter)
 	}
 
-	now := time.Now().UTC()
-	job := core.JobRecord{
-		JobID:           core.GenerateID("job"),
-		SessionID:       session.SessionID,
-		Adapter:         target.Adapter,
-		State:           core.JobStateCreated,
-		CWD:             session.CWD,
-		CreatedAt:       now,
-		UpdatedAt:       now,
-		NativeSessionID: target.NativeSessionID,
+	return s.queueContinuation(ctx, session, target, continuationRequest{
+		Prompt:       req.Prompt,
+		PromptSource: req.PromptSource,
+		Model:        req.Model,
+		Profile:      req.Profile,
 		Summary: map[string]any{
 			"prompt_source": req.PromptSource,
 			"continued":     true,
 		},
+	})
+}
+
+func (s *Service) Debrief(ctx context.Context, req DebriefRequest) (*DebriefResult, error) {
+	if req.SessionID == "" {
+		return nil, fmt.Errorf("%w: session must not be empty", ErrInvalidInput)
 	}
-	if req.Model != "" {
-		job.Summary["model"] = req.Model
+
+	session, err := s.store.GetSession(ctx, req.SessionID)
+	if err != nil {
+		return nil, normalizeStoreError("session", req.SessionID, err)
 	}
-	if req.Profile != "" {
-		job.Summary["profile"] = req.Profile
-	}
-	if err := s.store.CreateJobAndUpdateSession(ctx, session.SessionID, now, job); err != nil {
+
+	active, err := s.store.FindActiveJobBySession(ctx, req.SessionID)
+	if err != nil {
 		return nil, err
 	}
-	session.LatestJobID = job.JobID
-	session.UpdatedAt = now
-
-	lock := core.LockRecord{
-		LockKey:         lockKey(target.Adapter, target.NativeSessionID),
-		Adapter:         target.Adapter,
-		NativeSessionID: target.NativeSessionID,
-		JobID:           job.JobID,
-		AcquiredAt:      now,
-	}
-	if err := s.store.AcquireLock(ctx, lock); err != nil {
-		message := fmt.Sprintf("native session %s is already in use", target.NativeSessionID)
-		job.Summary["message"] = message
-		_ = s.finishJob(ctx, &job, core.JobStateBlocked)
-		return &RunResult{
-			Job:     job,
-			Session: session,
-			Message: message,
-		}, fmt.Errorf("%w: %s", ErrSessionLocked, message)
-	}
-	lockHeld := true
-	defer func() {
-		if lockHeld {
-			_ = s.store.ReleaseLock(context.Background(), lock.LockKey, lock.JobID)
-		}
-	}()
-
-	turn := core.TurnRecord{
-		TurnID:          core.GenerateID("turn"),
-		SessionID:       session.SessionID,
-		JobID:           job.JobID,
-		Adapter:         job.Adapter,
-		StartedAt:       now,
-		InputText:       req.Prompt,
-		InputSource:     req.PromptSource,
-		Status:          string(core.JobStateCreated),
-		NativeSessionID: target.NativeSessionID,
-		Stats:           map[string]any{},
+	if active != nil {
+		return nil, fmt.Errorf("%w: session %s already has active job %s", ErrSessionLocked, req.SessionID, active.JobID)
 	}
 
-	if err := s.prepareJobLifecycle(ctx, &job, &turn, startExecutionOptions{
-		Prompt:            req.Prompt,
-		PromptSource:      req.PromptSource,
-		Model:             req.Model,
-		Profile:           req.Profile,
-		Continue:          true,
-		NativeSessionID:   target.NativeSessionID,
-		NativeSessionMeta: target.Metadata,
-	}); err != nil {
+	target, err := s.resolveContinuationTarget(ctx, session, req.Adapter)
+	if err != nil {
 		return nil, err
 	}
-	message, runErr := s.queuePreparedJob(ctx, &job, &turn)
-	if runErr == nil {
-		lockHeld = false
+
+	outputPath, err := s.resolveDebriefOutputPath(req.OutputPath, session.SessionID, "")
+	if err != nil {
+		return nil, err
+	}
+	prompt := debriefpkg.RenderPrompt(session, target.Adapter, req.Reason)
+
+	runResult, err := s.queueContinuation(ctx, session, target, continuationRequest{
+		Prompt:       prompt,
+		PromptSource: "debrief",
+		Model:        req.Model,
+		Profile:      req.Profile,
+		Summary: map[string]any{
+			"prompt_source":      "debrief",
+			"continued":          true,
+			"debrief":            true,
+			"debrief_reason":     normalizeDebriefReason(req.Reason),
+			"debrief_path":       outputPath,
+			"debrief_format":     "markdown",
+			"debrief_requested":  true,
+			"debrief_source_job": session.LatestJobID,
+		},
+	})
+	if runResult == nil {
+		return nil, err
 	}
 
-	return &RunResult{
-		Job:     job,
-		Session: session,
-		Message: message,
-	}, runErr
+	path, _ := runResult.Job.Summary["debrief_path"].(string)
+	if path == "" {
+		path = outputPath
+	}
+	return &DebriefResult{
+		Job:     runResult.Job,
+		Session: runResult.Session,
+		Path:    path,
+		Message: runResult.Message,
+	}, err
 }
 
 func (s *Service) Session(ctx context.Context, sessionID string) (*SessionResult, error) {
@@ -493,21 +504,32 @@ func (s *Service) Session(ctx context.Context, sessionID string) (*SessionResult
 
 	actions := make([]SessionAction, 0, len(nativeSessions))
 	for _, native := range nativeSessions {
-		action := SessionAction{
-			Action:          "send",
-			Adapter:         native.Adapter,
-			NativeSessionID: native.NativeSessionID,
-			Available:       native.Resumable && active == nil && native.LockedByJobID == "",
-		}
+		available := native.Resumable && active == nil && native.LockedByJobID == ""
+		reason := ""
 		switch {
 		case !native.Resumable:
-			action.Reason = "adapter does not declare native continuation"
+			reason = "adapter does not declare native continuation"
 		case active != nil:
-			action.Reason = fmt.Sprintf("active job %s is still running", active.JobID)
+			reason = fmt.Sprintf("active job %s is still running", active.JobID)
 		case native.LockedByJobID != "":
-			action.Reason = fmt.Sprintf("native session lock held by job %s", native.LockedByJobID)
+			reason = fmt.Sprintf("native session lock held by job %s", native.LockedByJobID)
 		}
-		actions = append(actions, action)
+		actions = append(actions,
+			SessionAction{
+				Action:          "send",
+				Adapter:         native.Adapter,
+				NativeSessionID: native.NativeSessionID,
+				Available:       available,
+				Reason:          reason,
+			},
+			SessionAction{
+				Action:          "debrief",
+				Adapter:         native.Adapter,
+				NativeSessionID: native.NativeSessionID,
+				Available:       available,
+				Reason:          reason,
+			},
+		)
 	}
 
 	return &SessionResult{
@@ -981,6 +1003,11 @@ func (s *Service) startPreparedJobLifecycle(
 	if err := s.finishJob(ctx, job, terminalState); err != nil {
 		return message, err
 	}
+	if terminalState == core.JobStateCompleted {
+		if err := s.persistDebrief(ctx, job, message); err != nil {
+			return message, err
+		}
+	}
 	if _, err := s.emitEvent(ctx, *job, terminalEvent, "lifecycle", map[string]any{
 		"message": message,
 	}, "", nil); err != nil {
@@ -1211,12 +1238,12 @@ func (s *Service) ExecuteDetachedJob(ctx context.Context, jobID, turnID string) 
 		return err
 	}
 
-	_, runErr := s.startPreparedJobLifecycle(ctx, adapter, descriptor, &job, &turn, startExecutionOptions{
-		Prompt:       turn.InputText,
-		PromptSource: turn.InputSource,
-		Model:        summaryString(job.Summary, "model"),
-		Profile:      summaryString(job.Summary, "profile"),
-	})
+	opts, err := s.executionOptionsForJob(ctx, job, turn)
+	if err != nil {
+		return err
+	}
+
+	_, runErr := s.startPreparedJobLifecycle(ctx, adapter, descriptor, &job, &turn, opts)
 	return runErr
 }
 
@@ -1258,6 +1285,229 @@ func (s *Service) releaseContinuationLock(ctx context.Context, job core.JobRecor
 		return
 	}
 	_ = s.store.ReleaseLock(ctx, lockKey(job.Adapter, job.NativeSessionID), job.JobID)
+}
+
+func (s *Service) queueContinuation(
+	ctx context.Context,
+	session core.SessionRecord,
+	target core.NativeSessionRecord,
+	req continuationRequest,
+) (*RunResult, error) {
+	now := time.Now().UTC()
+	job := core.JobRecord{
+		JobID:           core.GenerateID("job"),
+		SessionID:       session.SessionID,
+		Adapter:         target.Adapter,
+		State:           core.JobStateCreated,
+		CWD:             session.CWD,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		NativeSessionID: target.NativeSessionID,
+		Summary:         cloneMap(req.Summary),
+	}
+	if job.Summary == nil {
+		job.Summary = map[string]any{}
+	}
+	if req.PromptSource != "" {
+		job.Summary["prompt_source"] = req.PromptSource
+	}
+	if req.Model != "" {
+		job.Summary["model"] = req.Model
+	}
+	if req.Profile != "" {
+		job.Summary["profile"] = req.Profile
+	}
+	if debriefRequested, _ := job.Summary["debrief"].(bool); debriefRequested {
+		path, err := s.resolveDebriefOutputPath(summaryString(job.Summary, "debrief_path"), session.SessionID, job.JobID)
+		if err != nil {
+			return nil, err
+		}
+		job.Summary["debrief_path"] = path
+	}
+	if err := s.store.CreateJobAndUpdateSession(ctx, session.SessionID, now, job); err != nil {
+		return nil, err
+	}
+	session.LatestJobID = job.JobID
+	session.UpdatedAt = now
+
+	lock := core.LockRecord{
+		LockKey:         lockKey(target.Adapter, target.NativeSessionID),
+		Adapter:         target.Adapter,
+		NativeSessionID: target.NativeSessionID,
+		JobID:           job.JobID,
+		AcquiredAt:      now,
+	}
+	if err := s.store.AcquireLock(ctx, lock); err != nil {
+		message := fmt.Sprintf("native session %s is already in use", target.NativeSessionID)
+		job.Summary["message"] = message
+		_ = s.finishJob(ctx, &job, core.JobStateBlocked)
+		return &RunResult{
+			Job:     job,
+			Session: session,
+			Message: message,
+		}, fmt.Errorf("%w: %s", ErrSessionLocked, message)
+	}
+	lockHeld := true
+	defer func() {
+		if lockHeld {
+			_ = s.store.ReleaseLock(context.Background(), lock.LockKey, lock.JobID)
+		}
+	}()
+
+	turn := core.TurnRecord{
+		TurnID:          core.GenerateID("turn"),
+		SessionID:       session.SessionID,
+		JobID:           job.JobID,
+		Adapter:         job.Adapter,
+		StartedAt:       now,
+		InputText:       req.Prompt,
+		InputSource:     req.PromptSource,
+		Status:          string(core.JobStateCreated),
+		NativeSessionID: target.NativeSessionID,
+		Stats:           map[string]any{},
+	}
+
+	if err := s.prepareJobLifecycle(ctx, &job, &turn, startExecutionOptions{
+		Prompt:            req.Prompt,
+		PromptSource:      req.PromptSource,
+		Model:             req.Model,
+		Profile:           req.Profile,
+		Continue:          true,
+		NativeSessionID:   target.NativeSessionID,
+		NativeSessionMeta: target.Metadata,
+	}); err != nil {
+		return nil, err
+	}
+	message, runErr := s.queuePreparedJob(ctx, &job, &turn)
+	if runErr == nil {
+		lockHeld = false
+	}
+
+	return &RunResult{
+		Job:     job,
+		Session: session,
+		Message: message,
+	}, runErr
+}
+
+func (s *Service) executionOptionsForJob(ctx context.Context, job core.JobRecord, turn core.TurnRecord) (startExecutionOptions, error) {
+	opts := startExecutionOptions{
+		Prompt:       turn.InputText,
+		PromptSource: turn.InputSource,
+		Model:        summaryString(job.Summary, "model"),
+		Profile:      summaryString(job.Summary, "profile"),
+	}
+
+	continued, _ := job.Summary["continued"].(bool)
+	if !continued {
+		return opts, nil
+	}
+
+	opts.Continue = true
+	opts.NativeSessionID = job.NativeSessionID
+	if job.NativeSessionID == "" {
+		return opts, nil
+	}
+
+	metadata, err := s.nativeSessionMetadata(ctx, job.SessionID, job.Adapter, job.NativeSessionID)
+	if err != nil {
+		return opts, err
+	}
+	opts.NativeSessionMeta = metadata
+	return opts, nil
+}
+
+func (s *Service) nativeSessionMetadata(ctx context.Context, sessionID, adapter, nativeSessionID string) (map[string]any, error) {
+	if sessionID == "" || adapter == "" || nativeSessionID == "" {
+		return nil, nil
+	}
+
+	nativeSessions, err := s.store.ListNativeSessions(ctx, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	for _, native := range nativeSessions {
+		if native.Adapter == adapter && native.NativeSessionID == nativeSessionID {
+			return cloneMap(native.Metadata), nil
+		}
+	}
+	return nil, nil
+}
+
+func (s *Service) resolveDebriefOutputPath(outputPath, sessionID, jobID string) (string, error) {
+	path := strings.TrimSpace(outputPath)
+	if path == "" {
+		name := "latest.md"
+		if jobID != "" {
+			name = jobID + ".md"
+		}
+		path = filepath.Join(s.Paths.DebriefsDir, sessionID, name)
+	} else {
+		expanded, err := core.ExpandPath(path)
+		if err != nil {
+			return "", fmt.Errorf("%w: expand debrief output path: %v", ErrInvalidInput, err)
+		}
+		path = expanded
+	}
+
+	if !filepath.IsAbs(path) {
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("%w: resolve debrief output path: %v", ErrInvalidInput, err)
+		}
+		path = absolute
+	}
+
+	return path, nil
+}
+
+func (s *Service) persistDebrief(ctx context.Context, job *core.JobRecord, message string) error {
+	requested, _ := job.Summary["debrief"].(bool)
+	if !requested {
+		return nil
+	}
+
+	path, err := s.resolveDebriefOutputPath(summaryString(job.Summary, "debrief_path"), job.SessionID, job.JobID)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return fmt.Errorf("create debrief directory: %w", err)
+	}
+	if err := os.WriteFile(path, []byte(strings.TrimSpace(message)+"\n"), 0o644); err != nil {
+		return fmt.Errorf("write debrief: %w", err)
+	}
+
+	artifact := core.ArtifactRecord{
+		ArtifactID: core.GenerateID("art"),
+		JobID:      job.JobID,
+		SessionID:  job.SessionID,
+		Kind:       "debrief",
+		Path:       path,
+		CreatedAt:  time.Now().UTC(),
+		Metadata: map[string]any{
+			"adapter": job.Adapter,
+			"format":  "markdown",
+			"reason":  summaryString(job.Summary, "debrief_reason"),
+		},
+	}
+	if err := s.store.InsertArtifact(ctx, artifact); err != nil {
+		return err
+	}
+
+	job.Summary["debrief_path"] = path
+	job.Summary["debrief_format"] = "markdown"
+	if err := s.store.UpdateJob(ctx, *job); err != nil {
+		return err
+	}
+	if _, err := s.emitEvent(ctx, *job, "debrief.exported", "debrief", map[string]any{
+		"path":   path,
+		"format": "markdown",
+		"reason": summaryString(job.Summary, "debrief_reason"),
+	}, "", nil); err != nil {
+		return err
+	}
+	return nil
 }
 
 func detachedExecutablePath() (string, error) {
@@ -1676,6 +1926,14 @@ func defaultTransferReason(job core.JobRecord) string {
 		return fmt.Sprintf("source job ended in state %s", job.State)
 	}
 	return "operator-requested context transfer"
+}
+
+func normalizeDebriefReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "operator-requested debrief"
+	}
+	return reason
 }
 
 func normalizeTransferMode(mode string) string {

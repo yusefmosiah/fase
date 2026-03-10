@@ -48,6 +48,17 @@ type cliTransferExportResult struct {
 	Path string `json:"path"`
 }
 
+type cliDebriefResult struct {
+	Job struct {
+		JobID string `json:"job_id"`
+		State string `json:"state"`
+	} `json:"job"`
+	Session struct {
+		SessionID string `json:"session_id"`
+	} `json:"session"`
+	Path string `json:"path"`
+}
+
 func TestDetachedRunCanBeCancelled(t *testing.T) {
 	binary := buildCagentBinary(t)
 	configPath := writeFakeCodexConfig(t)
@@ -147,6 +158,41 @@ func TestTransferExportAndRun(t *testing.T) {
 		t.Fatalf("unmarshal transfer run: %v\n%s", err, targetOutput)
 	}
 	waitForJobState(t, binary, configPath, targetRun.Job.JobID, map[string]bool{"completed": true})
+}
+
+func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeCodexConfig(t)
+
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "build debrief source")
+	var runResult cliRunResult
+	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
+		t.Fatalf("unmarshal source run: %v\n%s", err, runOutput)
+	}
+	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+
+	debriefOutput := runCagent(t, binary, configPath, "--json", "debrief", "--session", runResult.Session.SessionID)
+	var debriefResult cliDebriefResult
+	if err := json.Unmarshal([]byte(debriefOutput), &debriefResult); err != nil {
+		t.Fatalf("unmarshal debrief run: %v\n%s", err, debriefOutput)
+	}
+	if debriefResult.Path == "" {
+		t.Fatal("expected debrief output path")
+	}
+	waitForJobState(t, binary, configPath, debriefResult.Job.JobID, map[string]bool{"completed": true})
+
+	data, err := os.ReadFile(debriefResult.Path)
+	if err != nil {
+		t.Fatalf("read debrief artifact: %v", err)
+	}
+	if !strings.Contains(string(data), "# Recommended Next Step") {
+		t.Fatalf("expected markdown debrief headings, got:\n%s", data)
+	}
+
+	logOutput := runCagent(t, binary, configPath, "logs", debriefResult.Job.JobID)
+	if !strings.Contains(logOutput, "debrief.exported") {
+		t.Fatalf("expected debrief.exported event in logs:\n%s", logOutput)
+	}
 }
 
 func buildCagentBinary(t *testing.T) string {

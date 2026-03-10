@@ -16,6 +16,7 @@ type Paths struct {
 	JobsDir      string
 	RawDir       string
 	TransfersDir string
+	DebriefsDir  string
 }
 
 func ResolvePaths() (Paths, error) {
@@ -56,6 +57,7 @@ func ResolvePathsFromEnv(home string, getenv func(string) string) (Paths, error)
 		JobsDir:      filepath.Join(stateDir, "jobs"),
 		RawDir:       filepath.Join(stateDir, "raw"),
 		TransfersDir: filepath.Join(stateDir, "transfers"),
+		DebriefsDir:  filepath.Join(stateDir, "debriefs"),
 	}, nil
 }
 
@@ -65,6 +67,7 @@ func (p Paths) WithStateDir(stateDir string) Paths {
 	p.JobsDir = filepath.Join(stateDir, "jobs")
 	p.RawDir = filepath.Join(stateDir, "raw")
 	p.TransfersDir = filepath.Join(stateDir, "transfers")
+	p.DebriefsDir = filepath.Join(stateDir, "debriefs")
 	return p
 }
 
@@ -80,6 +83,7 @@ func EnsurePaths(paths Paths) error {
 		paths.JobsDir,
 		paths.RawDir,
 		paths.TransfersDir,
+		paths.DebriefsDir,
 	}
 
 	for _, dir := range dirs {
