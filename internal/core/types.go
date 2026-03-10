@@ -110,41 +110,52 @@ type ArtifactRecord struct {
 	Metadata   map[string]any `json:"metadata"`
 }
 
-type HandoffSource struct {
+type TransferSource struct {
 	Adapter         string `json:"adapter"`
+	Model           string `json:"model,omitempty"`
 	JobID           string `json:"job_id"`
 	SessionID       string `json:"session_id"`
 	NativeSessionID string `json:"native_session_id,omitempty"`
 	CWD             string `json:"cwd,omitempty"`
 }
 
-type HandoffArtifact struct {
+type TransferArtifact struct {
 	Kind     string         `json:"kind"`
 	Path     string         `json:"path"`
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-type HandoffPacket struct {
-	HandoffID            string            `json:"handoff_id"`
-	ExportedAt           time.Time         `json:"exported_at"`
-	Source               HandoffSource     `json:"source"`
-	Objective            string            `json:"objective"`
-	Summary              string            `json:"summary"`
-	Unresolved           []string          `json:"unresolved"`
-	ImportantFiles       []string          `json:"important_files"`
-	RecentTurns          []TurnRecord      `json:"recent_turns,omitempty"`
-	RecentEvents         []EventRecord     `json:"recent_events"`
-	Artifacts            []HandoffArtifact `json:"artifacts"`
-	Constraints          []string          `json:"constraints"`
-	RecommendedNextSteps []string          `json:"recommended_next_steps"`
+type TransferEvidenceRef struct {
+	Kind     string         `json:"kind"`
+	Path     string         `json:"path"`
+	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-type HandoffRecord struct {
-	HandoffID string        `json:"handoff_id"`
-	JobID     string        `json:"job_id"`
-	SessionID string        `json:"session_id"`
-	CreatedAt time.Time     `json:"created_at"`
-	Packet    HandoffPacket `json:"packet"`
+type TransferPacket struct {
+	TransferID           string                `json:"transfer_id"`
+	ExportedAt           time.Time             `json:"exported_at"`
+	Mode                 string                `json:"mode"`
+	Reason               string                `json:"reason,omitempty"`
+	Disclaimer           string                `json:"disclaimer"`
+	Source               TransferSource        `json:"source"`
+	Objective            string                `json:"objective"`
+	Summary              string                `json:"summary"`
+	Unresolved           []string              `json:"unresolved"`
+	ImportantFiles       []string              `json:"important_files"`
+	RecentTurnsInline    []TurnRecord          `json:"recent_turns_inline,omitempty"`
+	RecentEventsInline   []EventRecord         `json:"recent_events_inline,omitempty"`
+	EvidenceRefs         []TransferEvidenceRef `json:"evidence_refs"`
+	Artifacts            []TransferArtifact    `json:"artifacts"`
+	Constraints          []string              `json:"constraints"`
+	RecommendedNextSteps []string              `json:"recommended_next_steps"`
+}
+
+type TransferRecord struct {
+	TransferID string         `json:"transfer_id"`
+	JobID      string         `json:"job_id"`
+	SessionID  string         `json:"session_id"`
+	CreatedAt  time.Time      `json:"created_at"`
+	Packet     TransferPacket `json:"packet"`
 }
 
 type LockRecord struct {
@@ -154,4 +165,15 @@ type LockRecord struct {
 	JobID           string     `json:"job_id"`
 	AcquiredAt      time.Time  `json:"acquired_at"`
 	ExpiresAt       *time.Time `json:"expires_at,omitempty"`
+}
+
+type JobRuntimeRecord struct {
+	JobID             string     `json:"job_id"`
+	SupervisorPID     int        `json:"supervisor_pid,omitempty"`
+	VendorPID         int        `json:"vendor_pid,omitempty"`
+	Detached          bool       `json:"detached"`
+	StartedAt         time.Time  `json:"started_at"`
+	UpdatedAt         time.Time  `json:"updated_at"`
+	CancelRequestedAt *time.Time `json:"cancel_requested_at,omitempty"`
+	CompletedAt       *time.Time `json:"completed_at,omitempty"`
 }

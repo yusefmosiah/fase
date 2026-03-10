@@ -84,6 +84,7 @@ func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) 
 
 	cmd := exec.CommandContext(ctx, a.binary, args...)
 	cmd.Dir = req.CWD
+	adapterapi.PrepareCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -140,6 +141,7 @@ func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunReq
 
 	cmd := exec.CommandContext(ctx, a.binary, args...)
 	cmd.Dir = req.CWD
+	adapterapi.PrepareCommand(cmd)
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {

@@ -5,6 +5,7 @@ script_dir="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 last_message=""
 mode="run"
 session_id="codex-session-123"
+prompt=""
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -25,9 +26,22 @@ while [ "$#" -gt 0 ]; do
   shift
 done
 
+if [ "$mode" = "run" ]; then
+  prompt="$(cat || true)"
+fi
+
 if [ "$mode" = "resume" ]; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
   printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex continued the task"}}'
+elif printf '%s' "$prompt" | grep -qi 'hang'; then
+  trap 'exit 130' INT TERM
+  printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
+  sleep 10
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex hang task completed"}}'
+elif printf '%s' "$prompt" | grep -qi 'slow'; then
+  printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
+  sleep 1
+  printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex slow task completed"}}'
 else
   cat "$script_dir/../fixtures/codex/success.jsonl"
 fi

@@ -1,17 +1,40 @@
 package handoff
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/yusefmosiah/cagent/internal/core"
 )
 
-func RenderPrompt(targetAdapter string, packet core.HandoffPacket) string {
+func RenderPrompt(targetAdapter string, packet core.TransferPacket) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "You are continuing work from a prior %s session via a cagent handoff.\n\n", packet.Source.Adapter)
+	fmt.Fprintf(&b, "You are receiving a cagent context transfer from %s into %s.\n\n", packet.Source.Adapter, targetAdapter)
+	if packet.Disclaimer != "" {
+		fmt.Fprintf(&b, "%s\n\n", packet.Disclaimer)
+	}
+
+	b.WriteString("Transfer metadata:\n")
+	fmt.Fprintf(&b, "- mode: %s\n", packet.Mode)
+	if packet.Reason != "" {
+		fmt.Fprintf(&b, "- reason: %s\n", packet.Reason)
+	}
+	fmt.Fprintf(&b, "- source adapter: %s\n", packet.Source.Adapter)
+	if packet.Source.Model != "" {
+		fmt.Fprintf(&b, "- source model: %s\n", packet.Source.Model)
+	}
+	if packet.Source.SessionID != "" {
+		fmt.Fprintf(&b, "- source session: %s\n", packet.Source.SessionID)
+	}
+	if packet.Source.JobID != "" {
+		fmt.Fprintf(&b, "- source job: %s\n", packet.Source.JobID)
+	}
+	if packet.Source.CWD != "" {
+		fmt.Fprintf(&b, "- source cwd: %s\n", packet.Source.CWD)
+	}
+	b.WriteString("\n")
+
 	if packet.Objective != "" {
 		fmt.Fprintf(&b, "Objective:\n%s\n\n", packet.Objective)
 	}
@@ -32,6 +55,20 @@ func RenderPrompt(targetAdapter string, packet core.HandoffPacket) string {
 		}
 		b.WriteString("\n")
 	}
+	if len(packet.RecentTurnsInline) > 0 {
+		b.WriteString("Recent turns (inline excerpt):\n")
+		for _, turn := range packet.RecentTurnsInline {
+			fmt.Fprintf(&b, "- [%s] input=%q summary=%q\n", turn.Adapter, turn.InputText, turn.ResultSummary)
+		}
+		b.WriteString("\n")
+	}
+	if len(packet.EvidenceRefs) > 0 {
+		b.WriteString("Evidence references:\n")
+		for _, ref := range packet.EvidenceRefs {
+			fmt.Fprintf(&b, "- %s: %s\n", ref.Kind, ref.Path)
+		}
+		b.WriteString("\n")
+	}
 	if len(packet.Constraints) > 0 {
 		b.WriteString("Constraints:\n")
 		for _, item := range packet.Constraints {
@@ -45,11 +82,6 @@ func RenderPrompt(targetAdapter string, packet core.HandoffPacket) string {
 			fmt.Fprintf(&b, "- %s\n", item)
 		}
 		b.WriteString("\n")
-	}
-
-	serialized, err := json.MarshalIndent(packet, "", "  ")
-	if err == nil {
-		fmt.Fprintf(&b, "Handoff packet for %s:\n```json\n%s\n```\n", targetAdapter, serialized)
 	}
 
 	return strings.TrimSpace(b.String())

@@ -8,16 +8,19 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/yusefmosiah/cagent/internal/adapterapi"
 	"github.com/yusefmosiah/cagent/internal/adapters"
 	"github.com/yusefmosiah/cagent/internal/core"
 	"github.com/yusefmosiah/cagent/internal/events"
-	handoffpkg "github.com/yusefmosiah/cagent/internal/handoff"
+	transferpkg "github.com/yusefmosiah/cagent/internal/handoff"
 	"github.com/yusefmosiah/cagent/internal/store"
 )
 
@@ -32,9 +35,11 @@ var (
 )
 
 type Service struct {
-	Paths  core.Paths
-	Config core.Config
-	store  *store.Store
+	Paths         core.Paths
+	Config        core.Config
+	ConfigPath    string
+	ConfigPresent bool
+	store         *store.Store
 }
 
 type RunRequest struct {
@@ -45,12 +50,11 @@ type RunRequest struct {
 	Label           string
 	Model           string
 	Profile         string
-	Detached        bool
 	EnvFile         string
 	ArtifactDir     string
 	SessionID       string
 	ParentSessionID string
-	HandoffID       string
+	TransferID      string
 }
 
 type SendRequest struct {
@@ -68,24 +72,26 @@ type RunResult struct {
 	Message string             `json:"message,omitempty"`
 }
 
-type HandoffExportRequest struct {
+type TransferExportRequest struct {
 	JobID      string
 	SessionID  string
 	OutputPath string
+	Reason     string
+	Mode       string
 }
 
-type HandoffExportResult struct {
-	Handoff core.HandoffRecord `json:"handoff"`
-	Path    string             `json:"path"`
+type TransferExportResult struct {
+	Transfer core.TransferRecord `json:"transfer"`
+	Path     string              `json:"path"`
 }
 
-type HandoffRunRequest struct {
-	HandoffRef string
-	Adapter    string
-	CWD        string
-	Model      string
-	Profile    string
-	Label      string
+type TransferRunRequest struct {
+	TransferRef string
+	Adapter     string
+	CWD         string
+	Model       string
+	Profile     string
+	Label       string
 }
 
 type StatusResult struct {
@@ -111,10 +117,45 @@ type SessionResult struct {
 	Actions        []SessionAction            `json:"actions"`
 }
 
+type RuntimeAdapter struct {
+	Adapter      string                  `json:"adapter"`
+	Binary       string                  `json:"binary"`
+	Version      *string                 `json:"version,omitempty"`
+	Enabled      bool                    `json:"enabled"`
+	Available    bool                    `json:"available"`
+	Implemented  bool                    `json:"implemented"`
+	Capabilities adapterapi.Capabilities `json:"capabilities"`
+	Summary      string                  `json:"summary,omitempty"`
+	Speed        string                  `json:"speed,omitempty"`
+	Cost         string                  `json:"cost,omitempty"`
+	Tags         []string                `json:"tags,omitempty"`
+}
+
+type RuntimeResult struct {
+	ConfigPath    string              `json:"config_path"`
+	ConfigPresent bool                `json:"config_present"`
+	Paths         core.Paths          `json:"paths"`
+	Defaults      core.DefaultsConfig `json:"defaults"`
+	Adapters      []RuntimeAdapter    `json:"adapters"`
+}
+
 type RawLogEntry struct {
 	Stream  string `json:"stream"`
 	Path    string `json:"path"`
 	Content string `json:"content"`
+}
+
+type ListJobsRequest struct {
+	Limit     int
+	Adapter   string
+	State     string
+	SessionID string
+}
+
+type ListSessionsRequest struct {
+	Limit   int
+	Adapter string
+	Status  string
 }
 
 type lineItem struct {
@@ -137,6 +178,16 @@ func Open(ctx context.Context, configPath string) (*Service, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime paths: %w", err)
 	}
+
+	resolvedConfigPath := paths.ConfigPath
+	if configPath != "" {
+		resolvedConfigPath, err = core.ExpandPath(configPath)
+		if err != nil {
+			return nil, fmt.Errorf("expand config path: %w", err)
+		}
+	}
+	_, statErr := os.Stat(resolvedConfigPath)
+	configPresent := statErr == nil
 
 	cfg, err := core.LoadConfig(configPath)
 	if err != nil {
@@ -161,9 +212,11 @@ func Open(ctx context.Context, configPath string) (*Service, error) {
 	}
 
 	return &Service{
-		Paths:  paths,
-		Config: cfg,
-		store:  db,
+		Paths:         paths,
+		Config:        cfg,
+		ConfigPath:    resolvedConfigPath,
+		ConfigPresent: configPresent,
+		store:         db,
 	}, nil
 }
 
@@ -183,8 +236,7 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		return nil, fmt.Errorf("%w: prompt must not be empty", ErrInvalidInput)
 	}
 
-	adapter, descriptor, err := s.resolveAdapter(ctx, req.Adapter)
-	if err != nil {
+	if _, _, err := s.resolveAdapter(ctx, req.Adapter); err != nil {
 		return nil, err
 	}
 
@@ -200,8 +252,8 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 			parentSession = &parent
 		}
 		metadata := map[string]any{}
-		if req.HandoffID != "" {
-			metadata["source_handoff_id"] = req.HandoffID
+		if req.TransferID != "" {
+			metadata["source_transfer_id"] = req.TransferID
 		}
 		sessionID = core.GenerateID("ses")
 		session = core.SessionRecord{
@@ -241,11 +293,16 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		UpdatedAt: now,
 		Summary: map[string]any{
 			"prompt_source": req.PromptSource,
-			"detached":      req.Detached,
 		},
 	}
-	if req.HandoffID != "" {
-		job.Summary["handoff_id"] = req.HandoffID
+	if req.Model != "" {
+		job.Summary["model"] = req.Model
+	}
+	if req.Profile != "" {
+		job.Summary["profile"] = req.Profile
+	}
+	if req.TransferID != "" {
+		job.Summary["transfer_id"] = req.TransferID
 	}
 	if req.SessionID == "" {
 		if err := s.store.CreateSessionAndJob(ctx, session, job); err != nil {
@@ -274,12 +331,15 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		Stats:       map[string]any{},
 	}
 
-	result.Message, err = s.executeJobLifecycle(ctx, adapter, descriptor, &job, &turn, startExecutionOptions{
+	if err := s.prepareJobLifecycle(ctx, &job, &turn, startExecutionOptions{
 		Prompt:       req.Prompt,
 		PromptSource: req.PromptSource,
 		Model:        req.Model,
 		Profile:      req.Profile,
-	})
+	}); err != nil {
+		return result, err
+	}
+	result.Message, err = s.queuePreparedJob(ctx, &job, &turn)
 	result.Job = job
 	return result, err
 }
@@ -310,7 +370,7 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 		return nil, err
 	}
 
-	adapter, descriptor, err := s.resolveAdapter(ctx, target.Adapter)
+	_, descriptor, err := s.resolveAdapter(ctx, target.Adapter)
 	if err != nil {
 		return nil, err
 	}
@@ -332,6 +392,12 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 			"prompt_source": req.PromptSource,
 			"continued":     true,
 		},
+	}
+	if req.Model != "" {
+		job.Summary["model"] = req.Model
+	}
+	if req.Profile != "" {
+		job.Summary["profile"] = req.Profile
 	}
 	if err := s.store.CreateJobAndUpdateSession(ctx, session.SessionID, now, job); err != nil {
 		return nil, err
@@ -356,8 +422,11 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 			Message: message,
 		}, fmt.Errorf("%w: %s", ErrSessionLocked, message)
 	}
+	lockHeld := true
 	defer func() {
-		_ = s.store.ReleaseLock(context.Background(), lock.LockKey, lock.JobID)
+		if lockHeld {
+			_ = s.store.ReleaseLock(context.Background(), lock.LockKey, lock.JobID)
+		}
 	}()
 
 	turn := core.TurnRecord{
@@ -373,7 +442,7 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 		Stats:           map[string]any{},
 	}
 
-	message, runErr := s.executeJobLifecycle(ctx, adapter, descriptor, &job, &turn, startExecutionOptions{
+	if err := s.prepareJobLifecycle(ctx, &job, &turn, startExecutionOptions{
 		Prompt:            req.Prompt,
 		PromptSource:      req.PromptSource,
 		Model:             req.Model,
@@ -381,7 +450,13 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 		Continue:          true,
 		NativeSessionID:   target.NativeSessionID,
 		NativeSessionMeta: target.Metadata,
-	})
+	}); err != nil {
+		return nil, err
+	}
+	message, runErr := s.queuePreparedJob(ctx, &job, &turn)
+	if runErr == nil {
+		lockHeld = false
+	}
 
 	return &RunResult{
 		Job:     job,
@@ -444,7 +519,47 @@ func (s *Service) Session(ctx context.Context, sessionID string) (*SessionResult
 	}, nil
 }
 
-func (s *Service) ExportHandoff(ctx context.Context, req HandoffExportRequest) (*HandoffExportResult, error) {
+func (s *Service) Runtime(ctx context.Context, adapterName string) (*RuntimeResult, error) {
+	catalog := adapters.CatalogFromConfig(s.Config)
+	entries := make([]RuntimeAdapter, 0, len(catalog))
+	for _, entry := range catalog {
+		if adapterName != "" && entry.Adapter != adapterName {
+			continue
+		}
+
+		cfg, ok := s.Config.Adapters.ByName(entry.Adapter)
+		if !ok {
+			continue
+		}
+
+		entries = append(entries, RuntimeAdapter{
+			Adapter:      entry.Adapter,
+			Binary:       entry.Binary,
+			Version:      entry.Version,
+			Enabled:      entry.Enabled,
+			Available:    entry.Available,
+			Implemented:  entry.Implemented,
+			Capabilities: entry.Capabilities,
+			Summary:      cfg.Summary,
+			Speed:        cfg.Speed,
+			Cost:         cfg.Cost,
+			Tags:         append([]string(nil), cfg.Tags...),
+		})
+	}
+	if adapterName != "" && len(entries) == 0 {
+		return nil, fmt.Errorf("%w: unknown adapter %q", ErrInvalidInput, adapterName)
+	}
+
+	return &RuntimeResult{
+		ConfigPath:    s.ConfigPath,
+		ConfigPresent: s.ConfigPresent,
+		Paths:         s.Paths,
+		Defaults:      s.Config.Defaults,
+		Adapters:      entries,
+	}, nil
+}
+
+func (s *Service) ExportTransfer(ctx context.Context, req TransferExportRequest) (*TransferExportResult, error) {
 	if (req.JobID == "" && req.SessionID == "") || (req.JobID != "" && req.SessionID != "") {
 		return nil, fmt.Errorf("%w: specify exactly one of job_id or session_id", ErrInvalidInput)
 	}
@@ -491,51 +606,53 @@ func (s *Service) ExportHandoff(ctx context.Context, req HandoffExportRequest) (
 		return nil, err
 	}
 
-	packet := s.buildHandoffPacket(job, session, turns, events, artifacts)
-	record := core.HandoffRecord{
-		HandoffID: packet.HandoffID,
-		JobID:     job.JobID,
-		SessionID: session.SessionID,
-		CreatedAt: packet.ExportedAt,
-		Packet:    packet,
-	}
-	if err := s.store.CreateHandoff(ctx, record); err != nil {
+	packet := s.buildTransferPacket(job, session, turns, events, artifacts, req.Reason, req.Mode)
+	packet, path, err := s.writeTransferBundle(packet, req.OutputPath, turns, events)
+	if err != nil {
 		return nil, err
 	}
-
-	path, err := s.writeHandoffFile(packet, req.OutputPath)
-	if err != nil {
+	record := core.TransferRecord{
+		TransferID: packet.TransferID,
+		JobID:      job.JobID,
+		SessionID:  session.SessionID,
+		CreatedAt:  packet.ExportedAt,
+		Packet:     packet,
+	}
+	if err := s.store.CreateTransfer(ctx, record); err != nil {
 		return nil, err
 	}
 	if err := s.store.InsertArtifact(ctx, core.ArtifactRecord{
 		ArtifactID: core.GenerateID("art"),
 		JobID:      job.JobID,
 		SessionID:  session.SessionID,
-		Kind:       "handoff",
+		Kind:       "transfer",
 		Path:       path,
 		CreatedAt:  packet.ExportedAt,
 		Metadata: map[string]any{
-			"handoff_id": packet.HandoffID,
+			"transfer_id": packet.TransferID,
+			"mode":        packet.Mode,
 		},
 	}); err != nil {
 		return nil, err
 	}
-	if _, err := s.emitEvent(ctx, job, "handoff.exported", "handoff", map[string]any{
-		"handoff_id": packet.HandoffID,
-		"path":       path,
+	if _, err := s.emitEvent(ctx, job, "transfer.exported", "transfer", map[string]any{
+		"transfer_id": packet.TransferID,
+		"path":        path,
+		"mode":        packet.Mode,
+		"reason":      packet.Reason,
 	}, "", nil); err != nil {
 		return nil, err
 	}
 
-	return &HandoffExportResult{
-		Handoff: record,
-		Path:    path,
+	return &TransferExportResult{
+		Transfer: record,
+		Path:     path,
 	}, nil
 }
 
-func (s *Service) RunHandoff(ctx context.Context, req HandoffRunRequest) (*RunResult, error) {
-	if req.HandoffRef == "" {
-		return nil, fmt.Errorf("%w: handoff must not be empty", ErrInvalidInput)
+func (s *Service) RunTransfer(ctx context.Context, req TransferRunRequest) (*RunResult, error) {
+	if req.TransferRef == "" {
+		return nil, fmt.Errorf("%w: transfer must not be empty", ErrInvalidInput)
 	}
 	if req.Adapter == "" {
 		return nil, fmt.Errorf("%w: adapter must not be empty", ErrInvalidInput)
@@ -544,7 +661,7 @@ func (s *Service) RunHandoff(ctx context.Context, req HandoffRunRequest) (*RunRe
 		return nil, err
 	}
 
-	record, err := s.loadHandoff(ctx, req.HandoffRef)
+	record, err := s.loadTransfer(ctx, req.TransferRef)
 	if err != nil {
 		return nil, err
 	}
@@ -559,22 +676,24 @@ func (s *Service) RunHandoff(ctx context.Context, req HandoffRunRequest) (*RunRe
 		return nil, fmt.Errorf("%w: cwd is required when the source session is not available locally", ErrInvalidInput)
 	}
 
-	prompt := handoffpkg.RenderPrompt(req.Adapter, record.Packet)
+	prompt := transferpkg.RenderPrompt(req.Adapter, record.Packet)
 	result, runErr := s.Run(ctx, RunRequest{
 		Adapter:         req.Adapter,
 		CWD:             cwd,
 		Prompt:          prompt,
-		PromptSource:    "handoff",
+		PromptSource:    "transfer",
 		Label:           req.Label,
 		Model:           req.Model,
 		Profile:         req.Profile,
 		ParentSessionID: record.Packet.Source.SessionID,
-		HandoffID:       record.Packet.HandoffID,
+		TransferID:      record.Packet.TransferID,
 	})
 	if result != nil {
-		if _, err := s.emitEvent(ctx, result.Job, "handoff.started", "handoff", map[string]any{
-			"handoff_id":     record.Packet.HandoffID,
+		if _, err := s.emitEvent(ctx, result.Job, "transfer.started", "transfer", map[string]any{
+			"transfer_id":    record.Packet.TransferID,
 			"source_adapter": record.Packet.Source.Adapter,
+			"mode":           record.Packet.Mode,
+			"reason":         record.Packet.Reason,
 		}, "", nil); err != nil {
 			return result, err
 		}
@@ -612,8 +731,12 @@ func (s *Service) Status(ctx context.Context, jobID string) (*StatusResult, erro
 	}, nil
 }
 
-func (s *Service) ListJobs(ctx context.Context, limit int) ([]core.JobRecord, error) {
-	return s.store.ListJobs(ctx, limit)
+func (s *Service) ListJobs(ctx context.Context, req ListJobsRequest) ([]core.JobRecord, error) {
+	return s.store.ListJobsFiltered(ctx, req.Limit, req.Adapter, req.State, req.SessionID)
+}
+
+func (s *Service) ListSessions(ctx context.Context, req ListSessionsRequest) ([]core.SessionRecord, error) {
+	return s.store.ListSessions(ctx, req.Limit, req.Adapter, req.Status)
 }
 
 func (s *Service) Logs(ctx context.Context, jobID string, limit int) ([]core.EventRecord, error) {
@@ -623,12 +746,31 @@ func (s *Service) Logs(ctx context.Context, jobID string, limit int) ([]core.Eve
 	return s.store.ListEvents(ctx, jobID, limit)
 }
 
+func (s *Service) LogsAfter(ctx context.Context, jobID string, afterSeq int64, limit int) ([]core.EventRecord, error) {
+	if _, err := s.store.GetJob(ctx, jobID); err != nil {
+		return nil, normalizeStoreError("job", jobID, err)
+	}
+	return s.store.ListEventsAfter(ctx, jobID, afterSeq, limit)
+}
+
 func (s *Service) RawLogs(ctx context.Context, jobID string, limit int) ([]RawLogEntry, error) {
 	events, err := s.Logs(ctx, jobID, limit)
 	if err != nil {
 		return nil, err
 	}
+	return s.rawLogsFromEvents(events)
+}
 
+func (s *Service) RawLogsAfter(ctx context.Context, jobID string, afterSeq int64, limit int) ([]RawLogEntry, []core.EventRecord, error) {
+	events, err := s.LogsAfter(ctx, jobID, afterSeq, limit)
+	if err != nil {
+		return nil, nil, err
+	}
+	logs, err := s.rawLogsFromEvents(events)
+	return logs, events, err
+}
+
+func (s *Service) rawLogsFromEvents(events []core.EventRecord) ([]RawLogEntry, error) {
 	var logs []RawLogEntry
 	for _, event := range events {
 		if event.RawRef == "" {
@@ -661,29 +803,93 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 		return &job, nil
 	}
 
-	job.Summary["message"] = "job cancelled before adapter execution was wired"
-	if _, err := s.emitEvent(ctx, job, "job.cancelled", "lifecycle", map[string]any{
-		"message": "job cancelled",
-	}, "", nil); err != nil {
-		return nil, err
-	}
-	if err := s.finishJob(ctx, &job, core.JobStateCancelled); err != nil {
+	now := time.Now().UTC()
+	if err := s.upsertJobRuntime(ctx, job.JobID, func(rec *core.JobRuntimeRecord) {
+		rec.CancelRequestedAt = &now
+	}); err != nil {
 		return nil, err
 	}
 
-	return &job, nil
+	runtimeRec, runtimeErr := s.store.GetJobRuntime(ctx, job.JobID)
+	if runtimeErr != nil && !errors.Is(runtimeErr, store.ErrNotFound) {
+		return nil, runtimeErr
+	}
+
+	signals := []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL}
+	delays := []time.Duration{1500 * time.Millisecond, 1500 * time.Millisecond, 0}
+	for idx, sig := range signals {
+		if runtimeErr == nil {
+			if runtimeRec.VendorPID != 0 {
+				_ = signalProcessGroup(runtimeRec.VendorPID, sig)
+			} else if runtimeRec.SupervisorPID != 0 {
+				_ = signalProcessGroup(runtimeRec.SupervisorPID, sig)
+			}
+		}
+
+		if delays[idx] == 0 {
+			break
+		}
+		waitUntil := time.Now().Add(delays[idx])
+		for time.Now().Before(waitUntil) {
+			current, err := s.store.GetJob(ctx, jobID)
+			if err == nil && current.State.Terminal() {
+				return &current, nil
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	current, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return nil, err
+	}
+	if current.State.Terminal() {
+		return &current, nil
+	}
+
+	return &current, fmt.Errorf("%w: job %s did not exit after cancellation signals", ErrBusy, jobID)
 }
 
-func (s *Service) executeJobLifecycle(
+func (s *Service) queuePreparedJob(ctx context.Context, job *core.JobRecord, turn *core.TurnRecord) (string, error) {
+	if err := s.transitionJob(ctx, job, core.JobStateQueued, map[string]any{"message": "job queued for background execution"}); err != nil {
+		return "", err
+	}
+	turn.Status = string(job.State)
+	if err := s.store.UpdateTurn(ctx, *turn); err != nil {
+		return "", err
+	}
+
+	pid, err := s.launchDetachedWorker(job.JobID, turn.TurnID)
+	if err != nil {
+		message := fmt.Sprintf("failed to launch background worker: %v", err)
+		if failErr := s.failPreparedJobLifecycle(ctx, job, turn, message); failErr != nil {
+			return "", failErr
+		}
+		return message, fmt.Errorf("%w: %s", ErrBusy, message)
+	}
+	if err := s.upsertJobRuntime(ctx, job.JobID, func(rec *core.JobRuntimeRecord) {
+		rec.Detached = true
+		rec.SupervisorPID = pid
+	}); err != nil {
+		return "", err
+	}
+
+	message := fmt.Sprintf("job launched as background worker pid %d", pid)
+	job.Summary["message"] = message
+	if err := s.store.UpdateJob(ctx, *job); err != nil {
+		return "", err
+	}
+	return message, nil
+}
+
+func (s *Service) prepareJobLifecycle(
 	ctx context.Context,
-	adapter adapterapi.Adapter,
-	descriptor adapters.Diagnosis,
 	job *core.JobRecord,
 	turn *core.TurnRecord,
 	opts startExecutionOptions,
-) (string, error) {
+) error {
 	if err := s.store.CreateTurn(ctx, *turn); err != nil {
-		return "", err
+		return err
 	}
 
 	if _, err := s.emitEvent(ctx, *job, "job.created", "lifecycle", map[string]any{
@@ -692,7 +898,7 @@ func (s *Service) executeJobLifecycle(
 		"prompt_source": opts.PromptSource,
 		"continued":     opts.Continue,
 	}, "", nil); err != nil {
-		return "", err
+		return err
 	}
 
 	rawPrompt, _ := json.Marshal(map[string]any{
@@ -704,9 +910,20 @@ func (s *Service) executeJobLifecycle(
 		"text":   opts.Prompt,
 		"source": opts.PromptSource,
 	}, "native", rawPrompt); err != nil {
-		return "", err
+		return err
 	}
 
+	return nil
+}
+
+func (s *Service) startPreparedJobLifecycle(
+	ctx context.Context,
+	adapter adapterapi.Adapter,
+	descriptor adapters.Diagnosis,
+	job *core.JobRecord,
+	turn *core.TurnRecord,
+	opts startExecutionOptions,
+) (string, error) {
 	if err := s.transitionJob(ctx, job, core.JobStateStarting, map[string]any{"message": "job starting"}); err != nil {
 		return "", err
 	}
@@ -719,6 +936,7 @@ func (s *Service) executeJobLifecycle(
 		message string
 		runErr  error
 	)
+	cancelRequested := false
 	switch {
 	case !descriptor.Available:
 		message = fmt.Sprintf("adapter %q binary %q is not available on PATH", job.Adapter, descriptor.Binary)
@@ -729,7 +947,8 @@ func (s *Service) executeJobLifecycle(
 	default:
 		message, runErr = s.executeAdapter(ctx, adapter, job, opts)
 	}
-	if runErr != nil {
+	cancelRequested = s.isCancelRequested(ctx, job.JobID)
+	if runErr != nil && !cancelRequested {
 		if _, err := s.emitEvent(ctx, *job, "diagnostic", "translation", map[string]any{
 			"message": message,
 		}, "", nil); err != nil {
@@ -749,7 +968,13 @@ func (s *Service) executeJobLifecycle(
 
 	terminalState := core.JobStateCompleted
 	terminalEvent := "job.completed"
-	if runErr != nil {
+	if cancelRequested {
+		terminalState = core.JobStateCancelled
+		terminalEvent = "job.cancelled"
+		if message == "" {
+			message = "job cancelled"
+		}
+	} else if runErr != nil {
 		terminalState = core.JobStateFailed
 		terminalEvent = "job.failed"
 	}
@@ -769,8 +994,39 @@ func (s *Service) executeJobLifecycle(
 	if err := s.store.UpdateTurn(ctx, *turn); err != nil {
 		return message, err
 	}
+	if err := s.upsertJobRuntime(ctx, job.JobID, func(rec *core.JobRuntimeRecord) {
+		completedAt := time.Now().UTC()
+		rec.VendorPID = 0
+		rec.CompletedAt = &completedAt
+	}); err != nil {
+		return message, err
+	}
 
 	return message, runErr
+}
+
+func (s *Service) failPreparedJobLifecycle(ctx context.Context, job *core.JobRecord, turn *core.TurnRecord, message string) error {
+	job.Summary["message"] = message
+	if err := s.store.UpdateJob(ctx, *job); err != nil {
+		return err
+	}
+	if _, err := s.emitEvent(ctx, *job, "diagnostic", "execution", map[string]any{
+		"message": message,
+	}, "", nil); err != nil {
+		return err
+	}
+	if err := s.finishJob(ctx, job, core.JobStateFailed); err != nil {
+		return err
+	}
+	if _, err := s.emitEvent(ctx, *job, "job.failed", "lifecycle", map[string]any{
+		"message": message,
+	}, "", nil); err != nil {
+		return err
+	}
+	turn.CompletedAt = job.FinishedAt
+	turn.ResultSummary = message
+	turn.Status = string(job.State)
+	return s.store.UpdateTurn(ctx, *turn)
 }
 
 func (s *Service) executeAdapter(
@@ -812,6 +1068,14 @@ func (s *Service) executeAdapter(
 			_ = handle.Cleanup()
 		}
 	}()
+
+	if err := s.upsertJobRuntime(ctx, job.JobID, func(rec *core.JobRuntimeRecord) {
+		rec.Detached = true
+		rec.SupervisorPID = os.Getpid()
+		rec.VendorPID = handle.Cmd.Process.Pid
+	}); err != nil {
+		return "", err
+	}
 
 	if _, err := s.emitEvent(ctx, *job, "process.spawned", "execution", map[string]any{
 		"argv": handle.Cmd.Args,
@@ -921,6 +1185,92 @@ func (s *Service) executeAdapter(
 	return lastAssistant, nil
 }
 
+func (s *Service) ExecuteDetachedJob(ctx context.Context, jobID, turnID string) error {
+	ctx, stop := signal.NotifyContext(ctx, syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	job, err := s.store.GetJob(ctx, jobID)
+	if err != nil {
+		return normalizeStoreError("job", jobID, err)
+	}
+	turn, err := s.store.GetTurn(ctx, turnID)
+	if err != nil {
+		return normalizeStoreError("turn", turnID, err)
+	}
+	defer s.releaseContinuationLock(context.Background(), job)
+
+	adapter, descriptor, err := s.resolveAdapter(ctx, job.Adapter)
+	if err != nil {
+		return err
+	}
+
+	if err := s.upsertJobRuntime(ctx, job.JobID, func(rec *core.JobRuntimeRecord) {
+		rec.Detached = true
+		rec.SupervisorPID = os.Getpid()
+	}); err != nil {
+		return err
+	}
+
+	_, runErr := s.startPreparedJobLifecycle(ctx, adapter, descriptor, &job, &turn, startExecutionOptions{
+		Prompt:       turn.InputText,
+		PromptSource: turn.InputSource,
+		Model:        summaryString(job.Summary, "model"),
+		Profile:      summaryString(job.Summary, "profile"),
+	})
+	return runErr
+}
+
+func (s *Service) launchDetachedWorker(jobID, turnID string) (int, error) {
+	exePath, err := detachedExecutablePath()
+	if err != nil {
+		return 0, err
+	}
+
+	devNull, err := os.OpenFile(os.DevNull, os.O_RDWR, 0)
+	if err != nil {
+		return 0, fmt.Errorf("open %s: %w", os.DevNull, err)
+	}
+	defer func() { _ = devNull.Close() }()
+
+	args := []string{
+		"--config", s.ConfigPath,
+		"__run-job",
+		"--job", jobID,
+		"--turn", turnID,
+	}
+	cmd := exec.Command(exePath, args...)
+	cmd.Stdout = devNull
+	cmd.Stderr = devNull
+	cmd.Stdin = devNull
+	cmd.Env = os.Environ()
+	adapterapi.PrepareCommand(cmd)
+
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("start detached worker: %w", err)
+	}
+
+	return cmd.Process.Pid, nil
+}
+
+func (s *Service) releaseContinuationLock(ctx context.Context, job core.JobRecord) {
+	continued, _ := job.Summary["continued"].(bool)
+	if !continued || job.NativeSessionID == "" {
+		return
+	}
+	_ = s.store.ReleaseLock(ctx, lockKey(job.Adapter, job.NativeSessionID), job.JobID)
+}
+
+func detachedExecutablePath() (string, error) {
+	if explicit := os.Getenv("CAGENT_EXECUTABLE"); explicit != "" {
+		return explicit, nil
+	}
+	path, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve cagent executable: %w", err)
+	}
+	return path, nil
+}
+
 func (s *Service) resolveAdapter(ctx context.Context, name string) (adapterapi.Adapter, adapters.Diagnosis, error) {
 	adapter, descriptor, ok := adapters.Resolve(ctx, s.Config, name)
 	if !ok {
@@ -994,6 +1344,57 @@ func cloneMap(src map[string]any) map[string]any {
 		dst[key] = value
 	}
 	return dst
+}
+
+func summaryString(summary map[string]any, key string) string {
+	if summary == nil {
+		return ""
+	}
+	value, _ := summary[key].(string)
+	return value
+}
+
+func (s *Service) upsertJobRuntime(ctx context.Context, jobID string, mutate func(*core.JobRuntimeRecord)) error {
+	now := time.Now().UTC()
+	rec, err := s.store.GetJobRuntime(ctx, jobID)
+	switch {
+	case err == nil:
+	case errors.Is(err, store.ErrNotFound):
+		rec = core.JobRuntimeRecord{
+			JobID:     jobID,
+			StartedAt: now,
+		}
+	default:
+		return err
+	}
+
+	mutate(&rec)
+	if rec.StartedAt.IsZero() {
+		rec.StartedAt = now
+	}
+	rec.UpdatedAt = now
+	return s.store.UpsertJobRuntime(ctx, rec)
+}
+
+func (s *Service) isCancelRequested(ctx context.Context, jobID string) bool {
+	rec, err := s.store.GetJobRuntime(ctx, jobID)
+	if err != nil {
+		return false
+	}
+	return rec.CancelRequestedAt != nil
+}
+
+func signalProcessGroup(pid int, sig syscall.Signal) error {
+	if pid == 0 {
+		return nil
+	}
+	if err := syscall.Kill(-pid, sig); err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	if err := syscall.Kill(pid, sig); err == nil || errors.Is(err, syscall.ESRCH) {
+		return nil
+	}
+	return fmt.Errorf("signal pid %d with %s", pid, sig)
 }
 
 func (s *Service) transitionJob(ctx context.Context, job *core.JobRecord, state core.JobState, payload map[string]any) error {
@@ -1125,18 +1526,25 @@ func (s *Service) readLastMessage(path string) (string, error) {
 	return strings.TrimSpace(string(data)), nil
 }
 
-func (s *Service) buildHandoffPacket(
+func (s *Service) buildTransferPacket(
 	job core.JobRecord,
 	session core.SessionRecord,
 	turns []core.TurnRecord,
 	events []core.EventRecord,
 	artifacts []core.ArtifactRecord,
-) core.HandoffPacket {
-	packet := core.HandoffPacket{
-		HandoffID:  core.GenerateID("hof"),
+	reason string,
+	mode string,
+) core.TransferPacket {
+	mode = normalizeTransferMode(mode)
+	packet := core.TransferPacket{
+		TransferID: core.GenerateID("xfer"),
 		ExportedAt: time.Now().UTC(),
-		Source: core.HandoffSource{
+		Mode:       mode,
+		Reason:     strings.TrimSpace(reason),
+		Disclaimer: "This is a context transfer, not native session continuation.",
+		Source: core.TransferSource{
 			Adapter:         job.Adapter,
+			Model:           summaryString(job.Summary, "model"),
 			JobID:           job.JobID,
 			SessionID:       session.SessionID,
 			NativeSessionID: job.NativeSessionID,
@@ -1146,9 +1554,10 @@ func (s *Service) buildHandoffPacket(
 		Summary:              summarizeTurns(turns),
 		Unresolved:           collectUnresolved(job, events),
 		ImportantFiles:       collectImportantFiles(session.CWD, events, artifacts),
-		RecentTurns:          turns,
-		RecentEvents:         condenseEvents(events, 12),
-		Artifacts:            toHandoffArtifacts(s.Paths.StateDir, artifacts),
+		RecentTurnsInline:    condenseTurns(turns, 3),
+		RecentEventsInline:   condenseEvents(events, 6),
+		EvidenceRefs:         []core.TransferEvidenceRef{},
+		Artifacts:            toTransferArtifacts(s.Paths.StateDir, artifacts),
 		Constraints:          []string{"Keep CLI flags and JSON output backward compatible.", fmt.Sprintf("Work within %s.", session.CWD)},
 		RecommendedNextSteps: recommendNextSteps(job, turns),
 	}
@@ -1157,6 +1566,9 @@ func (s *Service) buildHandoffPacket(
 	}
 	if packet.Summary == "" {
 		packet.Summary = "No prior turn summary was captured."
+	}
+	if packet.Reason == "" {
+		packet.Reason = defaultTransferReason(job)
 	}
 	if len(packet.Unresolved) == 0 && job.State != core.JobStateCompleted {
 		packet.Unresolved = []string{fmt.Sprintf("Latest job ended in state %s.", job.State)}
@@ -1167,79 +1579,114 @@ func (s *Service) buildHandoffPacket(
 	if packet.ImportantFiles == nil {
 		packet.ImportantFiles = []string{}
 	}
-	if packet.RecentTurns == nil {
-		packet.RecentTurns = []core.TurnRecord{}
+	if packet.RecentTurnsInline == nil {
+		packet.RecentTurnsInline = []core.TurnRecord{}
 	}
-	if packet.RecentEvents == nil {
-		packet.RecentEvents = []core.EventRecord{}
+	if packet.RecentEventsInline == nil {
+		packet.RecentEventsInline = []core.EventRecord{}
 	}
 	if packet.Artifacts == nil {
-		packet.Artifacts = []core.HandoffArtifact{}
+		packet.Artifacts = []core.TransferArtifact{}
+	}
+	if packet.EvidenceRefs == nil {
+		packet.EvidenceRefs = []core.TransferEvidenceRef{}
 	}
 	return packet
 }
 
-func (s *Service) writeHandoffFile(packet core.HandoffPacket, outputPath string) (string, error) {
+func (s *Service) writeTransferBundle(packet core.TransferPacket, outputPath string, turns []core.TurnRecord, events []core.EventRecord) (core.TransferPacket, string, error) {
 	path := outputPath
 	if path == "" {
-		path = filepath.Join(s.Paths.HandoffsDir, packet.HandoffID+".json")
+		path = filepath.Join(s.Paths.TransfersDir, packet.TransferID, "transfer.json")
 	} else {
 		expanded, err := core.ExpandPath(outputPath)
 		if err != nil {
-			return "", fmt.Errorf("%w: expand handoff output path: %v", ErrInvalidInput, err)
+			return packet, "", fmt.Errorf("%w: expand transfer output path: %v", ErrInvalidInput, err)
 		}
 		path = expanded
 	}
 	if !filepath.IsAbs(path) {
 		absolute, err := filepath.Abs(path)
 		if err != nil {
-			return "", fmt.Errorf("%w: resolve handoff output path: %v", ErrInvalidInput, err)
+			return packet, "", fmt.Errorf("%w: resolve transfer output path: %v", ErrInvalidInput, err)
 		}
 		path = absolute
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return "", fmt.Errorf("create handoff directory: %w", err)
+	bundleDir := filepath.Dir(path)
+	if err := os.MkdirAll(bundleDir, 0o755); err != nil {
+		return packet, "", fmt.Errorf("create transfer directory: %w", err)
 	}
+
+	turnsPath := filepath.Join(bundleDir, "recent_turns.json")
+	eventsPath := filepath.Join(bundleDir, "recent_events.jsonl")
+	if err := writeIndentedJSON(turnsPath, turns); err != nil {
+		return packet, "", err
+	}
+	if err := writeJSONL(eventsPath, condenseEvents(events, 20)); err != nil {
+		return packet, "", err
+	}
+	packet.EvidenceRefs = append(packet.EvidenceRefs,
+		core.TransferEvidenceRef{Kind: "recent_turns_json", Path: turnsPath},
+		core.TransferEvidenceRef{Kind: "recent_events_jsonl", Path: eventsPath},
+	)
 
 	encoded, err := json.MarshalIndent(packet, "", "  ")
 	if err != nil {
-		return "", fmt.Errorf("marshal handoff packet: %w", err)
+		return packet, "", fmt.Errorf("marshal transfer packet: %w", err)
 	}
 	if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
-		return "", fmt.Errorf("write handoff packet: %w", err)
+		return packet, "", fmt.Errorf("write transfer packet: %w", err)
 	}
 
-	return path, nil
+	return packet, path, nil
 }
 
-func (s *Service) loadHandoff(ctx context.Context, ref string) (core.HandoffRecord, error) {
+func (s *Service) loadTransfer(ctx context.Context, ref string) (core.TransferRecord, error) {
 	if stat, err := os.Stat(ref); err == nil && !stat.IsDir() {
 		data, err := os.ReadFile(ref)
 		if err != nil {
-			return core.HandoffRecord{}, fmt.Errorf("read handoff file: %w", err)
+			return core.TransferRecord{}, fmt.Errorf("read transfer file: %w", err)
 		}
-		var packet core.HandoffPacket
+		var packet core.TransferPacket
 		if err := json.Unmarshal(data, &packet); err != nil {
-			return core.HandoffRecord{}, fmt.Errorf("%w: decode handoff file: %v", ErrInvalidInput, err)
+			return core.TransferRecord{}, fmt.Errorf("%w: decode transfer file: %v", ErrInvalidInput, err)
 		}
-		return core.HandoffRecord{
-			HandoffID: packet.HandoffID,
-			JobID:     packet.Source.JobID,
-			SessionID: packet.Source.SessionID,
-			CreatedAt: packet.ExportedAt,
-			Packet:    packet,
+		return core.TransferRecord{
+			TransferID: packet.TransferID,
+			JobID:      packet.Source.JobID,
+			SessionID:  packet.Source.SessionID,
+			CreatedAt:  packet.ExportedAt,
+			Packet:     packet,
 		}, nil
 	}
 
-	record, err := s.store.GetHandoff(ctx, ref)
+	record, err := s.store.GetTransfer(ctx, ref)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
-			return core.HandoffRecord{}, fmt.Errorf("%w: handoff %s", ErrNotFound, ref)
+			return core.TransferRecord{}, fmt.Errorf("%w: transfer %s", ErrNotFound, ref)
 		}
-		return core.HandoffRecord{}, err
+		return core.TransferRecord{}, err
 	}
 	return record, nil
+}
+
+func defaultTransferReason(job core.JobRecord) string {
+	if job.State != core.JobStateCompleted {
+		return fmt.Sprintf("source job ended in state %s", job.State)
+	}
+	return "operator-requested context transfer"
+}
+
+func normalizeTransferMode(mode string) string {
+	switch strings.TrimSpace(mode) {
+	case "", "manual":
+		return "manual"
+	case "recovery", "operator_override", "cost", "capability":
+		return mode
+	default:
+		return "manual"
+	}
 }
 
 func latestObjective(turns []core.TurnRecord) string {
@@ -1262,6 +1709,19 @@ func summarizeTurns(turns []core.TurnRecord) string {
 		}
 	}
 	return strings.Join(parts, "\n")
+}
+
+func condenseTurns(turns []core.TurnRecord, limit int) []core.TurnRecord {
+	if limit > 0 && len(turns) > limit {
+		turns = turns[:limit]
+	}
+	condensed := make([]core.TurnRecord, 0, len(turns))
+	for _, turn := range turns {
+		turn.InputText = truncateString(turn.InputText, 800)
+		turn.ResultSummary = truncateString(turn.ResultSummary, 400)
+		condensed = append(condensed, turn)
+	}
+	return condensed
 }
 
 func collectUnresolved(job core.JobRecord, events []core.EventRecord) []string {
@@ -1366,20 +1826,54 @@ func truncateNestedStrings(value any, max int) any {
 	}
 }
 
-func toHandoffArtifacts(stateDir string, artifacts []core.ArtifactRecord) []core.HandoffArtifact {
-	result := make([]core.HandoffArtifact, 0, len(artifacts))
+func toTransferArtifacts(stateDir string, artifacts []core.ArtifactRecord) []core.TransferArtifact {
+	result := make([]core.TransferArtifact, 0, len(artifacts))
 	for _, artifact := range artifacts {
 		path := artifact.Path
 		if !filepath.IsAbs(path) {
 			path = filepath.Join(stateDir, path)
 		}
-		result = append(result, core.HandoffArtifact{
+		result = append(result, core.TransferArtifact{
 			Kind:     artifact.Kind,
 			Path:     path,
 			Metadata: artifact.Metadata,
 		})
 	}
 	return result
+}
+
+func writeIndentedJSON(path string, value any) error {
+	encoded, err := json.MarshalIndent(value, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal %s: %w", filepath.Base(path), err)
+	}
+	if err := os.WriteFile(path, append(encoded, '\n'), 0o644); err != nil {
+		return fmt.Errorf("write %s: %w", path, err)
+	}
+	return nil
+}
+
+func writeJSONL(path string, values []core.EventRecord) error {
+	file, err := os.Create(path)
+	if err != nil {
+		return fmt.Errorf("create %s: %w", path, err)
+	}
+	defer func() { _ = file.Close() }()
+
+	encoder := json.NewEncoder(file)
+	for _, value := range values {
+		if err := encoder.Encode(value); err != nil {
+			return fmt.Errorf("write %s: %w", path, err)
+		}
+	}
+	return nil
+}
+
+func truncateString(text string, max int) string {
+	if max > 0 && len(text) > max {
+		return text[:max] + "...(truncated)"
+	}
+	return text
 }
 
 func recommendNextSteps(job core.JobRecord, turns []core.TurnRecord) []string {

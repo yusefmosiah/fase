@@ -257,18 +257,44 @@ func (s *Store) GetJob(ctx context.Context, jobID string) (core.JobRecord, error
 }
 
 func (s *Store) ListJobs(ctx context.Context, limit int) ([]core.JobRecord, error) {
+	return s.ListJobsFiltered(ctx, limit, "", "", "")
+}
+
+func (s *Store) ListJobsFiltered(ctx context.Context, limit int, adapter, state, sessionID string) ([]core.JobRecord, error) {
 	if limit <= 0 {
 		limit = 50
 	}
 
+	var (
+		clauses []string
+		args    []any
+	)
+	if adapter != "" {
+		clauses = append(clauses, "adapter = ?")
+		args = append(args, adapter)
+	}
+	if state != "" {
+		clauses = append(clauses, "state = ?")
+		args = append(args, state)
+	}
+	if sessionID != "" {
+		clauses = append(clauses, "session_id = ?")
+		args = append(args, sessionID)
+	}
+
+	query := `SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
+		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
+		   FROM jobs`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
-		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
-		   FROM jobs
-		  ORDER BY created_at DESC
-		  LIMIT ?`,
-		limit,
+		query,
+		args...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("query jobs: %w", err)
@@ -289,6 +315,56 @@ func (s *Store) ListJobs(ctx context.Context, limit int) ([]core.JobRecord, erro
 	}
 
 	return jobs, nil
+}
+
+func (s *Store) ListSessions(ctx context.Context, limit int, adapter, status string) ([]core.SessionRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		clauses []string
+		args    []any
+	)
+	if adapter != "" {
+		clauses = append(clauses, "origin_adapter = ?")
+		args = append(args, adapter)
+	}
+	if status != "" {
+		clauses = append(clauses, "status = ?")
+		args = append(args, status)
+	}
+
+	query := `SELECT session_id, label, created_at, updated_at, status, origin_adapter,
+		        origin_job_id, cwd, latest_job_id, parent_session_id, forked_from_turn_id,
+		        tags_json, metadata_json
+		   FROM sessions`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY updated_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query sessions: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var sessions []core.SessionRecord
+	for rows.Next() {
+		rec, err := scanSession(rows)
+		if err != nil {
+			return nil, err
+		}
+		sessions = append(sessions, rec)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate sessions: %w", err)
+	}
+
+	return sessions, nil
 }
 
 func (s *Store) ListJobsBySession(ctx context.Context, sessionID string, limit int) ([]core.JobRecord, error) {
@@ -387,6 +463,10 @@ func (s *Store) AppendEvent(ctx context.Context, rec *core.EventRecord) error {
 }
 
 func (s *Store) ListEvents(ctx context.Context, jobID string, limit int) ([]core.EventRecord, error) {
+	return s.ListEventsAfter(ctx, jobID, 0, limit)
+}
+
+func (s *Store) ListEventsAfter(ctx context.Context, jobID string, afterSeq int64, limit int) ([]core.EventRecord, error) {
 	if limit <= 0 {
 		limit = 200
 	}
@@ -397,9 +477,11 @@ func (s *Store) ListEvents(ctx context.Context, jobID string, limit int) ([]core
 		        native_session_id, correlation_id, payload_json, raw_ref
 		   FROM events
 		  WHERE job_id = ?
+		    AND seq > ?
 		  ORDER BY seq ASC
 		  LIMIT ?`,
 		jobID,
+		afterSeq,
 		limit,
 	)
 	if err != nil {
@@ -685,6 +767,19 @@ func (s *Store) UpdateTurn(ctx context.Context, rec core.TurnRecord) error {
 	return nil
 }
 
+func (s *Store) GetTurn(ctx context.Context, turnID string) (core.TurnRecord, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT turn_id, session_id, job_id, adapter, started_at, completed_at,
+		        input_text, input_source, result_summary, status, native_session_id, stats_json
+		   FROM turns
+		  WHERE turn_id = ?`,
+		turnID,
+	)
+
+	return scanTurn(row)
+}
+
 func (s *Store) ListTurnsBySession(ctx context.Context, sessionID string, limit int) ([]core.TurnRecord, error) {
 	if limit <= 0 {
 		limit = 20
@@ -777,6 +872,46 @@ func (s *Store) GetLock(ctx context.Context, lockKey string) (core.LockRecord, e
 	return scanLock(row)
 }
 
+func (s *Store) UpsertJobRuntime(ctx context.Context, rec core.JobRuntimeRecord) error {
+	_, err := s.db.ExecContext(
+		ctx,
+		`INSERT INTO job_runtime (
+			job_id, supervisor_pid, vendor_pid, detached,
+			started_at, updated_at, cancel_requested_at, completed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id) DO UPDATE SET
+			supervisor_pid = excluded.supervisor_pid,
+			vendor_pid = excluded.vendor_pid,
+			detached = excluded.detached,
+			updated_at = excluded.updated_at,
+			cancel_requested_at = excluded.cancel_requested_at,
+			completed_at = excluded.completed_at`,
+		rec.JobID,
+		nullIfZero(rec.SupervisorPID),
+		nullIfZero(rec.VendorPID),
+		boolToInt(rec.Detached),
+		rec.StartedAt.UTC().Format(time.RFC3339Nano),
+		rec.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		formatTimePtr(rec.CancelRequestedAt),
+		formatTimePtr(rec.CompletedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("upsert job runtime: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) GetJobRuntime(ctx context.Context, jobID string) (core.JobRuntimeRecord, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT job_id, supervisor_pid, vendor_pid, detached, started_at, updated_at, cancel_requested_at, completed_at
+		   FROM job_runtime
+		  WHERE job_id = ?`,
+		jobID,
+	)
+	return scanJobRuntime(row)
+}
+
 func (s *Store) ReleaseLock(ctx context.Context, lockKey, jobID string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM locks WHERE lock_key = ? AND job_id = ?`, lockKey, jobID)
 	if err != nil {
@@ -785,39 +920,39 @@ func (s *Store) ReleaseLock(ctx context.Context, lockKey, jobID string) error {
 	return nil
 }
 
-func (s *Store) CreateHandoff(ctx context.Context, rec core.HandoffRecord) error {
+func (s *Store) CreateTransfer(ctx context.Context, rec core.TransferRecord) error {
 	packet, err := marshalJSON(rec.Packet)
 	if err != nil {
-		return fmt.Errorf("marshal handoff packet: %w", err)
+		return fmt.Errorf("marshal transfer packet: %w", err)
 	}
 
 	_, err = s.db.ExecContext(
 		ctx,
 		`INSERT INTO handoffs (handoff_id, job_id, session_id, created_at, packet_json)
 		 VALUES (?, ?, ?, ?, ?)`,
-		rec.HandoffID,
+		rec.TransferID,
 		rec.JobID,
 		rec.SessionID,
 		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
 		string(packet),
 	)
 	if err != nil {
-		return fmt.Errorf("insert handoff: %w", err)
+		return fmt.Errorf("insert transfer: %w", err)
 	}
 
 	return nil
 }
 
-func (s *Store) GetHandoff(ctx context.Context, handoffID string) (core.HandoffRecord, error) {
+func (s *Store) GetTransfer(ctx context.Context, transferID string) (core.TransferRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
 		`SELECT handoff_id, job_id, session_id, created_at, packet_json
 		   FROM handoffs
 		  WHERE handoff_id = ?`,
-		handoffID,
+		transferID,
 	)
 
-	return scanHandoff(row)
+	return scanTransfer(row)
 }
 
 func (s *Store) UpdateSessionLatestJob(ctx context.Context, sessionID, latestJobID string, updatedAt time.Time) error {
@@ -1151,25 +1286,25 @@ func scanArtifact(scanner interface{ Scan(...any) error }) (core.ArtifactRecord,
 	return rec, nil
 }
 
-func scanHandoff(scanner interface{ Scan(...any) error }) (core.HandoffRecord, error) {
-	var rec core.HandoffRecord
+func scanTransfer(scanner interface{ Scan(...any) error }) (core.TransferRecord, error) {
+	var rec core.TransferRecord
 	var createdAt string
 	var packetJSON string
 
-	if err := scanner.Scan(&rec.HandoffID, &rec.JobID, &rec.SessionID, &createdAt, &packetJSON); err != nil {
+	if err := scanner.Scan(&rec.TransferID, &rec.JobID, &rec.SessionID, &createdAt, &packetJSON); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return core.HandoffRecord{}, ErrNotFound
+			return core.TransferRecord{}, ErrNotFound
 		}
-		return core.HandoffRecord{}, fmt.Errorf("scan handoff: %w", err)
+		return core.TransferRecord{}, fmt.Errorf("scan transfer: %w", err)
 	}
 
 	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
-		return core.HandoffRecord{}, fmt.Errorf("parse handoff created_at: %w", err)
+		return core.TransferRecord{}, fmt.Errorf("parse transfer created_at: %w", err)
 	}
 	rec.CreatedAt = parsed
 	if err := json.Unmarshal([]byte(packetJSON), &rec.Packet); err != nil {
-		return core.HandoffRecord{}, fmt.Errorf("decode handoff packet: %w", err)
+		return core.TransferRecord{}, fmt.Errorf("decode transfer packet: %w", err)
 	}
 
 	return rec, nil
@@ -1314,6 +1449,65 @@ func scanLock(scanner interface{ Scan(...any) error }) (core.LockRecord, error) 
 	return rec, nil
 }
 
+func scanJobRuntime(scanner interface{ Scan(...any) error }) (core.JobRuntimeRecord, error) {
+	var rec core.JobRuntimeRecord
+	var supervisorPID sql.NullInt64
+	var vendorPID sql.NullInt64
+	var detached int
+	var startedAt string
+	var updatedAt string
+	var cancelRequestedAt sql.NullString
+	var completedAt sql.NullString
+
+	if err := scanner.Scan(
+		&rec.JobID,
+		&supervisorPID,
+		&vendorPID,
+		&detached,
+		&startedAt,
+		&updatedAt,
+		&cancelRequestedAt,
+		&completedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.JobRuntimeRecord{}, ErrNotFound
+		}
+		return core.JobRuntimeRecord{}, fmt.Errorf("scan job runtime: %w", err)
+	}
+
+	rec.SupervisorPID = int(supervisorPID.Int64)
+	rec.VendorPID = int(vendorPID.Int64)
+	rec.Detached = detached != 0
+
+	parsedStartedAt, err := time.Parse(time.RFC3339Nano, startedAt)
+	if err != nil {
+		return core.JobRuntimeRecord{}, fmt.Errorf("parse job runtime started_at: %w", err)
+	}
+	parsedUpdatedAt, err := time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return core.JobRuntimeRecord{}, fmt.Errorf("parse job runtime updated_at: %w", err)
+	}
+	rec.StartedAt = parsedStartedAt
+	rec.UpdatedAt = parsedUpdatedAt
+
+	if cancelRequestedAt.Valid {
+		parsed, err := time.Parse(time.RFC3339Nano, cancelRequestedAt.String)
+		if err != nil {
+			return core.JobRuntimeRecord{}, fmt.Errorf("parse job runtime cancel_requested_at: %w", err)
+		}
+		rec.CancelRequestedAt = &parsed
+	}
+	if completedAt.Valid {
+		parsed, err := time.Parse(time.RFC3339Nano, completedAt.String)
+		if err != nil {
+			return core.JobRuntimeRecord{}, fmt.Errorf("parse job runtime completed_at: %w", err)
+		}
+		rec.CompletedAt = &parsed
+	}
+
+	return rec, nil
+}
+
 func marshalJSON(value any) ([]byte, error) {
 	if value == nil {
 		return []byte("{}"), nil
@@ -1344,6 +1538,13 @@ func formatTimePtr(value *time.Time) any {
 
 func nullIfEmpty(value string) any {
 	if value == "" {
+		return nil
+	}
+	return value
+}
+
+func nullIfZero(value int) any {
+	if value == 0 {
 		return nil
 	}
 	return value
@@ -1479,6 +1680,17 @@ CREATE TABLE IF NOT EXISTS events (
 	payload_json TEXT NOT NULL DEFAULT '{}',
 	raw_ref TEXT,
 	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS job_runtime (
+	job_id TEXT PRIMARY KEY REFERENCES jobs(job_id) ON DELETE CASCADE,
+	supervisor_pid INTEGER,
+	vendor_pid INTEGER,
+	detached INTEGER NOT NULL DEFAULT 0,
+	started_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL,
+	cancel_requested_at TEXT,
+	completed_at TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_jobs_session_id ON jobs(session_id);

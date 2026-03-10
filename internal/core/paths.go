@@ -8,14 +8,14 @@ import (
 )
 
 type Paths struct {
-	ConfigDir   string
-	StateDir    string
-	CacheDir    string
-	ConfigPath  string
-	DBPath      string
-	JobsDir     string
-	RawDir      string
-	HandoffsDir string
+	ConfigDir    string
+	StateDir     string
+	CacheDir     string
+	ConfigPath   string
+	DBPath       string
+	JobsDir      string
+	RawDir       string
+	TransfersDir string
 }
 
 func ResolvePaths() (Paths, error) {
@@ -48,14 +48,14 @@ func ResolvePathsFromEnv(home string, getenv func(string) string) (Paths, error)
 	}
 
 	return Paths{
-		ConfigDir:   configDir,
-		StateDir:    stateDir,
-		CacheDir:    cacheDir,
-		ConfigPath:  filepath.Join(configDir, "config.toml"),
-		DBPath:      filepath.Join(stateDir, "cagent.db"),
-		JobsDir:     filepath.Join(stateDir, "jobs"),
-		RawDir:      filepath.Join(stateDir, "raw"),
-		HandoffsDir: filepath.Join(stateDir, "handoffs"),
+		ConfigDir:    configDir,
+		StateDir:     stateDir,
+		CacheDir:     cacheDir,
+		ConfigPath:   filepath.Join(configDir, "config.toml"),
+		DBPath:       filepath.Join(stateDir, "cagent.db"),
+		JobsDir:      filepath.Join(stateDir, "jobs"),
+		RawDir:       filepath.Join(stateDir, "raw"),
+		TransfersDir: filepath.Join(stateDir, "transfers"),
 	}, nil
 }
 
@@ -64,7 +64,7 @@ func (p Paths) WithStateDir(stateDir string) Paths {
 	p.DBPath = filepath.Join(stateDir, "cagent.db")
 	p.JobsDir = filepath.Join(stateDir, "jobs")
 	p.RawDir = filepath.Join(stateDir, "raw")
-	p.HandoffsDir = filepath.Join(stateDir, "handoffs")
+	p.TransfersDir = filepath.Join(stateDir, "transfers")
 	return p
 }
 
@@ -79,7 +79,7 @@ func EnsurePaths(paths Paths) error {
 		paths.CacheDir,
 		paths.JobsDir,
 		paths.RawDir,
-		paths.HandoffsDir,
+		paths.TransfersDir,
 	}
 
 	for _, dir := range dirs {

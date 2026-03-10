@@ -5,11 +5,20 @@ import (
 	"context"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/yusefmosiah/cagent/internal/core"
+)
+
+var (
+	testBinaryOnce sync.Once
+	testBinaryPath string
+	testBinaryErr  error
 )
 
 func TestRunPersistsFailedJobForUnavailableAdapter(t *testing.T) {
@@ -20,6 +29,9 @@ func TestRunPersistsFailedJobForUnavailableAdapter(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+	setTestExecutable(t)
+	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
 	configBody := []byte("[adapters.factory]\nbinary = \"/definitely/missing/droid\"\nenabled = true\n")
@@ -41,18 +53,14 @@ func TestRunPersistsFailedJobForUnavailableAdapter(t *testing.T) {
 		PromptSource: "prompt",
 		Label:        "bootstrap",
 	})
-	if err == nil {
-		t.Fatal("expected run to fail for unavailable adapter binary")
-	}
-	if !errors.Is(err, ErrUnsupported) && !errors.Is(err, ErrAdapterUnavailable) {
-		t.Fatalf("expected unsupported or unavailable error, got %v", err)
-	}
-
-	status, err := svc.Status(context.Background(), result.Job.JobID)
 	if err != nil {
-		t.Fatalf("Status returned error: %v", err)
+		t.Fatalf("Run returned error: %v", err)
+	}
+	if result.Job.State != core.JobStateQueued {
+		t.Fatalf("expected queued job state, got %s", result.Job.State)
 	}
 
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
 	if status.Job.State != "failed" {
 		t.Fatalf("expected failed job state, got %s", status.Job.State)
 	}
@@ -80,6 +88,9 @@ func TestRunCompletesWithFakeCodexAdapter(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+	setTestExecutable(t)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
 	if err != nil {
@@ -110,19 +121,16 @@ func TestRunCompletesWithFakeCodexAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if result.Job.State != core.JobStateCompleted {
-		t.Fatalf("expected completed job state, got %s", result.Job.State)
-	}
-	if result.Job.NativeSessionID != "codex-session-123" {
-		t.Fatalf("expected discovered native session, got %q", result.Job.NativeSessionID)
+	if result.Job.State != core.JobStateQueued {
+		t.Fatalf("expected queued job state, got %s", result.Job.State)
 	}
 
-	status, err := svc.Status(context.Background(), result.Job.JobID)
-	if err != nil {
-		t.Fatalf("Status returned error: %v", err)
-	}
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
 	if status.Job.State != core.JobStateCompleted {
 		t.Fatalf("expected completed status, got %s", status.Job.State)
+	}
+	if status.Job.NativeSessionID != "codex-session-123" {
+		t.Fatalf("expected discovered native session, got %q", status.Job.NativeSessionID)
 	}
 
 	rawLogs, err := svc.RawLogs(context.Background(), result.Job.JobID, 100)
@@ -156,6 +164,7 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
 	if err != nil {
@@ -187,6 +196,8 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
+	firstStatus := waitForTerminalStatus(t, svc, first.Job.JobID)
+
 	second, err := svc.Send(context.Background(), SendRequest{
 		SessionID:    first.Session.SessionID,
 		Prompt:       "follow up",
@@ -195,14 +206,15 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send returned error: %v", err)
 	}
-	if second.Job.State != core.JobStateCompleted {
-		t.Fatalf("expected completed send job state, got %s", second.Job.State)
+	if second.Job.State != core.JobStateQueued {
+		t.Fatalf("expected queued send job state, got %s", second.Job.State)
 	}
-	if second.Job.NativeSessionID != first.Job.NativeSessionID {
-		t.Fatalf("expected same native session id, got %q want %q", second.Job.NativeSessionID, first.Job.NativeSessionID)
+	secondStatus := waitForTerminalStatus(t, svc, second.Job.JobID)
+	if secondStatus.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed send job state, got %s", secondStatus.Job.State)
 	}
-	if !strings.Contains(second.Message, "continued") {
-		t.Fatalf("expected continuation message, got %q", second.Message)
+	if secondStatus.Job.NativeSessionID != firstStatus.Job.NativeSessionID {
+		t.Fatalf("expected same native session id, got %q want %q", secondStatus.Job.NativeSessionID, firstStatus.Job.NativeSessionID)
 	}
 }
 
@@ -214,6 +226,7 @@ func TestRunCompletesWithFakeFactoryAdapter(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "droid"))
 	if err != nil {
@@ -244,11 +257,12 @@ func TestRunCompletesWithFakeFactoryAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if result.Job.State != core.JobStateCompleted {
-		t.Fatalf("expected completed factory job state, got %s", result.Job.State)
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
+	if status.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed factory job state, got %s", status.Job.State)
 	}
-	if result.Job.NativeSessionID != "factory-session-123" {
-		t.Fatalf("expected discovered factory native session, got %q", result.Job.NativeSessionID)
+	if status.Job.NativeSessionID != "factory-session-123" {
+		t.Fatalf("expected discovered factory native session, got %q", status.Job.NativeSessionID)
 	}
 }
 
@@ -262,6 +276,7 @@ func TestRunAndSessionWithFakePiAdapter(t *testing.T) {
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
 	t.Setenv("PI_CODING_AGENT_DIR", piDir)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "pi"))
 	if err != nil {
@@ -292,8 +307,9 @@ func TestRunAndSessionWithFakePiAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if first.Job.NativeSessionID != "pi-session-123" {
-		t.Fatalf("expected pi native session id, got %q", first.Job.NativeSessionID)
+	firstStatus := waitForTerminalStatus(t, svc, first.Job.JobID)
+	if firstStatus.Job.NativeSessionID != "pi-session-123" {
+		t.Fatalf("expected pi native session id, got %q", firstStatus.Job.NativeSessionID)
 	}
 
 	second, err := svc.Send(context.Background(), SendRequest{
@@ -304,8 +320,9 @@ func TestRunAndSessionWithFakePiAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send returned error: %v", err)
 	}
-	if second.Job.NativeSessionID != first.Job.NativeSessionID {
-		t.Fatalf("expected same pi session id, got %q want %q", second.Job.NativeSessionID, first.Job.NativeSessionID)
+	secondStatus := waitForTerminalStatus(t, svc, second.Job.JobID)
+	if secondStatus.Job.NativeSessionID != firstStatus.Job.NativeSessionID {
+		t.Fatalf("expected same pi session id, got %q want %q", secondStatus.Job.NativeSessionID, firstStatus.Job.NativeSessionID)
 	}
 
 	session, err := svc.Session(context.Background(), first.Session.SessionID)
@@ -334,6 +351,7 @@ func TestRunCompletesWithFakeGeminiAdapter(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "gemini"))
 	if err != nil {
@@ -364,11 +382,12 @@ func TestRunCompletesWithFakeGeminiAdapter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
-	if result.Job.State != core.JobStateCompleted {
-		t.Fatalf("expected completed gemini job state, got %s", result.Job.State)
+	status := waitForTerminalStatus(t, svc, result.Job.JobID)
+	if status.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed gemini job state, got %s", status.Job.State)
 	}
-	if result.Job.NativeSessionID != "gemini-session-789" {
-		t.Fatalf("expected discovered gemini native session, got %q", result.Job.NativeSessionID)
+	if status.Job.NativeSessionID != "gemini-session-789" {
+		t.Fatalf("expected discovered gemini native session, got %q", status.Job.NativeSessionID)
 	}
 }
 
@@ -380,6 +399,7 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
 	if err != nil {
@@ -411,6 +431,8 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
+	firstStatus := waitForTerminalStatus(t, svc, first.Job.JobID)
+
 	second, err := svc.Send(context.Background(), SendRequest{
 		SessionID:    first.Session.SessionID,
 		Prompt:       "follow up",
@@ -419,15 +441,13 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Send returned error: %v", err)
 	}
-	if second.Job.NativeSessionID != first.Job.NativeSessionID {
-		t.Fatalf("expected same opencode native session id, got %q want %q", second.Job.NativeSessionID, first.Job.NativeSessionID)
-	}
-	if !strings.Contains(second.Message, "continued") {
-		t.Fatalf("expected continuation message, got %q", second.Message)
+	secondStatus := waitForTerminalStatus(t, svc, second.Job.JobID)
+	if secondStatus.Job.NativeSessionID != firstStatus.Job.NativeSessionID {
+		t.Fatalf("expected same opencode native session id, got %q want %q", secondStatus.Job.NativeSessionID, firstStatus.Job.NativeSessionID)
 	}
 }
 
-func TestHandoffExportAndRun(t *testing.T) {
+func TestRuntimeIncludesAdapterTraits(t *testing.T) {
 	stateDir := t.TempDir()
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
@@ -435,6 +455,50 @@ func TestHandoffExportAndRun(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.codex]\nbinary = \"codex\"\nenabled = true\nsummary = \"primary code editor\"\nspeed = \"fast\"\ncost = \"high\"\ntags = [\"default\", \"tools\"]\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	report, err := svc.Runtime(context.Background(), "codex")
+	if err != nil {
+		t.Fatalf("Runtime returned error: %v", err)
+	}
+	if !report.ConfigPresent {
+		t.Fatal("expected config to be marked present")
+	}
+	if report.ConfigPath != configPath {
+		t.Fatalf("expected config path %q, got %q", configPath, report.ConfigPath)
+	}
+	if len(report.Adapters) != 1 {
+		t.Fatalf("expected one adapter, got %d", len(report.Adapters))
+	}
+	if report.Adapters[0].Speed != "fast" || report.Adapters[0].Cost != "high" {
+		t.Fatalf("unexpected runtime traits: %+v", report.Adapters[0])
+	}
+	if len(report.Adapters[0].Tags) != 2 {
+		t.Fatalf("unexpected runtime tags: %+v", report.Adapters[0].Tags)
+	}
+}
+
+func TestTransferExportAndRun(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
 	if err != nil {
@@ -472,40 +536,46 @@ func TestHandoffExportAndRun(t *testing.T) {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
-	exported, err := svc.ExportHandoff(context.Background(), HandoffExportRequest{JobID: run.Job.JobID})
+	runStatus := waitForTerminalStatus(t, svc, run.Job.JobID)
+
+	exported, err := svc.ExportTransfer(context.Background(), TransferExportRequest{JobID: run.Job.JobID, Reason: "provider outage", Mode: "recovery"})
 	if err != nil {
-		t.Fatalf("ExportHandoff returned error: %v", err)
+		t.Fatalf("ExportTransfer returned error: %v", err)
 	}
-	if exported.Handoff.Packet.Source.JobID != run.Job.JobID {
-		t.Fatalf("expected handoff source job %s, got %s", run.Job.JobID, exported.Handoff.Packet.Source.JobID)
+	if exported.Transfer.Packet.Source.JobID != run.Job.JobID {
+		t.Fatalf("expected transfer source job %s, got %s", run.Job.JobID, exported.Transfer.Packet.Source.JobID)
 	}
-	if exported.Handoff.Packet.Source.CWD == "" {
-		t.Fatal("expected handoff source cwd")
+	if exported.Transfer.Packet.Source.CWD == "" {
+		t.Fatal("expected transfer source cwd")
 	}
-	if len(exported.Handoff.Packet.RecentTurns) == 0 {
-		t.Fatal("expected handoff recent turns")
+	if len(exported.Transfer.Packet.RecentTurnsInline) == 0 {
+		t.Fatal("expected transfer inline turns")
 	}
 	if exported.Path == "" {
-		t.Fatal("expected handoff path")
+		t.Fatal("expected transfer path")
 	}
 
-	continued, err := svc.RunHandoff(context.Background(), HandoffRunRequest{
-		HandoffRef: exported.Handoff.HandoffID,
-		Adapter:    "gemini",
-		CWD:        t.TempDir(),
+	continued, err := svc.RunTransfer(context.Background(), TransferRunRequest{
+		TransferRef: exported.Transfer.TransferID,
+		Adapter:     "gemini",
+		CWD:         t.TempDir(),
 	})
 	if err != nil {
-		t.Fatalf("RunHandoff returned error: %v", err)
+		t.Fatalf("RunTransfer returned error: %v", err)
 	}
-	if continued.Job.Adapter != "gemini" {
-		t.Fatalf("expected gemini target adapter, got %s", continued.Job.Adapter)
+	continuedStatus := waitForTerminalStatus(t, svc, continued.Job.JobID)
+	if continuedStatus.Job.Adapter != "gemini" {
+		t.Fatalf("expected gemini target adapter, got %s", continuedStatus.Job.Adapter)
 	}
-	if continued.Job.Summary["handoff_id"] != exported.Handoff.HandoffID {
-		t.Fatalf("expected handoff id in job summary, got %+v", continued.Job.Summary)
+	if continuedStatus.Job.Summary["transfer_id"] != exported.Transfer.TransferID {
+		t.Fatalf("expected transfer id in job summary, got %+v", continuedStatus.Job.Summary)
+	}
+	if runStatus.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed source job state, got %s", runStatus.Job.State)
 	}
 }
 
-func TestExportAndRunHandoff(t *testing.T) {
+func TestExportAndRunTransfer(t *testing.T) {
 	stateDir := t.TempDir()
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
@@ -513,6 +583,7 @@ func TestExportAndRunHandoff(t *testing.T) {
 	t.Setenv("CAGENT_STATE_DIR", stateDir)
 	t.Setenv("CAGENT_CONFIG_DIR", configDir)
 	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
 	if err != nil {
@@ -551,43 +622,98 @@ func TestExportAndRunHandoff(t *testing.T) {
 	source, err := svc.Run(context.Background(), RunRequest{
 		Adapter:      "codex",
 		CWD:          t.TempDir(),
-		Prompt:       "build a handoff source run",
+		Prompt:       "build a transfer source run",
 		PromptSource: "prompt",
 	})
 	if err != nil {
 		t.Fatalf("Run returned error: %v", err)
 	}
 
-	exported, err := svc.ExportHandoff(context.Background(), HandoffExportRequest{
+	sourceStatus := waitForTerminalStatus(t, svc, source.Job.JobID)
+
+	exported, err := svc.ExportTransfer(context.Background(), TransferExportRequest{
 		JobID: source.Job.JobID,
 	})
 	if err != nil {
-		t.Fatalf("ExportHandoff returned error: %v", err)
+		t.Fatalf("ExportTransfer returned error: %v", err)
 	}
-	if exported.Handoff.Packet.Source.JobID != source.Job.JobID {
-		t.Fatalf("expected exported source job %q, got %q", source.Job.JobID, exported.Handoff.Packet.Source.JobID)
+	if exported.Transfer.Packet.Source.JobID != source.Job.JobID {
+		t.Fatalf("expected exported source job %q, got %q", source.Job.JobID, exported.Transfer.Packet.Source.JobID)
 	}
 	if _, err := os.Stat(exported.Path); err != nil {
-		t.Fatalf("expected exported handoff file at %q: %v", exported.Path, err)
+		t.Fatalf("expected exported transfer file at %q: %v", exported.Path, err)
 	}
 
-	target, err := svc.RunHandoff(context.Background(), HandoffRunRequest{
-		HandoffRef: exported.Handoff.HandoffID,
-		Adapter:    "factory",
+	target, err := svc.RunTransfer(context.Background(), TransferRunRequest{
+		TransferRef: exported.Transfer.TransferID,
+		Adapter:     "factory",
 	})
 	if err != nil {
-		t.Fatalf("RunHandoff returned error: %v", err)
+		t.Fatalf("RunTransfer returned error: %v", err)
 	}
-	if target.Job.State != core.JobStateCompleted {
-		t.Fatalf("expected completed handoff run state, got %s", target.Job.State)
+	targetStatus := waitForTerminalStatus(t, svc, target.Job.JobID)
+	if targetStatus.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed transfer run state, got %s", targetStatus.Job.State)
 	}
-	if target.Job.Adapter != "factory" {
-		t.Fatalf("expected factory adapter, got %q", target.Job.Adapter)
+	if targetStatus.Job.Adapter != "factory" {
+		t.Fatalf("expected factory adapter, got %q", targetStatus.Job.Adapter)
 	}
-	if got, _ := target.Job.Summary["handoff_id"].(string); got != exported.Handoff.HandoffID {
-		t.Fatalf("expected handoff id %q in summary, got %q", exported.Handoff.HandoffID, got)
+	if got, _ := targetStatus.Job.Summary["transfer_id"].(string); got != exported.Transfer.TransferID {
+		t.Fatalf("expected transfer id %q in summary, got %q", exported.Transfer.TransferID, got)
 	}
 	if target.Session.ParentSession == nil || *target.Session.ParentSession != source.Session.SessionID {
 		t.Fatalf("expected parent session %q, got %+v", source.Session.SessionID, target.Session.ParentSession)
 	}
+	if sourceStatus.Job.State != core.JobStateCompleted {
+		t.Fatalf("expected completed source transfer job, got %s", sourceStatus.Job.State)
+	}
+}
+
+func setTestExecutable(t *testing.T) {
+	t.Helper()
+
+	testBinaryOnce.Do(func() {
+		dir, err := os.MkdirTemp("", "cagent-service-test-*")
+		if err != nil {
+			testBinaryErr = err
+			return
+		}
+		testBinaryPath = filepath.Join(dir, "cagent")
+		cmd := exec.Command("go", "build", "-o", testBinaryPath, "./cmd/cagent")
+		cmd.Dir = filepath.Join("..", "..")
+		output, err := cmd.CombinedOutput()
+		if err != nil {
+			testBinaryErr = errors.New(string(output))
+			return
+		}
+	})
+	if testBinaryErr != nil {
+		t.Fatalf("build cagent binary: %v", testBinaryErr)
+	}
+
+	t.Setenv("CAGENT_EXECUTABLE", testBinaryPath)
+}
+
+func waitForTerminalStatus(t *testing.T, svc *Service, jobID string) *StatusResult {
+	t.Helper()
+
+	deadline := time.Now().Add(15 * time.Second)
+	var last *StatusResult
+	for time.Now().Before(deadline) {
+		status, err := svc.Status(context.Background(), jobID)
+		if err != nil {
+			t.Fatalf("Status returned error: %v", err)
+		}
+		last = status
+		if status.Job.State.Terminal() {
+			return status
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	if last != nil {
+		t.Fatalf("job %s did not reach a terminal state; last state=%s events=%d", jobID, last.Job.State, len(last.Events))
+	}
+	t.Fatalf("job %s did not reach a terminal state", jobID)
+	return nil
 }

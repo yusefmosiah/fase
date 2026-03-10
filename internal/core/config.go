@@ -19,8 +19,7 @@ type StoreConfig struct {
 }
 
 type DefaultsConfig struct {
-	Detached bool `toml:"detached"`
-	JSON     bool `toml:"json"`
+	JSON bool `toml:"json"`
 }
 
 type AdaptersConfig struct {
@@ -33,8 +32,12 @@ type AdaptersConfig struct {
 }
 
 type AdapterConfig struct {
-	Binary  string `toml:"binary"`
-	Enabled bool   `toml:"enabled"`
+	Binary  string   `toml:"binary"`
+	Enabled bool     `toml:"enabled"`
+	Summary string   `toml:"summary"`
+	Speed   string   `toml:"speed"`
+	Cost    string   `toml:"cost"`
+	Tags    []string `toml:"tags"`
 }
 
 func DefaultConfig(paths Paths) Config {
@@ -43,8 +46,7 @@ func DefaultConfig(paths Paths) Config {
 			StateDir: paths.StateDir,
 		},
 		Defaults: DefaultsConfig{
-			Detached: true,
-			JSON:     false,
+			JSON: false,
 		},
 		Adapters: AdaptersConfig{
 			Codex:    AdapterConfig{Binary: "codex", Enabled: true},
@@ -54,6 +56,25 @@ func DefaultConfig(paths Paths) Config {
 			Gemini:   AdapterConfig{Binary: "gemini", Enabled: true},
 			OpenCode: AdapterConfig{Binary: "opencode", Enabled: true},
 		},
+	}
+}
+
+func (c AdaptersConfig) ByName(name string) (AdapterConfig, bool) {
+	switch name {
+	case "claude":
+		return c.Claude, true
+	case "codex":
+		return c.Codex, true
+	case "factory":
+		return c.Factory, true
+	case "gemini":
+		return c.Gemini, true
+	case "opencode":
+		return c.OpenCode, true
+	case "pi":
+		return c.Pi, true
+	default:
+		return AdapterConfig{}, false
 	}
 }
 

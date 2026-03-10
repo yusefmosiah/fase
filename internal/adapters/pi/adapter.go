@@ -93,6 +93,7 @@ func (a *Adapter) start(ctx context.Context, cwd, sessionPath, model, prompt str
 
 	cmd := exec.CommandContext(ctx, a.binary, args...)
 	cmd.Dir = cwd
+	adapterapi.PrepareCommand(cmd)
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {

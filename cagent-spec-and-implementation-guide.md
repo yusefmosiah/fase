@@ -1,7 +1,7 @@
 # cagent Spec And Implementation Guide
 
 Date: 2026-03-09
-Kind: Spec + implementation handoff
+Kind: Spec + implementation guide
 Status: Draft
 Requires: []
 
@@ -262,7 +262,7 @@ $XDG_CONFIG_HOME/cagent/config.toml
 $XDG_STATE_HOME/cagent/cagent.db
 $XDG_STATE_HOME/cagent/jobs/
 $XDG_STATE_HOME/cagent/raw/
-$XDG_STATE_HOME/cagent/handoffs/
+$XDG_STATE_HOME/cagent/transfers/
 $XDG_CACHE_HOME/cagent/
 ```
 
@@ -455,8 +455,8 @@ Canonical `kind` values:
 - `checkpoint.created`
 - `session.discovered`
 - `session.resumed`
-- `handoff.exported`
-- `handoff.started`
+- `transfer.exported`
+- `transfer.started`
 - `diagnostic`
 
 Rules:
@@ -636,7 +636,7 @@ type Adapter interface {
 The adapter must not:
 - write directly to SQLite
 - decide canonical IDs
-- decide handoff semantics
+- decide transfer semantics
 - render human CLI output
 
 Those belong to the service layer.
@@ -649,7 +649,7 @@ SQLite tables:
 - `turns`
 - `events`
 - `native_sessions`
-- `handoffs`
+- `transfers`
 - `artifacts`
 - `locks`
 
@@ -1037,7 +1037,7 @@ Cover:
 - state transitions
 - lock acquisition
 - config parsing
-- handoff rendering
+- transfer rendering
 - event translation helpers
 
 ### Fixture Tests
@@ -1107,8 +1107,8 @@ Each adapter must ship with:
 
 ### Milestone 4
 
-- handoff export
-- handoff run
+- transfer export
+- transfer run
 - Gemini adapter
 
 ### Milestone 5
@@ -1178,7 +1178,7 @@ Do this in order:
 5. implement Claude Code
 6. freeze JSON contracts with golden tests
 7. implement `send`
-8. implement handoffs
+8. implement transfers
 9. add the remaining adapters in the declared order
 
 Do not:

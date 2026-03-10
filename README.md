@@ -19,11 +19,11 @@ Current repo status:
 - The codebase is production-shaped for local use, but not yet feature-complete against the full spec.
 
 Practical summary:
-- Core runtime, SQLite persistence, canonical schemas, session inspection, handoffs, and event translation are in place.
+- Core runtime, SQLite persistence, canonical schemas, session inspection, transfers, and event translation are in place.
 - Codex, Claude, Factory, Pi, Gemini, and OpenCode adapters all exist.
 - A host-agent-facing `runtime` inventory command is available.
 - Background execution, real process cancellation, live log follow, and filtered job/session listing are in place.
-- The next semantics cleanup is renaming `handoff` to `transfer` and narrowing it to failover/recovery rather than normal orchestration.
+- `transfer` is the explicit failover/recovery path when native continuation is not possible.
 
 ## Intended Use
 
@@ -31,7 +31,7 @@ Practical summary:
 
 That means:
 - the primary public surface is the CLI plus `--json`,
-- `run`, `send`, and `handoff run` queue background jobs and return IDs immediately,
+- `run`, `send`, and `transfer run` queue background jobs and return IDs immediately,
 - host agents should be able to inspect runtime availability before choosing an adapter,
 - adapter-specific auth remains owned by each vendor CLI,
 - `cagent` keeps durable session state and raw artifacts instead of trying to act like a janitor or hosted control plane.
@@ -61,7 +61,7 @@ More concrete milestone view:
 | Milestone 1 | Complete | `run`, `status`, `logs`, `list`, `cancel` shell, canonical job/session/event model |
 | Milestone 2 | Complete | Codex and Claude adapters, fake CLIs, golden translation tests |
 | Milestone 3 | Complete | Factory and Pi adapters, `send`, canonical session inspection |
-| Milestone 4 | Complete | `handoff export`, `handoff run`, Gemini adapter |
+| Milestone 4 | Complete | transfer export/run, Gemini adapter |
 | Milestone 5 | Partial | OpenCode experimental adapter is implemented; `runtime` now covers the host-agent inventory role, but lifecycle polish is still missing |
 
 ## Implemented
@@ -74,15 +74,11 @@ Commands currently wired:
 - `cagent cancel`
 - `cagent list`
 - `cagent session`
-- `cagent handoff export`
-- `cagent handoff run`
+- `cagent transfer export`
+- `cagent transfer run`
 - `cagent adapters`
 - `cagent runtime`
 - `cagent version`
-
-Planned public rename:
-- `handoff export` -> `transfer export`
-- `handoff run` -> `transfer run`
 
 Canonical persistence currently wired:
 - sessions
@@ -91,7 +87,7 @@ Canonical persistence currently wired:
 - events
 - native session links
 - artifacts
-- handoff/transfer packets
+- transfer packets
 - raw stdout/stderr/native payload artifacts
 
 Adapters currently implemented:
@@ -117,7 +113,7 @@ Important gaps versus the spec:
 - the adapter contract does not yet include explicit `Cancel` or `ExportNativeSession` methods from the spec
 - richer host-agent wait ergonomics such as `status --wait` are not implemented yet
 - `tool.result`, approval, checkpoint, and richer structured event coverage are still incomplete for some vendors
-- `handoff` still needs to be renamed and reshaped into `transfer`, with smaller inline context and stronger path-based evidence references
+- transfer bundle ergonomics can still improve, especially richer evidence references into native session state when available
 - model-authored `debrief` does not exist yet
 
 ## Repository Layout
@@ -206,7 +202,7 @@ Use cases:
 ## Next Recommended Work
 
 The highest-value remaining steps are:
-1. Replace `handoff` with `transfer` in the CLI and runtime contract.
-2. Export transfer bundles with compact inline context plus file references.
-3. Add a future `debrief` path for model-authored self-summary.
-4. Improve event translation depth.
+1. Export richer transfer bundles with stronger evidence references into native session state when available.
+2. Add a future `debrief` path for model-authored self-summary.
+3. Improve event translation depth.
+4. Add small orchestration ergonomics like `status --wait`.

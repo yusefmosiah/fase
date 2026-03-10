@@ -6,6 +6,7 @@ import (
 	"io"
 	"os/exec"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -67,6 +68,13 @@ type Adapter interface {
 	Detect(ctx context.Context) (Diagnosis, error)
 	StartRun(ctx context.Context, req StartRunRequest) (*RunHandle, error)
 	ContinueRun(ctx context.Context, req ContinueRunRequest) (*RunHandle, error)
+}
+
+func PrepareCommand(cmd *exec.Cmd) {
+	if cmd == nil {
+		return
+	}
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
 func DetectVersion(ctx context.Context, binary string, args ...string) (*string, error) {

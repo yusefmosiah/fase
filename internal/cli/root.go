@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -33,7 +34,6 @@ type runOptions struct {
 	label       string
 	model       string
 	profile     string
-	detached    bool
 	envFile     string
 	artifactDir string
 	sessionID   string
@@ -49,19 +49,30 @@ type sendOptions struct {
 	profile    string
 }
 
-type handoffExportOptions struct {
+type transferExportOptions struct {
 	jobID     string
 	sessionID string
 	output    string
+	reason    string
+	mode      string
 }
 
-type handoffRunOptions struct {
-	handoff string
+type transferRunOptions struct {
+	transfer string
+	adapter  string
+	cwd      string
+	model    string
+	profile  string
+	label    string
+}
+
+type runtimeOptions struct {
 	adapter string
-	cwd     string
-	model   string
-	profile string
-	label   string
+}
+
+type internalRunJobOptions struct {
+	jobID  string
+	turnID string
 }
 
 func Execute() error {
@@ -89,10 +100,11 @@ func NewRootCommand() *cobra.Command {
 		newCancelCommand(opts),
 		newListCommand(opts),
 		newSessionCommand(opts),
-		newHandoffCommand(opts),
+		newTransferCommand(opts, "transfer", "Export and launch explicit cross-vendor transfers", false),
+		newTransferCommand(opts, "handoff", "Deprecated alias for transfer", true),
 		newAdaptersCommand(opts),
-		newPlaceholderCommand("doctor", "Check adapter binaries, auth, and writable dirs"),
-		newPlaceholderCommand("gc", "Collect old artifacts and compact the store"),
+		newRuntimeCommand(opts, "runtime", "Show the current host-agent runtime inventory", false),
+		newInternalRunJobCommand(opts),
 		newVersionCommand(),
 	)
 
@@ -104,7 +116,7 @@ func newRunCommand(root *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "run",
-		Short: "Start a new job",
+		Short: "Queue a new background job",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prompt, source, err := resolvePrompt(cmd, opts)
 			if err != nil {
@@ -125,7 +137,6 @@ func newRunCommand(root *rootOptions) *cobra.Command {
 				Label:        opts.label,
 				Model:        opts.model,
 				Profile:      opts.profile,
-				Detached:     opts.detached,
 				EnvFile:      opts.envFile,
 				ArtifactDir:  opts.artifactDir,
 				SessionID:    opts.sessionID,
@@ -153,7 +164,6 @@ func newRunCommand(root *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.label, "label", "", "optional human label")
 	cmd.Flags().StringVar(&opts.model, "model", "", "requested model override")
 	cmd.Flags().StringVar(&opts.profile, "profile", "", "requested adapter profile")
-	cmd.Flags().BoolVar(&opts.detached, "detached", false, "return immediately after launching")
 	cmd.Flags().StringVar(&opts.envFile, "env-file", "", "path to an env file")
 	cmd.Flags().StringVar(&opts.artifactDir, "artifact-dir", "", "override artifact directory")
 	cmd.Flags().StringVar(&opts.sessionID, "session", "", "attach the run to an existing canonical session")
@@ -201,6 +211,13 @@ func newLogsCommand(root *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = svc.Close() }()
 
+			if follow {
+				if raw {
+					return followRawLogs(cmd, svc, args[0], root.jsonOutput, limit)
+				}
+				return followEvents(cmd, svc, args[0], root.jsonOutput, limit)
+			}
+
 			if raw {
 				logs, err := svc.RawLogs(context.Background(), args[0], limit)
 				if err != nil {
@@ -229,7 +246,7 @@ func newSendCommand(root *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "send",
-		Short: "Continue a resumable native session",
+		Short: "Queue a continuation on a resumable native session",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			prompt, source, err := resolveSendPrompt(cmd, opts)
 			if err != nil {
@@ -324,6 +341,10 @@ func newSessionCommand(root *rootOptions) *cobra.Command {
 
 func newListCommand(root *rootOptions) *cobra.Command {
 	var limit int
+	var kind string
+	var adapter string
+	var state string
+	var sessionID string
 
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -335,34 +356,97 @@ func newListCommand(root *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = svc.Close() }()
 
-			jobs, err := svc.ListJobs(context.Background(), limit)
-			if err != nil {
-				return mapServiceError(err)
-			}
-
-			if root.jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), jobs)
-			}
-
-			for _, job := range jobs {
-				if err := writef(
-					cmd.OutOrStdout(),
-					"%s\t%s\t%s\t%s\t%s\n",
-					job.JobID,
-					job.Adapter,
-					job.State,
-					job.CreatedAt.Format("2006-01-02 15:04:05"),
-					job.Label,
-				); err != nil {
-					return err
+			switch kind {
+			case "jobs":
+				jobs, err := svc.ListJobs(context.Background(), service.ListJobsRequest{
+					Limit:     limit,
+					Adapter:   adapter,
+					State:     state,
+					SessionID: sessionID,
+				})
+				if err != nil {
+					return mapServiceError(err)
 				}
+				if root.jsonOutput {
+					return writeJSON(cmd.OutOrStdout(), jobs)
+				}
+				for _, job := range jobs {
+					if err := writef(
+						cmd.OutOrStdout(),
+						"%s\t%s\t%s\t%s\t%s\t%s\n",
+						job.JobID,
+						job.SessionID,
+						job.Adapter,
+						job.State,
+						job.CreatedAt.Format("2006-01-02 15:04:05"),
+						job.Label,
+					); err != nil {
+						return err
+					}
+				}
+			case "sessions":
+				sessions, err := svc.ListSessions(context.Background(), service.ListSessionsRequest{
+					Limit:   limit,
+					Adapter: adapter,
+					Status:  state,
+				})
+				if err != nil {
+					return mapServiceError(err)
+				}
+				if root.jsonOutput {
+					return writeJSON(cmd.OutOrStdout(), sessions)
+				}
+				for _, session := range sessions {
+					if err := writef(
+						cmd.OutOrStdout(),
+						"%s\t%s\t%s\t%s\t%s\n",
+						session.SessionID,
+						session.OriginAdapter,
+						session.Status,
+						session.UpdatedAt.Format("2006-01-02 15:04:05"),
+						session.Label,
+					); err != nil {
+						return err
+					}
+				}
+			default:
+				return exitf(2, "invalid kind %q: expected jobs or sessions", kind)
 			}
 
 			return nil
 		},
 	}
 
-	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of jobs to list")
+	cmd.Flags().StringVar(&kind, "kind", "jobs", "list kind: jobs or sessions")
+	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to list")
+	cmd.Flags().StringVar(&adapter, "adapter", "", "filter by adapter")
+	cmd.Flags().StringVar(&state, "state", "", "filter by job state or session status")
+	cmd.Flags().StringVar(&sessionID, "session", "", "filter jobs by canonical session id")
+	return cmd
+}
+
+func newInternalRunJobCommand(root *rootOptions) *cobra.Command {
+	opts := &internalRunJobOptions{}
+
+	cmd := &cobra.Command{
+		Use:    "__run-job",
+		Short:  "Internal background worker entrypoint",
+		Hidden: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			return svc.ExecuteDetachedJob(context.Background(), opts.jobID, opts.turnID)
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.jobID, "job", "", "job id")
+	cmd.Flags().StringVar(&opts.turnID, "turn", "", "turn id")
+	_ = cmd.MarkFlagRequired("job")
+	_ = cmd.MarkFlagRequired("turn")
 	return cmd
 }
 
@@ -400,19 +484,47 @@ func newAdaptersCommand(root *rootOptions) *cobra.Command {
 	}
 }
 
-func newHandoffCommand(root *rootOptions) *cobra.Command {
-	exportOpts := &handoffExportOptions{}
-	runOpts := &handoffRunOptions{}
+func newRuntimeCommand(root *rootOptions, use, short string, hidden bool) *cobra.Command {
+	opts := &runtimeOptions{}
 
 	cmd := &cobra.Command{
-		Use:   "handoff",
-		Short: "Export and launch cross-vendor handoffs",
+		Use:    use,
+		Short:  short,
+		Hidden: hidden,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			result, err := svc.Runtime(context.Background(), opts.adapter)
+			if err != nil {
+				return mapServiceError(err)
+			}
+
+			return renderRuntime(cmd, root.jsonOutput, result)
+		},
+	}
+
+	cmd.Flags().StringVar(&opts.adapter, "adapter", "", "limit output to a single adapter")
+	return cmd
+}
+
+func newTransferCommand(root *rootOptions, use, short string, hidden bool) *cobra.Command {
+	exportOpts := &transferExportOptions{}
+	runOpts := &transferRunOptions{}
+
+	cmd := &cobra.Command{
+		Use:    use,
+		Short:  short,
+		Hidden: hidden,
 	}
 
 	cmd.AddCommand(
 		&cobra.Command{
 			Use:   "export",
-			Short: "Export a structured handoff packet",
+			Short: "Export a structured transfer bundle",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				svc, err := service.Open(context.Background(), root.configPath)
 				if err != nil {
@@ -420,10 +532,12 @@ func newHandoffCommand(root *rootOptions) *cobra.Command {
 				}
 				defer func() { _ = svc.Close() }()
 
-				result, err := svc.ExportHandoff(context.Background(), service.HandoffExportRequest{
+				result, err := svc.ExportTransfer(context.Background(), service.TransferExportRequest{
 					JobID:      exportOpts.jobID,
 					SessionID:  exportOpts.sessionID,
 					OutputPath: exportOpts.output,
+					Reason:     exportOpts.reason,
+					Mode:       exportOpts.mode,
 				})
 				if err != nil {
 					return mapServiceError(err)
@@ -432,12 +546,12 @@ func newHandoffCommand(root *rootOptions) *cobra.Command {
 				if root.jsonOutput {
 					return writeJSON(cmd.OutOrStdout(), result)
 				}
-				return writef(cmd.OutOrStdout(), "%s\t%s\n", result.Handoff.HandoffID, result.Path)
+				return writef(cmd.OutOrStdout(), "%s\t%s\n", result.Transfer.TransferID, result.Path)
 			},
 		},
 		&cobra.Command{
 			Use:   "run",
-			Short: "Run a job from a handoff packet",
+			Short: "Queue a job from a transfer bundle",
 			RunE: func(cmd *cobra.Command, args []string) error {
 				svc, err := service.Open(context.Background(), root.configPath)
 				if err != nil {
@@ -445,13 +559,13 @@ func newHandoffCommand(root *rootOptions) *cobra.Command {
 				}
 				defer func() { _ = svc.Close() }()
 
-				result, runErr := svc.RunHandoff(context.Background(), service.HandoffRunRequest{
-					HandoffRef: runOpts.handoff,
-					Adapter:    runOpts.adapter,
-					CWD:        runOpts.cwd,
-					Model:      runOpts.model,
-					Profile:    runOpts.profile,
-					Label:      runOpts.label,
+				result, runErr := svc.RunTransfer(context.Background(), service.TransferRunRequest{
+					TransferRef: runOpts.transfer,
+					Adapter:     runOpts.adapter,
+					CWD:         runOpts.cwd,
+					Model:       runOpts.model,
+					Profile:     runOpts.profile,
+					Label:       runOpts.label,
 				})
 				if result != nil {
 					if err := renderRunResult(cmd, root.jsonOutput, result); err != nil {
@@ -469,16 +583,18 @@ func newHandoffCommand(root *rootOptions) *cobra.Command {
 	exportCmd := cmd.Commands()[0]
 	exportCmd.Flags().StringVar(&exportOpts.jobID, "job", "", "source job to export")
 	exportCmd.Flags().StringVar(&exportOpts.sessionID, "session", "", "source session to export from its latest job")
-	exportCmd.Flags().StringVar(&exportOpts.output, "output", "", "write the packet to a specific file")
+	exportCmd.Flags().StringVar(&exportOpts.output, "output", "", "write the transfer manifest to a specific file")
+	exportCmd.Flags().StringVar(&exportOpts.reason, "reason", "", "operator-supplied reason for the transfer")
+	exportCmd.Flags().StringVar(&exportOpts.mode, "mode", "manual", "transfer mode: manual, recovery, operator_override, cost, capability")
 
 	runCmd := cmd.Commands()[1]
-	runCmd.Flags().StringVar(&runOpts.handoff, "handoff", "", "handoff id or path to a handoff JSON file")
+	runCmd.Flags().StringVar(&runOpts.transfer, "transfer", "", "transfer id or path to a transfer JSON file")
 	runCmd.Flags().StringVar(&runOpts.adapter, "adapter", "", "target adapter")
 	runCmd.Flags().StringVar(&runOpts.cwd, "cwd", "", "override working directory for the target run")
 	runCmd.Flags().StringVar(&runOpts.model, "model", "", "requested model override")
 	runCmd.Flags().StringVar(&runOpts.profile, "profile", "", "requested adapter profile")
 	runCmd.Flags().StringVar(&runOpts.label, "label", "", "optional label for the new session")
-	_ = runCmd.MarkFlagRequired("handoff")
+	_ = runCmd.MarkFlagRequired("transfer")
 	_ = runCmd.MarkFlagRequired("adapter")
 
 	return cmd
@@ -490,16 +606,6 @@ func newVersionCommand() *cobra.Command {
 		Short: "Print the cagent version",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Println(version)
-		},
-	}
-}
-
-func newPlaceholderCommand(use, short string) *cobra.Command {
-	return &cobra.Command{
-		Use:   use,
-		Short: short,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return exitf(5, "%s is not implemented yet", cmd.CommandPath())
 		},
 	}
 }
@@ -654,15 +760,98 @@ func renderSession(cmd *cobra.Command, jsonOutput bool, result *service.SessionR
 	return nil
 }
 
+func followEvents(cmd *cobra.Command, svc *service.Service, jobID string, jsonOutput bool, limit int) error {
+	var lastSeq int64
+	for {
+		events, err := svc.LogsAfter(context.Background(), jobID, lastSeq, limit)
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			for _, event := range events {
+				if err := writeJSON(cmd.OutOrStdout(), event); err != nil {
+					return err
+				}
+			}
+		} else {
+			for _, event := range events {
+				payload := compactJSON(event.Payload)
+				if payload == "" {
+					if err := writef(cmd.OutOrStdout(), "%05d %s %s\n", event.Seq, event.Kind, event.TS.Format(timeLayout)); err != nil {
+						return err
+					}
+				} else {
+					if err := writef(cmd.OutOrStdout(), "%05d %s %s %s\n", event.Seq, event.Kind, event.TS.Format(timeLayout), payload); err != nil {
+						return err
+					}
+				}
+				lastSeq = event.Seq
+			}
+		}
+		if jsonOutput && len(events) > 0 {
+			lastSeq = events[len(events)-1].Seq
+		}
+
+		status, err := svc.Status(context.Background(), jobID)
+		if err != nil {
+			return err
+		}
+		if status.Job.State.Terminal() && len(events) == 0 {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
+func followRawLogs(cmd *cobra.Command, svc *service.Service, jobID string, jsonOutput bool, limit int) error {
+	var lastSeq int64
+	for {
+		logs, events, err := svc.RawLogsAfter(context.Background(), jobID, lastSeq, limit)
+		if err != nil {
+			return err
+		}
+		for _, event := range events {
+			lastSeq = event.Seq
+		}
+
+		if jsonOutput {
+			for _, entry := range logs {
+				if err := writeJSON(cmd.OutOrStdout(), entry); err != nil {
+					return err
+				}
+			}
+		} else {
+			for _, entry := range logs {
+				if err := writef(cmd.OutOrStdout(), "[%s] %s\n", entry.Stream, entry.Path); err != nil {
+					return err
+				}
+				if entry.Content != "" {
+					if err := writef(cmd.OutOrStdout(), "%s", entry.Content); err != nil {
+						return err
+					}
+					if !strings.HasSuffix(entry.Content, "\n") {
+						if err := writef(cmd.OutOrStdout(), "\n"); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+
+		status, err := svc.Status(context.Background(), jobID)
+		if err != nil {
+			return err
+		}
+		if status.Job.State.Terminal() && len(events) == 0 {
+			return nil
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+}
+
 func renderEvents(cmd *cobra.Command, jsonOutput, follow bool, events []core.EventRecord) error {
 	if jsonOutput {
 		return writeJSON(cmd.OutOrStdout(), events)
-	}
-
-	if follow {
-		if err := writef(cmd.OutOrStdout(), "follow is currently bounded to persisted events\n"); err != nil {
-			return err
-		}
 	}
 
 	for _, event := range events {
@@ -686,12 +875,6 @@ func renderRawLogs(cmd *cobra.Command, jsonOutput, follow bool, logs []service.R
 		return writeJSON(cmd.OutOrStdout(), logs)
 	}
 
-	if follow {
-		if err := writef(cmd.OutOrStdout(), "follow is currently bounded to persisted artifacts\n"); err != nil {
-			return err
-		}
-	}
-
 	for _, entry := range logs {
 		if err := writef(cmd.OutOrStdout(), "[%s] %s\n", entry.Stream, entry.Path); err != nil {
 			return err
@@ -704,6 +887,51 @@ func renderRawLogs(cmd *cobra.Command, jsonOutput, follow bool, logs []service.R
 				if err := writef(cmd.OutOrStdout(), "\n"); err != nil {
 					return err
 				}
+			}
+		}
+	}
+
+	return nil
+}
+
+func renderRuntime(cmd *cobra.Command, jsonOutput bool, result *service.RuntimeResult) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), result)
+	}
+
+	if err := writef(cmd.OutOrStdout(), "config: %s\tpresent=%t\n", result.ConfigPath, result.ConfigPresent); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "state_dir: %s\n", result.Paths.StateDir); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "cache_dir: %s\n", result.Paths.CacheDir); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "defaults:\tjson=%t\n", result.Defaults.JSON); err != nil {
+		return err
+	}
+	for _, adapter := range result.Adapters {
+		if err := writef(
+			cmd.OutOrStdout(),
+			"adapter: %s\tenabled=%t\tavailable=%t\tbinary=%s\tspeed=%s\tcost=%s\n",
+			adapter.Adapter,
+			adapter.Enabled,
+			adapter.Available,
+			adapter.Binary,
+			emptyDash(adapter.Speed),
+			emptyDash(adapter.Cost),
+		); err != nil {
+			return err
+		}
+		if adapter.Summary != "" {
+			if err := writef(cmd.OutOrStdout(), "  summary: %s\n", adapter.Summary); err != nil {
+				return err
+			}
+		}
+		if len(adapter.Tags) > 0 {
+			if err := writef(cmd.OutOrStdout(), "  tags: %s\n", strings.Join(adapter.Tags, ", ")); err != nil {
+				return err
 			}
 		}
 	}
@@ -770,4 +998,11 @@ func compactJSON(raw json.RawMessage) string {
 	}
 
 	return dst.String()
+}
+
+func emptyDash(value string) string {
+	if value == "" {
+		return "-"
+	}
+	return value
 }
