@@ -4,7 +4,6 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { promisify } from 'node:util'
 import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
 
 const execFileAsync = promisify(execFile)
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
@@ -169,5 +168,5 @@ function cagentApiPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [react(), cagentApiPlugin()],
+  plugins: [cagentApiPlugin()],
 })
