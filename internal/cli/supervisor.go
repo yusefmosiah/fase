@@ -208,7 +208,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 		mu.Lock()
 		var completed []completedEntry
 		for workID, flight := range inFlight {
-			jobState, pollErr := pollJobStatus(ctx, selfBin, root.configPath, flight.jobID)
+			jobState, pollErr := pollJobStatus(ctx, selfBin, root.configPath, flight.jobID, cwd)
 			if pollErr != nil {
 				if !jsonOutput {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to poll job %s: %v\n", flight.jobID, pollErr)
@@ -384,7 +384,8 @@ func spawnRun(bin, configPath, adapter, cwd, prompt string) (string, error) {
 	}
 
 	runCmd := exec.Command(bin, args...)
-	runCmd.Stderr = nil // don't inherit stderr
+	runCmd.Dir = cwd // ensure cagent resolves .cagent/ from the target repo
+	runCmd.Stderr = nil
 	out, err := runCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("cagent run failed: %w", err)
@@ -406,13 +407,16 @@ func spawnRun(bin, configPath, adapter, cwd, prompt string) (string, error) {
 }
 
 // pollJobStatus calls `cagent status --json <job-id>` and returns the job state.
-func pollJobStatus(ctx context.Context, bin, configPath, jobID string) (string, error) {
+func pollJobStatus(ctx context.Context, bin, configPath, jobID, cwd string) (string, error) {
 	args := []string{"status", "--json", jobID}
 	if configPath != "" {
 		args = append(args, "--config", configPath)
 	}
 
 	statusCmd := exec.CommandContext(ctx, bin, args...)
+	if cwd != "" {
+		statusCmd.Dir = cwd
+	}
 	statusCmd.Stderr = nil
 	out, err := statusCmd.Output()
 	if err != nil {
