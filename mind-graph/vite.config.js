@@ -9,9 +9,17 @@ const execFileAsync = promisify(execFile)
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
 const repoRoot = path.resolve(webRoot, '..')
 
+// CAGENT_TARGET_REPO sets which repo's work graph to display.
+// Defaults to the cagent repo itself if not set.
+const targetRepo = globalThis.process.env.CAGENT_TARGET_REPO || repoRoot
+
 function cagentExecutable() {
+  // Prefer /tmp/cagent if it exists (freshly built), then bin/cagent, then go run
+  if (fs.existsSync('/tmp/cagent')) {
+    return { command: '/tmp/cagent', args: [] }
+  }
   const binaryPath = path.join(repoRoot, 'bin', 'cagent')
-  if (globalThis.process.env.CAGENT_WEB_API_PREFER_BIN === '1' && fs.existsSync(binaryPath)) {
+  if (fs.existsSync(binaryPath)) {
     return { command: binaryPath, args: [] }
   }
   return { command: 'go', args: ['run', './cmd/cagent'] }
@@ -23,7 +31,7 @@ async function runCagent(args) {
     executable.command,
     [...executable.args, '--json', ...args],
     {
-      cwd: repoRoot,
+      cwd: targetRepo,
       env: globalThis.process.env,
       maxBuffer: 16 * 1024 * 1024,
     },
