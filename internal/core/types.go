@@ -58,6 +58,7 @@ type NativeSessionRecord struct {
 type JobRecord struct {
 	JobID           string         `json:"job_id"`
 	SessionID       string         `json:"session_id"`
+	WorkID          string         `json:"work_id,omitempty"`
 	Adapter         string         `json:"adapter"`
 	State           JobState       `json:"state"`
 	Label           string         `json:"label,omitempty"`
@@ -123,18 +124,6 @@ type ModelPricing struct {
 }
 
 type UsageReport struct {
-	Provider                 string `json:"provider,omitempty"`
-	Model                    string `json:"model,omitempty"`
-	InputTokens              int64  `json:"input_tokens,omitempty"`
-	OutputTokens             int64  `json:"output_tokens,omitempty"`
-	TotalTokens              int64  `json:"total_tokens,omitempty"`
-	CachedInputTokens        int64  `json:"cached_input_tokens,omitempty"`
-	CacheReadInputTokens     int64  `json:"cache_read_input_tokens,omitempty"`
-	CacheCreationInputTokens int64  `json:"cache_creation_input_tokens,omitempty"`
-	Source                   string `json:"source,omitempty"`
-}
-
-type ModelUsageReport struct {
 	Provider                 string  `json:"provider,omitempty"`
 	Model                    string  `json:"model,omitempty"`
 	InputTokens              int64   `json:"input_tokens,omitempty"`
@@ -172,6 +161,7 @@ type CatalogEntry struct {
 	Adapter      string            `json:"adapter"`
 	Provider     string            `json:"provider,omitempty"`
 	Model        string            `json:"model,omitempty"`
+	Traits       []string          `json:"traits,omitempty"`
 	Selected     bool              `json:"selected"`
 	Available    bool              `json:"available"`
 	AuthMethod   string            `json:"auth_method,omitempty"`
@@ -229,12 +219,6 @@ type TransferArtifact struct {
 	Metadata map[string]any `json:"metadata,omitempty"`
 }
 
-type TransferEvidenceRef struct {
-	Kind     string         `json:"kind"`
-	Path     string         `json:"path"`
-	Metadata map[string]any `json:"metadata,omitempty"`
-}
-
 type TransferPacket struct {
 	TransferID           string                `json:"transfer_id"`
 	ExportedAt           time.Time             `json:"exported_at"`
@@ -248,7 +232,7 @@ type TransferPacket struct {
 	ImportantFiles       []string              `json:"important_files"`
 	RecentTurnsInline    []TurnRecord          `json:"recent_turns_inline,omitempty"`
 	RecentEventsInline   []EventRecord         `json:"recent_events_inline,omitempty"`
-	EvidenceRefs         []TransferEvidenceRef `json:"evidence_refs"`
+	EvidenceRefs         []TransferArtifact    `json:"evidence_refs"`
 	Artifacts            []TransferArtifact    `json:"artifacts"`
 	Constraints          []string              `json:"constraints"`
 	RecommendedNextSteps []string              `json:"recommended_next_steps"`
@@ -285,6 +269,7 @@ type JobRuntimeRecord struct {
 type HistoryMatch struct {
 	Kind      string          `json:"kind"`
 	ID        string          `json:"id"`
+	WorkID    string          `json:"work_id,omitempty"`
 	SessionID string          `json:"session_id"`
 	JobID     string          `json:"job_id,omitempty"`
 	Adapter   string          `json:"adapter"`
@@ -297,4 +282,123 @@ type HistoryMatch struct {
 	Score     int             `json:"score,omitempty"`
 	Source    string          `json:"source,omitempty"`
 	Artifact  *ArtifactRecord `json:"artifact,omitempty"`
+}
+
+type WorkExecutionState string
+
+const (
+	WorkExecutionStateReady      WorkExecutionState = "ready"
+	WorkExecutionStateClaimed    WorkExecutionState = "claimed"
+	WorkExecutionStateInProgress WorkExecutionState = "in_progress"
+	WorkExecutionStateBlocked    WorkExecutionState = "blocked"
+	WorkExecutionStateDone       WorkExecutionState = "done"
+	WorkExecutionStateFailed     WorkExecutionState = "failed"
+	WorkExecutionStateCancelled  WorkExecutionState = "cancelled"
+)
+
+func (s WorkExecutionState) Terminal() bool {
+	switch s {
+	case WorkExecutionStateDone, WorkExecutionStateFailed, WorkExecutionStateCancelled:
+		return true
+	default:
+		return false
+	}
+}
+
+type WorkApprovalState string
+
+const (
+	WorkApprovalStateNone                WorkApprovalState = "none"
+	WorkApprovalStatePendingVerification WorkApprovalState = "pending_verification"
+	WorkApprovalStateVerified            WorkApprovalState = "verified"
+	WorkApprovalStateRejected            WorkApprovalState = "rejected"
+)
+
+type WorkItemRecord struct {
+	WorkID               string             `json:"work_id"`
+	Title                string             `json:"title"`
+	Objective            string             `json:"objective"`
+	Kind                 string             `json:"kind"`
+	ExecutionState       WorkExecutionState `json:"execution_state"`
+	ApprovalState        WorkApprovalState  `json:"approval_state"`
+	Phase                string             `json:"phase,omitempty"`
+	Priority             int                `json:"priority,omitempty"`
+	RequiredCapabilities []string           `json:"required_capabilities,omitempty"`
+	RequiredModelTraits  []string           `json:"required_model_traits,omitempty"`
+	PreferredAdapters    []string           `json:"preferred_adapters,omitempty"`
+	ForbiddenAdapters    []string           `json:"forbidden_adapters,omitempty"`
+	PreferredModels      []string           `json:"preferred_models,omitempty"`
+	AvoidModels          []string           `json:"avoid_models,omitempty"`
+	Acceptance           map[string]any     `json:"acceptance,omitempty"`
+	Metadata             map[string]any     `json:"metadata,omitempty"`
+	CurrentJobID         string             `json:"current_job_id,omitempty"`
+	CurrentSessionID     string             `json:"current_session_id,omitempty"`
+	ClaimedBy            string             `json:"claimed_by,omitempty"`
+	ClaimedUntil         *time.Time         `json:"claimed_until,omitempty"`
+	CreatedAt            time.Time          `json:"created_at"`
+	UpdatedAt            time.Time          `json:"updated_at"`
+}
+
+type WorkEdgeRecord struct {
+	EdgeID     string         `json:"edge_id"`
+	FromWorkID string         `json:"from_work_id"`
+	ToWorkID   string         `json:"to_work_id"`
+	EdgeType   string         `json:"edge_type"`
+	Metadata   map[string]any `json:"metadata,omitempty"`
+	CreatedBy  string         `json:"created_by,omitempty"`
+	CreatedAt  time.Time      `json:"created_at"`
+}
+
+type WorkUpdateRecord struct {
+	UpdateID       string             `json:"update_id"`
+	WorkID         string             `json:"work_id"`
+	ExecutionState WorkExecutionState `json:"execution_state,omitempty"`
+	ApprovalState  WorkApprovalState  `json:"approval_state,omitempty"`
+	Phase          string             `json:"phase,omitempty"`
+	Message        string             `json:"message,omitempty"`
+	JobID          string             `json:"job_id,omitempty"`
+	SessionID      string             `json:"session_id,omitempty"`
+	ArtifactID     string             `json:"artifact_id,omitempty"`
+	Metadata       map[string]any     `json:"metadata,omitempty"`
+	CreatedBy      string             `json:"created_by,omitempty"`
+	CreatedAt      time.Time          `json:"created_at"`
+}
+
+type WorkNoteRecord struct {
+	NoteID    string         `json:"note_id"`
+	WorkID    string         `json:"work_id"`
+	NoteType  string         `json:"note_type,omitempty"`
+	Body      string         `json:"body"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedBy string         `json:"created_by,omitempty"`
+	CreatedAt time.Time      `json:"created_at"`
+}
+
+type WorkProposalRecord struct {
+	ProposalID    string         `json:"proposal_id"`
+	ProposalType  string         `json:"proposal_type"`
+	State         string         `json:"state"`
+	TargetWorkID  string         `json:"target_work_id,omitempty"`
+	SourceWorkID  string         `json:"source_work_id,omitempty"`
+	Rationale     string         `json:"rationale,omitempty"`
+	ProposedPatch map[string]any `json:"proposed_patch,omitempty"`
+	Metadata      map[string]any `json:"metadata,omitempty"`
+	CreatedBy     string         `json:"created_by,omitempty"`
+	CreatedAt     time.Time      `json:"created_at"`
+	ReviewedBy    string         `json:"reviewed_by,omitempty"`
+	ReviewedAt    *time.Time     `json:"reviewed_at,omitempty"`
+}
+
+type VerificationRecord struct {
+	VerificationID string         `json:"verification_id"`
+	TargetKind     string         `json:"target_kind"`
+	TargetID       string         `json:"target_id"`
+	Result         string         `json:"result"`
+	Summary        string         `json:"summary,omitempty"`
+	ArtifactID     string         `json:"artifact_id,omitempty"`
+	JobID          string         `json:"job_id,omitempty"`
+	SessionID      string         `json:"session_id,omitempty"`
+	Metadata       map[string]any `json:"metadata,omitempty"`
+	CreatedBy      string         `json:"created_by,omitempty"`
+	CreatedAt      time.Time      `json:"created_at"`
 }

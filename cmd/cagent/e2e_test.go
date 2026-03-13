@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -131,12 +132,71 @@ type cliCatalogEntry struct {
 type cliHistoryMatch struct {
 	Kind      string `json:"kind"`
 	ID        string `json:"id"`
+	WorkID    string `json:"work_id"`
 	SessionID string `json:"session_id"`
 	JobID     string `json:"job_id"`
 	Adapter   string `json:"adapter"`
 	Model     string `json:"model"`
 	Snippet   string `json:"snippet"`
 	Path      string `json:"path"`
+}
+
+type cliWorkItem struct {
+	WorkID           string `json:"work_id"`
+	Title            string `json:"title"`
+	Kind             string `json:"kind"`
+	ExecutionState   string `json:"execution_state"`
+	ApprovalState    string `json:"approval_state"`
+	CurrentJobID     string `json:"current_job_id"`
+	CurrentSessionID string `json:"current_session_id"`
+	ClaimedBy        string `json:"claimed_by"`
+	ClaimedUntil     string `json:"claimed_until"`
+}
+
+type cliWorkNote struct {
+	NoteID   string `json:"note_id"`
+	WorkID   string `json:"work_id"`
+	NoteType string `json:"note_type"`
+	Body     string `json:"body"`
+}
+
+type cliWorkShowResult struct {
+	Work     cliWorkItem   `json:"work"`
+	Children []cliWorkItem `json:"children"`
+	Notes    []cliWorkNote `json:"notes"`
+	Jobs     []struct {
+		JobID  string `json:"job_id"`
+		WorkID string `json:"work_id"`
+		State  string `json:"state"`
+	} `json:"jobs"`
+	Proposals []struct {
+		ProposalID string `json:"proposal_id"`
+		State      string `json:"state"`
+	} `json:"proposals"`
+	Verifications []struct {
+		VerificationID string `json:"verification_id"`
+		Result         string `json:"result"`
+	} `json:"verifications"`
+}
+
+type cliWorkProposalPayload struct {
+	Proposal struct {
+		ProposalID   string `json:"proposal_id"`
+		ProposalType string `json:"proposal_type"`
+		State        string `json:"state"`
+		SourceWorkID string `json:"source_work_id"`
+		TargetWorkID string `json:"target_work_id"`
+	} `json:"proposal"`
+	CreatedWork *cliWorkItem `json:"created_work"`
+}
+
+type cliVerificationPayload struct {
+	Verification struct {
+		VerificationID string `json:"verification_id"`
+		Result         string `json:"result"`
+		TargetID       string `json:"target_id"`
+	} `json:"verification"`
+	Work cliWorkItem `json:"work"`
 }
 
 func TestDetachedRunCanBeCancelled(t *testing.T) {
@@ -513,6 +573,264 @@ func TestCatalogProbeClassifiesEntries(t *testing.T) {
 	}
 }
 
+func TestWorkLifecycleCommands(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeCodexConfig(t)
+
+	rootOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Root plan", "--objective", "Track work runtime implementation", "--kind", "plan")
+	var rootWork cliWorkItem
+	if err := json.Unmarshal([]byte(rootOutput), &rootWork); err != nil {
+		t.Fatalf("unmarshal root work: %v\n%s", err, rootOutput)
+	}
+	if rootWork.WorkID == "" {
+		t.Fatal("expected root work id")
+	}
+
+	childOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Implement child", "--objective", "Attach run lifecycle to work", "--kind", "implement", "--parent", rootWork.WorkID)
+	var childWork cliWorkItem
+	if err := json.Unmarshal([]byte(childOutput), &childWork); err != nil {
+		t.Fatalf("unmarshal child work: %v\n%s", err, childOutput)
+	}
+
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--work", childWork.WorkID, "--prompt", "work lifecycle test")
+	var runResult cliRunResult
+	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
+		t.Fatalf("unmarshal work run: %v\n%s", err, runOutput)
+	}
+	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+
+	showOutput := runCagent(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	var show cliWorkShowResult
+	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
+		t.Fatalf("unmarshal work show: %v\n%s", err, showOutput)
+	}
+	if show.Work.CurrentJobID != runResult.Job.JobID {
+		t.Fatalf("expected current job %q, got %+v", runResult.Job.JobID, show.Work)
+	}
+	if show.Work.ExecutionState != "done" {
+		t.Fatalf("expected done execution state, got %+v", show.Work)
+	}
+	if show.Work.ApprovalState != "pending_verification" {
+		t.Fatalf("expected pending_verification, got %+v", show.Work)
+	}
+	foundJob := false
+	for _, job := range show.Jobs {
+		if job.JobID == runResult.Job.JobID && job.WorkID == childWork.WorkID {
+			foundJob = true
+			break
+		}
+	}
+	if !foundJob {
+		t.Fatalf("expected linked job in work show, got %+v", show.Jobs)
+	}
+
+	noteOutput := runCagent(t, binary, configPath, "--json", "work", "note-add", childWork.WorkID, "--type", "verifier_feedback", "--text", "Looks good")
+	var note cliWorkNote
+	if err := json.Unmarshal([]byte(noteOutput), &note); err != nil {
+		t.Fatalf("unmarshal work note: %v\n%s", err, noteOutput)
+	}
+	if note.Body != "Looks good" {
+		t.Fatalf("unexpected note body: %+v", note)
+	}
+
+	notesOutput := runCagent(t, binary, configPath, "--json", "work", "notes", childWork.WorkID)
+	var notes []cliWorkNote
+	if err := json.Unmarshal([]byte(notesOutput), &notes); err != nil {
+		t.Fatalf("unmarshal work notes: %v\n%s", err, notesOutput)
+	}
+	if len(notes) == 0 || notes[0].Body != "Looks good" {
+		t.Fatalf("expected note in work notes, got %+v", notes)
+	}
+
+	verifyOutput := runCagent(t, binary, configPath, "--json", "work", "verify", childWork.WorkID, "--result", "passed", "--summary", "Verification passed")
+	var verification cliVerificationPayload
+	if err := json.Unmarshal([]byte(verifyOutput), &verification); err != nil {
+		t.Fatalf("unmarshal verification payload: %v\n%s", err, verifyOutput)
+	}
+	if verification.Work.ApprovalState != "verified" {
+		t.Fatalf("expected verified approval state, got %+v", verification.Work)
+	}
+
+	artifactsOutput := runCagent(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	var artifacts []cliArtifactRecord
+	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
+		t.Fatalf("unmarshal work artifacts: %v\n%s", err, artifactsOutput)
+	}
+	if len(artifacts) == 0 {
+		t.Fatal("expected work-linked artifacts")
+	}
+
+	notePath := filepath.Join(t.TempDir(), "attached-note.md")
+	if err := os.WriteFile(notePath, []byte("# Attached note\n\nVerifier context.\n"), 0o644); err != nil {
+		t.Fatalf("write attached note: %v", err)
+	}
+	attachOutput := runCagent(t, binary, configPath, "--json", "artifacts", "attach", "--work", childWork.WorkID, "--path", notePath, "--kind", "spec_markdown")
+	var attached cliArtifactRecord
+	if err := json.Unmarshal([]byte(attachOutput), &attached); err != nil {
+		t.Fatalf("unmarshal attached artifact: %v\n%s", err, attachOutput)
+	}
+	if attached.ArtifactID == "" || attached.Kind != "spec_markdown" {
+		t.Fatalf("unexpected attached artifact payload: %+v", attached)
+	}
+
+	artifactsOutput = runCagent(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
+		t.Fatalf("unmarshal work artifacts after attach: %v\n%s", err, artifactsOutput)
+	}
+	foundAttached := false
+	for _, artifact := range artifacts {
+		if artifact.ArtifactID == attached.ArtifactID {
+			foundAttached = true
+			break
+		}
+	}
+	if !foundAttached {
+		t.Fatalf("expected attached artifact in work artifact list, got %+v", artifacts)
+	}
+
+	discoverOutput := runCagent(t, binary, configPath, "--json", "work", "discover", childWork.WorkID, "--title", "Verifier follow-up", "--objective", "Add gate work", "--kind", "verify", "--rationale", "Discovered during implementation")
+	var proposal cliWorkProposalPayload
+	if err := json.Unmarshal([]byte(discoverOutput), &proposal); err != nil {
+		t.Fatalf("unmarshal discover proposal: %v\n%s", err, discoverOutput)
+	}
+	if proposal.Proposal.ProposalID == "" || proposal.Proposal.State != "proposed" {
+		t.Fatalf("expected proposed discovery, got %+v", proposal)
+	}
+
+	acceptOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
+	if err := json.Unmarshal([]byte(acceptOutput), &proposal); err != nil {
+		t.Fatalf("unmarshal accepted proposal: %v\n%s", err, acceptOutput)
+	}
+	if proposal.CreatedWork == nil || proposal.CreatedWork.WorkID == "" {
+		t.Fatalf("expected created work from accepted discovery, got %+v", proposal)
+	}
+
+	readyOutput := runCagent(t, binary, configPath, "--json", "work", "ready")
+	var ready []cliWorkItem
+	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
+		t.Fatalf("unmarshal ready work: %v\n%s", err, readyOutput)
+	}
+	foundCreated := false
+	for _, item := range ready {
+		if proposal.CreatedWork != nil && item.WorkID == proposal.CreatedWork.WorkID {
+			foundCreated = true
+			break
+		}
+	}
+	if !foundCreated {
+		t.Fatalf("expected accepted discovered work in ready list, got %+v", ready)
+	}
+
+	checklistOutput := runCagent(t, binary, configPath, "work", "projection", "checklist", rootWork.WorkID)
+	if !strings.Contains(checklistOutput, "# Root plan") || !strings.Contains(checklistOutput, "Implement child") {
+		t.Fatalf("expected checklist projection content, got:\n%s", checklistOutput)
+	}
+
+	statusProjection := runCagent(t, binary, configPath, "work", "projection", "status", childWork.WorkID)
+	if !strings.Contains(statusProjection, "Latest Verification") || !strings.Contains(statusProjection, "Verification passed") {
+		t.Fatalf("expected status projection content, got:\n%s", statusProjection)
+	}
+
+	createChildProposalOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "create", "--type", "create_child", "--target", rootWork.WorkID, "--patch", `{"title":"Review child","objective":"Review the implementation","kind":"review"}`)
+	if err := json.Unmarshal([]byte(createChildProposalOutput), &proposal); err != nil {
+		t.Fatalf("unmarshal create_child proposal: %v\n%s", err, createChildProposalOutput)
+	}
+	acceptChildOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
+	if err := json.Unmarshal([]byte(acceptChildOutput), &proposal); err != nil {
+		t.Fatalf("unmarshal accepted create_child proposal: %v\n%s", err, acceptChildOutput)
+	}
+	if proposal.CreatedWork == nil || proposal.CreatedWork.Kind != "review" {
+		t.Fatalf("expected created review child, got %+v", proposal)
+	}
+
+	noReadyOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Needs impossible adapter", "--objective", "Should not be ready without a matching adapter", "--preferred-adapters", "nonexistent")
+	var constrainedWork cliWorkItem
+	if err := json.Unmarshal([]byte(noReadyOutput), &constrainedWork); err != nil {
+		t.Fatalf("unmarshal constrained work: %v\n%s", err, noReadyOutput)
+	}
+	readyOutput = runCagent(t, binary, configPath, "--json", "work", "ready")
+	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
+		t.Fatalf("unmarshal ready work after capability filter: %v\n%s", err, readyOutput)
+	}
+	for _, item := range ready {
+		if item.WorkID == constrainedWork.WorkID {
+			t.Fatalf("did not expect impossible-adapter work in ready list: %+v", ready)
+		}
+	}
+}
+
+func TestWorkClaimLifecycleCommands(t *testing.T) {
+	binary := buildCagentBinary(t)
+	configPath := writeFakeCodexConfig(t)
+
+	workOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Claimable work", "--objective", "Exercise work lease semantics")
+	var work cliWorkItem
+	if err := json.Unmarshal([]byte(workOutput), &work); err != nil {
+		t.Fatalf("unmarshal work create: %v\n%s", err, workOutput)
+	}
+
+	claimOutput := runCagent(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "1h")
+	if err := json.Unmarshal([]byte(claimOutput), &work); err != nil {
+		t.Fatalf("unmarshal work claim: %v\n%s", err, claimOutput)
+	}
+	if work.ExecutionState != "claimed" {
+		t.Fatalf("expected claimed execution state after claim, got %q", work.ExecutionState)
+	}
+	if work.ClaimedBy != "worker-a" {
+		t.Fatalf("expected claimant worker-a, got %q", work.ClaimedBy)
+	}
+
+	readyOutput := runCagent(t, binary, configPath, "--json", "work", "ready")
+	var ready []cliWorkItem
+	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
+		t.Fatalf("unmarshal ready work after claim: %v\n%s", err, readyOutput)
+	}
+	for _, candidate := range ready {
+		if candidate.WorkID == work.WorkID {
+			t.Fatalf("claimed work should not appear in ready list")
+		}
+	}
+
+	if output, exitCode := runCagentExpectError(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-b", "--lease", "1h"); exitCode != 7 {
+		t.Fatalf("expected busy exit code 7 for conflicting claim, got %d\n%s", exitCode, output)
+	}
+
+	if output, exitCode := runCagentExpectError(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-b"); exitCode != 7 {
+		t.Fatalf("expected busy exit code 7 for conflicting release, got %d\n%s", exitCode, output)
+	}
+
+	releaseOutput := runCagent(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-a")
+	var releasedWork cliWorkItem
+	if err := json.Unmarshal([]byte(releaseOutput), &releasedWork); err != nil {
+		t.Fatalf("unmarshal work release: %v\n%s", err, releaseOutput)
+	}
+	if releasedWork.ExecutionState != "ready" {
+		t.Fatalf("expected ready execution state after release, got %q", releasedWork.ExecutionState)
+	}
+	if releasedWork.ClaimedBy != "" {
+		t.Fatalf("expected cleared claimant after release, got %q", releasedWork.ClaimedBy)
+	}
+
+	expiringOutput := runCagent(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "50ms")
+	var expiringWork cliWorkItem
+	if err := json.Unmarshal([]byte(expiringOutput), &expiringWork); err != nil {
+		t.Fatalf("unmarshal expiring claim: %v\n%s", err, expiringOutput)
+	}
+	time.Sleep(125 * time.Millisecond)
+
+	claimNextOutput := runCagent(t, binary, configPath, "--json", "work", "claim-next", "--claimant", "worker-b", "--lease", "1h")
+	var nextWork cliWorkItem
+	if err := json.Unmarshal([]byte(claimNextOutput), &nextWork); err != nil {
+		t.Fatalf("unmarshal claim-next: %v\n%s", err, claimNextOutput)
+	}
+	if nextWork.WorkID != expiringWork.WorkID {
+		t.Fatalf("expected claim-next to recover expired lease on %s, got %s", expiringWork.WorkID, nextWork.WorkID)
+	}
+	if nextWork.ClaimedBy != "worker-b" {
+		t.Fatalf("expected worker-b to acquire expired lease, got %q", nextWork.ClaimedBy)
+	}
+}
+
 func buildCagentBinary(t *testing.T) string {
 	t.Helper()
 
@@ -676,6 +994,22 @@ func runCagent(t *testing.T, binary, configPath string, args ...string) string {
 		t.Fatalf("run cagent %v: %v\n%s", args, err, output)
 	}
 	return string(output)
+}
+
+func runCagentExpectError(t *testing.T, binary, configPath string, args ...string) (string, int) {
+	t.Helper()
+
+	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
+	cmd.Env = os.Environ()
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		t.Fatalf("expected cagent command to fail: %v\n%s", args, output)
+	}
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected exit error for %v: %v\n%s", args, err, output)
+	}
+	return string(output), exitErr.ExitCode()
 }
 
 func waitForJobState(t *testing.T, binary, configPath, jobID string, allowed map[string]bool) {

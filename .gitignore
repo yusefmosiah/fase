@@ -1,6 +1,10 @@
 .DS_Store
 .direnv/
 .factory/
+.dogfood*/
+.dogfood/
 bin/
 dist/
 coverage.out
+web-desktop/
+work_seed/

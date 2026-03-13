@@ -16,7 +16,7 @@ work graph to `cagent` with:
 - structured progress updates,
 - notes,
 - proposals for graph edits,
-- verification records,
+- attestation records,
 - ready/blocking projections,
 - and a CLI/API surface that both hosts and workers can use.
 
@@ -37,7 +37,7 @@ orchestration pattern.
 1. Add core `work` records and storage tables.
 2. Wire `run --work` and `send --work` to attach jobs and sessions to work.
 3. Implement worker-safe read/update commands.
-4. Add `work proposal` and verification records.
+4. Add `work proposal` and attestation records.
 5. Add `work ready` and basic deterministic projections.
 
 ## 1) Design Goals
@@ -47,7 +47,7 @@ The first `work` layer should:
 - let workers hydrate from work state instead of large bespoke prompts,
 - let workers publish structured progress,
 - let hosts and workers discover actionable unblocked work,
-- preserve graph lineage across retries, discoveries, and verification,
+- preserve graph lineage across retries, discoveries, and attestations,
 - keep execution state separate from approval state,
 - stay bash-friendly and CLI-first.
 
@@ -76,12 +76,11 @@ type WorkItem struct {
     ApprovalState        string
     Phase                string
     Priority             int
-    ConfigurationClass   string
-    BudgetClass          string
     RequiredCapabilities []string
     PreferredAdapters    []string
     ForbiddenAdapters    []string
     AcceptanceJSON       json.RawMessage
+    RequiredAttestations json.RawMessage
     MetadataJSON         json.RawMessage
     CurrentJobID         string
     CurrentSessionID     string
@@ -95,7 +94,7 @@ type WorkItem struct {
 Notes:
 - `ExecutionState` and `ApprovalState` are separate on purpose.
 - `ClaimedBy` should identify the worker/session/host holding the lease.
-- `AcceptanceJSON` should stay flexible at first.
+- `AcceptanceJSON` and `RequiredAttestations` should stay flexible at first.
 
 ### 2.2 Work Edge
 
@@ -182,8 +181,6 @@ type WorkProposal struct {
 Initial `ProposalType` set:
 - `create_child`
 - `promote_discovery`
-- `split_work`
-- `merge_work`
 - `add_edge`
 - `remove_edge`
 - `supersede_work`
@@ -197,35 +194,49 @@ Initial proposal states:
 - `rejected`
 - `withdrawn`
 
-### 2.6 Verification Record
+### 2.6 Attestation Record
 
-Explicit check against a work item or proposal.
+Explicit evidence-bearing claim about a work item, proposal, artifact, or other
+subject.
 
 ```go
-type VerificationRecord struct {
-    VerificationID string
-    TargetKind     string
-    TargetID       string
-    Result         string
-    Summary        string
-    ArtifactID     string
-    JobID          string
-    SessionID      string
-    MetadataJSON   json.RawMessage
-    CreatedBy      string
-    CreatedAt      time.Time
+type AttestationRecord struct {
+    AttestationID            string
+    SubjectKind              string
+    SubjectID                string
+    VerifierKind             string
+    VerifierIdentity         string
+    Method                   string
+    Result                   string
+    Summary                  string
+    Confidence               float64
+    Blocking                 bool
+    JobID                    string
+    SessionID                string
+    ArtifactIDsJSON          json.RawMessage
+    MetadataJSON             json.RawMessage
+    SupersedesAttestationID  string
+    CreatedBy                string
+    CreatedAt                time.Time
 }
 ```
 
-`TargetKind`:
+`SubjectKind`:
 - `work`
 - `proposal`
+- `artifact`
+- `doc`
+- `projection`
 
 `Result`:
 - `passed`
 - `failed`
-- `blocked`
 - `inconclusive`
+- `matches`
+- `drifted`
+- `approved`
+- `rejected`
+- `superseded`
 
 ## 3) State Model
 
@@ -250,15 +261,15 @@ Suggested rules:
 
 Initial approval-state set:
 - `none`
-- `pending_verification`
+- `pending`
 - `verified`
 - `rejected`
 - `approved`
 
 Suggested rules:
-- implementation work often moves to `pending_verification` when execution is
+- implementation work often moves to `pending` when execution is
   done
-- verifier work can change another work item's approval state
+- required attestations may gate readiness for approval
 - `approved` should be explicit, not implied by `done`
 
 ### 3.3 Phase
@@ -268,7 +279,7 @@ Suggested rules:
 Examples:
 - `research`
 - `implementation`
-- `verification`
+- `attesting`
 - `review`
 - `red_team`
 - `handoff`
@@ -301,8 +312,8 @@ Meaning:
 Approval relationship.
 
 Meaning:
-- `V verifies W` means `V` exists to validate `W`
-- completion of `V` should be reflected in `W.ApprovalState`
+- `V verifies W` means `V` exists to attest to the quality of `W`
+- completion of `V` may emit attestations that influence `W.ApprovalState`
 
 ### 4.4 `discovered_from`
 
@@ -329,7 +340,7 @@ Weak informational edge for navigation and search.
 `work ready` should answer "what can run now?"
 
 A work item is ready if:
-- `ExecutionState` is `ready`
+- `ExecutionState` is `ready`, or it is `claimed` with an expired lease
 - it is not currently leased by another worker
 - all incoming `blocks` edges are satisfied
 - it is not superseded by newer active work
@@ -371,7 +382,7 @@ Some proposal classes should require explicit approval:
 - root-objective changes
 - scope expansion
 - deletion/supersession of accepted work
-- verification-policy changes
+- attestation-policy changes
 - security or budget-sensitive graph edits
 
 Approval policy can remain simple in v1:
@@ -392,6 +403,8 @@ Approval policy can remain simple in v1:
 ### 7.2 Worker-Safe Update Commands
 
 - `cagent work claim <work-id>`
+- `cagent work claim-next`
+- `cagent work release <work-id>`
 - `cagent work update <work-id> --state ... --phase ... --message ...`
 - `cagent work note add <work-id> --type ... --text ...`
 - `cagent work block <work-id> --message ...`
@@ -408,7 +421,7 @@ Approval policy can remain simple in v1:
 - `cagent work proposal show <proposal-id>`
 - `cagent work proposal accept <proposal-id>`
 - `cagent work proposal reject <proposal-id>`
-- `cagent work verify <work-id> ...`
+- `cagent work attest <work-id> ...`
 
 ### 7.4 Existing Command Integration
 
@@ -416,6 +429,22 @@ Approval policy can remain simple in v1:
 - `cagent send --work <work-id> ...`
 - `cagent artifacts list --work <work-id>`
 - `cagent history search --work <work-id>` later, optional
+
+### 7.5 Worker Briefing Contract
+
+Workers should hydrate from a versioned compiled briefing, not a bespoke launch
+prompt.
+
+The stable contract is defined in
+[docs/cagent-worker-briefing-schema.md](/Users/wiz/cagent/docs/cagent-worker-briefing-schema.md)
+with the canonical JSON schema in
+[schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+
+Lease semantics for v1:
+- `work claim` moves `ready -> claimed`
+- `work release` moves `claimed -> ready`
+- expired claims should no longer block `work ready`
+- terminal or blocked execution outcomes should clear the lease automatically
 
 ## 8) Storage Plan
 
@@ -425,7 +454,7 @@ Initial new tables:
 - `work_updates`
 - `work_notes`
 - `work_proposals`
-- `verification_records`
+- `attestation_records`
 
 Minimal attachment changes to existing runtime tables:
 - `jobs.work_id`
@@ -439,7 +468,7 @@ Suggested indexes:
 - `work_updates (work_id, created_at DESC)`
 - `work_notes (work_id, created_at DESC)`
 - `work_proposals (target_work_id, state, created_at DESC)`
-- `verification_records (target_kind, target_id, created_at DESC)`
+- `attestation_records (subject_kind, subject_id, created_at DESC)`
 
 ## 9) Phased Implementation
 
@@ -477,14 +506,14 @@ Implement:
 Goal:
 - make orchestration queryable
 
-### Phase 4: Proposals And Verification
+### Phase 4: Proposals And Attestations
 
 Implement:
 - `work_proposals`
-- `verification_records`
+- `attestation_records`
 - `work discover`
 - `work proposal accept/reject`
-- `work verify`
+- `work attest`
 
 Goal:
 - make graph evolution explicit and governable

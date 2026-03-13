@@ -16,7 +16,7 @@ transport backends. The runtime persists the state that matters:
 - work items
 - work updates
 - notes and discoveries
-- verification and approval state
+- attestation and approval state
 - artifacts and history
 - derived projections of the current system state
 
@@ -42,7 +42,7 @@ instead of a separate hand-maintained truth universe.
 1. Implement the minimum `work` data model.
 2. Add worker-safe read/update commands for work state.
 3. Attach jobs and sessions to work items.
-4. Add verification and discovery records as first-class objects.
+4. Add attestation and discovery records as first-class objects.
 5. Render deterministic doc views from work state and linked artifacts.
 
 ## 1) Product Direction
@@ -54,7 +54,7 @@ The runtime should unify:
 - long-running and resumable execution,
 - cross-adapter failover,
 - durable work coordination,
-- verification and approval,
+- attestation and approval,
 - documentation as a projection over current state.
 
 This does not make `cagent` a hosted workflow SaaS or a general distributed
@@ -106,7 +106,7 @@ Work is orchestration-shaped.
 One work item may involve:
 - one or more research jobs,
 - implementation jobs,
-- verification jobs,
+- attestation-producing jobs,
 - review jobs,
 - retries,
 - child work items,
@@ -115,7 +115,7 @@ One work item may involve:
 That makes `work` the natural object for:
 - identity,
 - continuity,
-- verification,
+- attestation,
 - documentation,
 - coordination,
 - recovery.
@@ -152,7 +152,7 @@ Structured progress emitted by workers.
 Examples:
 - phase started
 - implementation completed
-- verification failed
+- attestation failed
 - blocked on dependency
 - ready for review
 
@@ -187,11 +187,12 @@ A proposed new work item discovered during execution.
 Discovered work should not immediately become accepted work. It first exists as
 a proposal to be triaged in context of the larger system state.
 
-### 5.5 Verification Record
+### 5.5 Attestation Record
 
-Explicit evidence that a result was checked.
+Explicit evidence-bearing claim that a result, artifact, document, or proposal
+was checked.
 
-Execution completion is not approval. Verification and approval must be
+Execution completion is not approval. Attestation and approval must be
 first-class and attributable.
 
 ### 5.6 Claims
@@ -229,7 +230,7 @@ Work nodes are the durable semantic units.
 The runtime needs:
 - durable work nodes,
 - explicit typed edges,
-- deterministic projections such as `ready`, `blocked`, and `needs_verification`,
+- deterministic projections such as `ready`, `blocked`, and `awaiting_approval`,
 - agentic participation in shaping the graph through explicit API operations.
 
 ### 7.1 Nodes
@@ -257,7 +258,7 @@ The initial edge set should stay small and explicit:
 - `blocks`
   - hard prerequisite for readiness
 - `verifies`
-  - approval/verification relationship
+  - approval/attestation relationship
 - `discovered_from`
   - lineage without blocking
 - `supersedes`
@@ -291,7 +292,7 @@ It also lets a coherence or triage flow judge new work in context of:
 - existing graph state,
 - duplicate or overlapping work,
 - budget and risk,
-- current documentation and verification state.
+- current documentation and attestation state.
 
 ## 8) Graph Mutation Model
 
@@ -334,11 +335,11 @@ These are graph-governance operations, not ordinary execution updates.
 
 ### 8.3 Approval-Gated Changes
 
-Some proposals should require verification or explicit approval before
+Some proposals should require attestation or explicit approval before
 application:
 - material scope expansion,
 - deletion or supersession of accepted work,
-- changes to approval or verification policy,
+- changes to approval or attestation policy,
 - removal of verifier or reviewer requirements,
 - root-objective reframing,
 - changes with budget, security, or release implications.
@@ -361,7 +362,7 @@ Examples:
 - narrow doc edits,
 - obvious local refactors,
 - quick probes,
-- targeted verification.
+- targeted attestation.
 
 Preferred approach:
 - create or claim the work,
@@ -386,7 +387,7 @@ Preferred approach:
 - explicit acceptance criteria,
 - maybe a checklist artifact,
 - implementation,
-- verification,
+- attestation,
 - review if risk warrants it.
 
 ### 9.3 High-Hardness Work
@@ -402,9 +403,9 @@ Examples:
 Preferred approach:
 - explicit spec,
 - clear plan,
-- linked acceptance and verification requirements,
+- linked acceptance and attestation requirements,
 - implementation phases,
-- verification and review,
+- attestation and review,
 - deterministic reporting or documentation projection.
 
 The important rule is not "always do less prep" or "always do more prep."
@@ -424,7 +425,7 @@ Hydration inputs:
 - required capabilities
 - notes
 - linked artifacts
-- recent verification findings
+- recent attestation findings
 - child work status
 - recent relevant history
 
@@ -439,7 +440,7 @@ Includes:
 - current phase
 - current blockers
 - key artifacts
-- most recent notes and verification result
+- most recent notes and attestation result
 
 ### Deep hydration
 
@@ -488,6 +489,19 @@ Host- or supervisor-oriented operations:
 The key point is that a running worker does not need hidden prompt injection to
 stay current. It can read and write the work API directly.
 
+## 11.1 Stable Worker Briefing
+
+Workers should not start from bespoke handwritten prompts.
+
+They should start from a compiled, versioned worker briefing generated from
+runtime state. The stable contract is documented in
+[docs/cagent-worker-briefing-schema.md](/Users/wiz/cagent/docs/cagent-worker-briefing-schema.md)
+and the schema lives at
+[schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+
+That briefing is the adapter-independent hydration contract. Natural-language
+prompt rendering is downstream of it.
+
 ## 12) Dynamic Requirements, Not Predefined Worker Profiles
 
 Avoid predefined worker profiles as a core concept.
@@ -498,7 +512,7 @@ Instead:
 - claim/assignment matches the two.
 
 Examples:
-- E2E browser verification may require `browser`, `multimodal`, and `tool_use`.
+- E2E browser attestation may require `browser`, `multimodal`, and `tool_use`.
 - Cheap text research may require only `web` and `tool_use`.
 - Recovery summarization may prefer high context and strong synthesis.
 
@@ -525,7 +539,7 @@ Filesystem Markdown is useful, but deeply flawed as the final system of record.
 Its failure modes:
 - truth split across parallel notes,
 - stale summaries,
-- no direct tie to execution or verification,
+- no direct tie to execution or attestation,
 - weak semantics around lifecycle,
 - hard-to-enforce canonicality.
 
@@ -540,7 +554,7 @@ The bridge is:
 This means future docs can be rendered from:
 - work graph state,
 - accepted decisions,
-- verification records,
+- attestation records,
 - current summaries,
 - linked artifacts,
 - active lifecycle bucket.
@@ -565,7 +579,7 @@ system with:
 It should absorb the semantics behind it:
 - "current truth" maps to accepted work state and approved artifacts,
 - "proposal space" maps to draft work and discoveries,
-- "execution evidence" maps to updates, logs, verification, and state artifacts,
+- "execution evidence" maps to updates, logs, attestations, and state artifacts,
 - "archive" maps to completed and superseded work history.
 
 This lets documentation stay useful for humans while its semantic backbone
@@ -591,6 +605,8 @@ The first meaningful `work` layer likely needs:
 
 Future additions:
 - `work claim`
+- `work claim-next`
+- `work release`
 - `work approve`
 - `work reject`
 - `work discover`
@@ -618,7 +634,7 @@ Bash should keep:
 - updates,
 - notes,
 - discovery,
-- verification,
+- attestation,
 - history,
 - claims,
 - projections.

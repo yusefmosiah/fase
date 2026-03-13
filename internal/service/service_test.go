@@ -940,7 +940,106 @@ func TestSyncAndShowCatalog(t *testing.T) {
 			if entry.Pricing == nil || entry.Pricing.InputUSDPerMTok <= 0 || entry.Pricing.OutputUSDPerMTok <= 0 {
 				t.Fatalf("expected pricing on catalog entry, got %+v", entry)
 			}
+			if len(entry.Traits) == 0 {
+				t.Fatalf("expected inferred traits on catalog entry, got %+v", entry)
+			}
 		}
+	}
+}
+
+func TestReadyWorkUsesCatalogModelTraitsAndModelPreferences(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("" +
+		"[adapters.codex]\n" +
+		"binary = \"codex\"\n" +
+		"enabled = true\n\n" +
+		"[adapters.claude]\n" +
+		"binary = \"claude\"\n" +
+		"enabled = true\n\n" +
+		"[adapters.opencode]\n" +
+		"binary = \"opencode\"\n" +
+		"enabled = true\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	now := time.Now().UTC()
+	snapshot := core.CatalogSnapshot{
+		SnapshotID: core.GenerateID("snap"),
+		CreatedAt:  now,
+		Entries: []core.CatalogEntry{
+			{Adapter: "codex", Provider: "openai", Model: "gpt-5.4", Available: true},
+			{Adapter: "opencode", Provider: "zai-coding-plan", Model: "glm-5", Available: true},
+			{Adapter: "claude", Provider: "anthropic", Model: "claude-haiku-4-5", Available: true},
+			{Adapter: "opencode", Provider: "opencode", Model: "minimax-m2.5-free", Available: true},
+		},
+	}
+	if err := svc.store.CreateCatalogSnapshot(context.Background(), snapshot); err != nil {
+		t.Fatalf("CreateCatalogSnapshot returned error: %v", err)
+	}
+
+	planning, err := svc.CreateWork(context.Background(), WorkCreateRequest{
+		Title:               "Root planning",
+		Objective:           "Use strongest planner",
+		Kind:                "plan",
+		PreferredModels:     []string{"gpt-5.4"},
+		RequiredModelTraits: []string{"planning"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork planning returned error: %v", err)
+	}
+	verification, err := svc.CreateWork(context.Background(), WorkCreateRequest{
+		Title:               "Long verifier",
+		Objective:           "Use glm verifier",
+		Kind:                "verify",
+		PreferredAdapters:   []string{"opencode"},
+		RequiredModelTraits: []string{"verification"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork verification returned error: %v", err)
+	}
+	impossible, err := svc.CreateWork(context.Background(), WorkCreateRequest{
+		Title:               "Needs multimodal",
+		Objective:           "Require missing trait",
+		Kind:                "verify",
+		RequiredModelTraits: []string{"multimodal"},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork impossible returned error: %v", err)
+	}
+
+	items, err := svc.ReadyWork(context.Background(), 20)
+	if err != nil {
+		t.Fatalf("ReadyWork returned error: %v", err)
+	}
+
+	seen := map[string]bool{}
+	for _, item := range items {
+		seen[item.WorkID] = true
+	}
+	if !seen[planning.WorkID] {
+		t.Fatalf("expected planning work to be ready, got %+v", items)
+	}
+	if !seen[verification.WorkID] {
+		t.Fatalf("expected verification work to be ready, got %+v", items)
+	}
+	if seen[impossible.WorkID] {
+		t.Fatalf("did not expect impossible work to be ready, got %+v", items)
 	}
 }
 
@@ -1366,6 +1465,117 @@ func TestExportAndRunTransfer(t *testing.T) {
 	}
 }
 
+func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
+	svc := &Service{
+		ConfigPath: "/tmp/cagent-config/config.toml",
+		Paths: core.Paths{
+			StateDir: "/tmp/cagent-state",
+			CacheDir: "/tmp/cagent-cache",
+		},
+	}
+
+	t.Setenv("PATH", "/usr/bin:/bin")
+	t.Setenv("EXISTING_VAR", "present")
+
+	env := svc.detachedWorkerEnv("/opt/cagent/bin/cagent")
+	envMap := make(map[string]string, len(env))
+	for _, entry := range env {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		envMap[key] = value
+	}
+
+	if got := envMap["CAGENT_EXECUTABLE"]; got != "/opt/cagent/bin/cagent" {
+		t.Fatalf("expected executable path to be propagated, got %q", got)
+	}
+	if got := envMap["CAGENT_CONFIG_DIR"]; got != "/tmp/cagent-config" {
+		t.Fatalf("expected config dir to be propagated, got %q", got)
+	}
+	if got := envMap["CAGENT_STATE_DIR"]; got != "/tmp/cagent-state" {
+		t.Fatalf("expected state dir to be propagated, got %q", got)
+	}
+	if got := envMap["CAGENT_CACHE_DIR"]; got != "/tmp/cagent-cache" {
+		t.Fatalf("expected cache dir to be propagated, got %q", got)
+	}
+	if got := envMap["EXISTING_VAR"]; got != "present" {
+		t.Fatalf("expected existing env var to be preserved, got %q", got)
+	}
+	if got := envMap["PATH"]; got != "/opt/cagent/bin:/usr/bin:/bin" {
+		t.Fatalf("expected PATH to be prefixed with executable dir, got %q", got)
+	}
+}
+
+func TestInspectBootstrapClassifiesStandardProject(t *testing.T) {
+	root := t.TempDir()
+	mustWriteFile(t, filepath.Join(root, "AGENTS.md"), "# instructions\n")
+	mustWriteFile(t, filepath.Join(root, "README.md"), "# readme\n")
+	mustWriteFile(t, filepath.Join(root, "go.mod"), "module example.com/test\n")
+
+	svc := &Service{}
+	assessment, err := svc.InspectBootstrap(context.Background(), BootstrapInspectRequest{
+		Paths: []string{root},
+	})
+	if err != nil {
+		t.Fatalf("InspectBootstrap returned error: %v", err)
+	}
+	if !assessment.BootstrapReady {
+		t.Fatalf("expected bootstrap_ready=true, got false: %+v", assessment)
+	}
+	if len(assessment.Entrypoints) < 2 {
+		t.Fatalf("expected multiple entrypoints, got %+v", assessment.Entrypoints)
+	}
+}
+
+func TestBootstrapCreateSeedsWorkAndBootstrapNote(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	projectRoot := t.TempDir()
+	mustWriteFile(t, filepath.Join(projectRoot, "README.md"), "# readme\n")
+	mustWriteFile(t, filepath.Join(projectRoot, "AGENTS.md"), "# agents\n")
+	mustWriteFile(t, filepath.Join(projectRoot, "package.json"), "{\n  \"name\": \"bootstrap-test\"\n}\n")
+
+	configPath := filepath.Join(configDir, "config.toml")
+	if err := os.WriteFile(configPath, []byte(""), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	result, err := svc.BootstrapCreate(context.Background(), BootstrapCreateRequest{
+		Paths: []string{projectRoot},
+		Title: "Bootstrap test",
+	})
+	if err != nil {
+		t.Fatalf("BootstrapCreate returned error: %v", err)
+	}
+	if result.Work.WorkID == "" {
+		t.Fatalf("expected work id, got %+v", result.Work)
+	}
+	show, err := svc.Work(context.Background(), result.Work.WorkID)
+	if err != nil {
+		t.Fatalf("Work returned error: %v", err)
+	}
+	if len(show.Notes) == 0 {
+		t.Fatalf("expected bootstrap note, got none")
+	}
+	if !strings.Contains(show.Notes[0].Body, "bootstrap roots:") {
+		t.Fatalf("expected bootstrap note body, got %q", show.Notes[0].Body)
+	}
+}
+
 func setTestExecutable(t *testing.T) {
 	t.Helper()
 
@@ -1389,6 +1599,16 @@ func setTestExecutable(t *testing.T) {
 	}
 
 	t.Setenv("CAGENT_EXECUTABLE", testBinaryPath)
+}
+
+func mustWriteFile(t *testing.T, path, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatalf("mkdir %s: %v", path, err)
+	}
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
 }
 
 func waitForTerminalStatus(t *testing.T, svc *Service, jobID string) *StatusResult {

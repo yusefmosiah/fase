@@ -13,6 +13,7 @@ Typical cases:
 - choose among Codex, Claude, Pi, Gemini, Factory, or OpenCode at runtime,
 - inspect discovered provider/model/auth-mode inventory before routing work,
 - launch a task through one stable `--json` interface,
+- participate in a durable `work` graph and coordinate through the work API,
 - continue a same-vendor session through `send`,
 - ask a still-live session to land the plane with `debrief`,
 - export an explicit transfer bundle and launch it on another adapter when failover is required,
@@ -55,6 +56,23 @@ cagent session --json <session-id>
 cagent artifacts list --json --job <job-id>
 ```
 
+For work-runtime usage:
+
+```bash
+cagent work show <work-id>
+cagent work create --title "Implement parser" --objective "Build the parser" --kind implement --parent <parent-work-id>
+cagent work ready --json
+cagent work children <work-id> --json
+cagent work update <work-id> --phase implementation --message "Started implementation"
+cagent work note-add <work-id> --type finding --text "Need a verifier child work item."
+cagent work discover <work-id> --title "Add E2E coverage" --objective "Create browser verification work" --kind verify --rationale "UI changes need browser coverage"
+cagent work proposal create --type add_edge --target <work-id> --rationale "Verifier should block approval" --patch '{"edge_type":"verifies","source_work_id":"<verify-work-id>"}'
+cagent work verify <work-id> --result passed --summary "Playwright passed"
+cagent work claim <work-id> --claimant worker-a
+cagent work release <work-id> --claimant worker-a
+cagent artifacts attach --work <work-id> --path ./report.md --kind report
+```
+
 5. Continue same-vendor work:
 
 ```bash
@@ -88,6 +106,8 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 - Prefer models with recent successful `catalog show` history over merely listed-but-unused ones.
 - Prefer `status --json` when you need normalized token usage or cost for a completed job.
 - Treat `cagent` as machine-facing first. Use `--json` unless a human-readable summary is explicitly better.
+- Treat `work` as the source of truth; use prompts only as compiled hydration views over work state.
+- If the host gives you an isolated runtime via inherited `CAGENT_*` env vars or a runtime-specific wrapper on `PATH`, use bare `cagent` so all graph mutations land in the same runtime.
 - Treat `run`, `send`, and `transfer run` as launch operations, not blocking operations.
 - Treat `debrief` as a debugging/recovery workflow, not a normal orchestration step.
 - Use `status --wait` when you want `cagent` to own the polling loop.
@@ -100,6 +120,13 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter gemini --c
 - Prefer fresh `run` jobs for normal orchestration; use `transfer` for failover/recovery.
 - Treat `catalog show` as discovered inventory and `catalog probe` as a best-effort entitlement/runability check.
 - Treat adapter-native history import as a future special case when the session was not created by `cagent`.
+- Publish structured updates at phase boundaries, and use notes for findings, feedback, and recovery context.
+- Use proposals for structural graph edits instead of silently rewriting the work graph.
+- Do not self-approve implementation work; verification and review are separate work.
+- Before claiming a planning phase succeeded, verify the expected child work actually exists with `cagent work children` or `cagent work show`.
+- Stay within the repo and declared target paths; do not run broad home-directory scans like `find /Users/...` when the target path is already known.
+- Treat assigned work scope as a hard boundary. If you own scaffold work, finish scaffold, update work state, and stop instead of drifting into core UI implementation.
+- Prefer explicit `cagent work update`, `cagent work note-add`, and `cagent work complete` calls over burying progress in tool transcripts.
 
 ## Adapter selection heuristics
 

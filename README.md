@@ -13,6 +13,8 @@ It gives you one machine-readable interface for:
 The implementation is driven by [cagent-spec-and-implementation-guide.md](/Users/wiz/cagent/cagent-spec-and-implementation-guide.md).
 The emerging work-runtime direction is specified in [docs/cagent-work-runtime.md](/Users/wiz/cagent/docs/cagent-work-runtime.md).
 The concrete work schema and CLI/API plan are specified in [docs/cagent-work-api-and-schema.md](/Users/wiz/cagent/docs/cagent-work-api-and-schema.md).
+The stable compiled worker hydration contract is defined in [docs/cagent-worker-briefing-schema.md](/Users/wiz/cagent/docs/cagent-worker-briefing-schema.md) and [schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+The local board/control-plane v0 direction is specified in [docs/cagent-v0-local-control-plane.md](/Users/wiz/cagent/docs/cagent-v0-local-control-plane.md).
 
 ## Status
 
@@ -172,6 +174,9 @@ Run:
 ./bin/cagent logs --follow <job-id>
 ./bin/cagent artifacts list --job <job-id>
 ./bin/cagent history search --query "provider outage" --adapter claude
+./bin/cagent work create --title "Implement X" --objective "Do the work"
+./bin/cagent work claim-next --claimant worker-a
+./bin/cagent work release <work-id> --claimant worker-a
 ./bin/cagent adapters --json
 ./bin/cagent catalog sync --json
 ./bin/cagent catalog show --json

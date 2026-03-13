@@ -34,9 +34,9 @@ type runOptions struct {
 	label       string
 	model       string
 	profile     string
-	envFile     string
 	artifactDir string
 	sessionID   string
+	workID      string
 }
 
 type sendOptions struct {
@@ -47,6 +47,92 @@ type sendOptions struct {
 	stdin      bool
 	model      string
 	profile    string
+	workID     string
+}
+
+type workCreateOptions struct {
+	title                string
+	objective            string
+	kind                 string
+	parent               string
+	priority             int
+	requiredCapabilities string
+	requiredModelTraits  string
+	preferredAdapters    string
+	forbiddenAdapters    string
+	preferredModels      string
+	avoidModels          string
+	acceptance           string
+}
+
+type workListOptions struct {
+	limit          int
+	kind           string
+	executionState string
+	approvalState  string
+}
+
+type workUpdateOptions struct {
+	executionState string
+	approvalState  string
+	phase          string
+	message        string
+	jobID          string
+	sessionID      string
+	artifactID     string
+}
+
+type workNoteOptions struct {
+	noteType string
+	text     string
+}
+
+type workShowOptions struct {
+	limit int
+}
+
+type workReadyOptions struct {
+	limit int
+}
+
+type workClaimOptions struct {
+	claimant string
+	lease    time.Duration
+	limit    int
+}
+
+type workDiscoverOptions struct {
+	title     string
+	objective string
+	kind      string
+	rationale string
+}
+
+type workProposalListOptions struct {
+	limit  int
+	state  string
+	target string
+	source string
+}
+
+type workProposalCreateOptions struct {
+	proposalType string
+	target       string
+	source       string
+	rationale    string
+	patch        string
+}
+
+type workVerifyOptions struct {
+	result     string
+	summary    string
+	jobID      string
+	sessionID  string
+	artifactID string
+}
+
+type workProjectionOptions struct {
+	format string
 }
 
 type debriefOptions struct {
@@ -88,8 +174,19 @@ type statusOptions struct {
 type artifactsListOptions struct {
 	jobID     string
 	sessionID string
+	workID    string
 	kind      string
 	limit     int
+}
+
+type artifactsAttachOptions struct {
+	jobID     string
+	sessionID string
+	workID    string
+	path      string
+	kind      string
+	copy      bool
+	metadata  string
 }
 
 type historySearchOptions struct {
@@ -106,6 +203,17 @@ type historySearchOptions struct {
 type internalRunJobOptions struct {
 	jobID  string
 	turnID string
+}
+
+type bootstrapInspectOptions struct {
+	paths []string
+}
+
+type bootstrapCreateOptions struct {
+	paths     []string
+	title     string
+	objective string
+	kind      string
 }
 
 func Execute() error {
@@ -135,9 +243,10 @@ func NewRootCommand() *cobra.Command {
 		newListCommand(opts),
 		newArtifactsCommand(opts),
 		newHistoryCommand(opts),
+		newBootstrapCommand(opts),
+		newWorkCommand(opts),
 		newSessionCommand(opts),
 		newTransferCommand(opts, "transfer", "Export and launch explicit cross-vendor transfers", false),
-		newTransferCommand(opts, "handoff", "Deprecated alias for transfer", true),
 		newAdaptersCommand(opts),
 		newCatalogCommand(opts),
 		newRuntimeCommand(opts, "runtime", "Show the current host-agent runtime inventory", false),
@@ -145,6 +254,69 @@ func NewRootCommand() *cobra.Command {
 		newVersionCommand(),
 	)
 
+	return cmd
+}
+
+func newBootstrapCommand(root *rootOptions) *cobra.Command {
+	inspectOpts := &bootstrapInspectOptions{}
+	createOpts := &bootstrapCreateOptions{}
+
+	cmd := &cobra.Command{
+		Use:   "bootstrap",
+		Short: "Inspect arbitrary paths and seed work graph bootstrap state",
+	}
+
+	inspectCmd := &cobra.Command{
+		Use:   "inspect",
+		Short: "Assess whether one or more paths are work-graph-native",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			assessment, err := svc.InspectBootstrap(context.Background(), service.BootstrapInspectRequest{
+				Paths: inspectOpts.paths,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderBootstrapAssessment(cmd, root.jsonOutput, assessment)
+		},
+	}
+	inspectCmd.Flags().StringArrayVar(&inspectOpts.paths, "path", nil, "directory or file path to inspect (repeatable)")
+	_ = inspectCmd.MarkFlagRequired("path")
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a root work item from discovered code/docs entrypoints",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			result, err := svc.BootstrapCreate(context.Background(), service.BootstrapCreateRequest{
+				Paths:     createOpts.paths,
+				Title:     createOpts.title,
+				Objective: createOpts.objective,
+				Kind:      createOpts.kind,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderBootstrapCreateResult(cmd, root.jsonOutput, result)
+		},
+	}
+	createCmd.Flags().StringArrayVar(&createOpts.paths, "path", nil, "directory or file path to inspect (repeatable)")
+	createCmd.Flags().StringVar(&createOpts.title, "title", "Bootstrap work graph", "root work title")
+	createCmd.Flags().StringVar(&createOpts.objective, "objective", "", "root work objective")
+	createCmd.Flags().StringVar(&createOpts.kind, "kind", "plan", "root work kind")
+	_ = createCmd.MarkFlagRequired("path")
+
+	cmd.AddCommand(inspectCmd, createCmd)
 	return cmd
 }
 
@@ -174,9 +346,9 @@ func newRunCommand(root *rootOptions) *cobra.Command {
 				Label:        opts.label,
 				Model:        opts.model,
 				Profile:      opts.profile,
-				EnvFile:      opts.envFile,
 				ArtifactDir:  opts.artifactDir,
 				SessionID:    opts.sessionID,
+				WorkID:       opts.workID,
 			})
 
 			if result != nil {
@@ -201,9 +373,9 @@ func newRunCommand(root *rootOptions) *cobra.Command {
 	cmd.Flags().StringVar(&opts.label, "label", "", "optional human label")
 	cmd.Flags().StringVar(&opts.model, "model", "", "requested model override")
 	cmd.Flags().StringVar(&opts.profile, "profile", "", "requested adapter profile")
-	cmd.Flags().StringVar(&opts.envFile, "env-file", "", "path to an env file")
 	cmd.Flags().StringVar(&opts.artifactDir, "artifact-dir", "", "override artifact directory")
 	cmd.Flags().StringVar(&opts.sessionID, "session", "", "attach the run to an existing canonical session")
+	cmd.Flags().StringVar(&opts.workID, "work", "", "attach the run to a work item")
 	_ = cmd.MarkFlagRequired("adapter")
 	_ = cmd.MarkFlagRequired("cwd")
 
@@ -314,6 +486,7 @@ func newSendCommand(root *rootOptions) *cobra.Command {
 				PromptSource: source,
 				Model:        opts.model,
 				Profile:      opts.profile,
+				WorkID:       opts.workID,
 			})
 			if result != nil {
 				if err := renderRunResult(cmd, root.jsonOutput, result); err != nil {
@@ -334,6 +507,7 @@ func newSendCommand(root *rootOptions) *cobra.Command {
 	cmd.Flags().BoolVar(&opts.stdin, "stdin", false, "read prompt from stdin")
 	cmd.Flags().StringVar(&opts.model, "model", "", "requested model override")
 	cmd.Flags().StringVar(&opts.profile, "profile", "", "requested adapter profile")
+	cmd.Flags().StringVar(&opts.workID, "work", "", "attach the continuation to a work item")
 	_ = cmd.MarkFlagRequired("session")
 
 	return cmd
@@ -524,60 +698,102 @@ func newListCommand(root *rootOptions) *cobra.Command {
 
 func newArtifactsCommand(root *rootOptions) *cobra.Command {
 	listOpts := &artifactsListOptions{}
+	attachOpts := &artifactsAttachOptions{copy: true}
 
 	cmd := &cobra.Command{
 		Use:   "artifacts",
 		Short: "Inspect persisted artifacts",
 	}
 
-	cmd.AddCommand(
-		&cobra.Command{
-			Use:   "list",
-			Short: "List artifacts for a job or session",
-			RunE: func(cmd *cobra.Command, args []string) error {
-				svc, err := service.Open(context.Background(), root.configPath)
-				if err != nil {
-					return err
-				}
-				defer func() { _ = svc.Close() }()
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List artifacts for a job, session, or work item",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
 
-				artifacts, err := svc.ListArtifacts(context.Background(), service.ArtifactsRequest{
-					JobID:     listOpts.jobID,
-					SessionID: listOpts.sessionID,
-					Kind:      listOpts.kind,
-					Limit:     listOpts.limit,
-				})
-				if err != nil {
-					return mapServiceError(err)
-				}
-				return renderArtifacts(cmd, root.jsonOutput, artifacts)
-			},
+			artifacts, err := svc.ListArtifacts(context.Background(), service.ArtifactsRequest{
+				JobID:     listOpts.jobID,
+				SessionID: listOpts.sessionID,
+				WorkID:    listOpts.workID,
+				Kind:      listOpts.kind,
+				Limit:     listOpts.limit,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderArtifacts(cmd, root.jsonOutput, artifacts)
 		},
-		&cobra.Command{
-			Use:   "show <artifact-id>",
-			Short: "Show one artifact and its content",
-			Args:  cobra.ExactArgs(1),
-			RunE: func(cmd *cobra.Command, args []string) error {
-				svc, err := service.Open(context.Background(), root.configPath)
-				if err != nil {
-					return err
-				}
-				defer func() { _ = svc.Close() }()
+	}
+	attachCmd := &cobra.Command{
+		Use:   "attach",
+		Short: "Attach a file as a persisted artifact",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
 
-				result, err := svc.ReadArtifact(context.Background(), args[0])
-				if err != nil {
-					return mapServiceError(err)
-				}
-				return renderArtifact(cmd, root.jsonOutput, result)
-			},
+			metadata, err := parseJSONObjectFlag(attachOpts.metadata)
+			if err != nil {
+				return exitf(2, "invalid --metadata JSON: %v", err)
+			}
+			artifact, err := svc.AttachArtifact(context.Background(), service.AttachArtifactRequest{
+				JobID:     attachOpts.jobID,
+				SessionID: attachOpts.sessionID,
+				WorkID:    attachOpts.workID,
+				Path:      attachOpts.path,
+				Kind:      attachOpts.kind,
+				Copy:      attachOpts.copy,
+				Metadata:  metadata,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			if root.jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), artifact)
+			}
+			return writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", artifact.ArtifactID, artifact.Kind, artifact.Path)
 		},
-	)
+	}
+	showCmd := &cobra.Command{
+		Use:   "show <artifact-id>",
+		Short: "Show one artifact and its content",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
 
-	listCmd := cmd.Commands()[0]
+			result, err := svc.ReadArtifact(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderArtifact(cmd, root.jsonOutput, result)
+		},
+	}
+	cmd.AddCommand(listCmd, attachCmd, showCmd)
+
 	listCmd.Flags().StringVar(&listOpts.jobID, "job", "", "list artifacts for a job")
 	listCmd.Flags().StringVar(&listOpts.sessionID, "session", "", "list artifacts for a session")
+	listCmd.Flags().StringVar(&listOpts.workID, "work", "", "list artifacts for a work item")
 	listCmd.Flags().StringVar(&listOpts.kind, "kind", "", "filter by artifact kind")
 	listCmd.Flags().IntVar(&listOpts.limit, "limit", 20, "maximum number of artifacts to list")
+
+	attachCmd.Flags().StringVar(&attachOpts.jobID, "job", "", "attach artifact to a job")
+	attachCmd.Flags().StringVar(&attachOpts.sessionID, "session", "", "attach artifact to a session")
+	attachCmd.Flags().StringVar(&attachOpts.workID, "work", "", "attach artifact to a work item's current job/session")
+	attachCmd.Flags().StringVar(&attachOpts.path, "path", "", "file path to attach")
+	attachCmd.Flags().StringVar(&attachOpts.kind, "kind", "", "artifact kind override")
+	attachCmd.Flags().BoolVar(&attachOpts.copy, "copy", true, "copy the file into cagent state for durability")
+	attachCmd.Flags().StringVar(&attachOpts.metadata, "metadata", "", "JSON object metadata")
+	_ = attachCmd.MarkFlagRequired("path")
 
 	return cmd
 }
@@ -628,6 +844,631 @@ func newHistoryCommand(root *rootOptions) *cobra.Command {
 	_ = searchCmd.MarkFlagRequired("query")
 
 	cmd.AddCommand(searchCmd)
+	return cmd
+}
+
+func newWorkCommand(root *rootOptions) *cobra.Command {
+	createOpts := &workCreateOptions{}
+	listOpts := &workListOptions{}
+	updateOpts := &workUpdateOptions{}
+	noteOpts := &workNoteOptions{}
+	showOpts := &workShowOptions{limit: 50}
+	readyOpts := &workReadyOptions{limit: 50}
+	claimOpts := &workClaimOptions{lease: 15 * time.Minute, limit: 25}
+	discoverOpts := &workDiscoverOptions{}
+	proposalListOpts := &workProposalListOptions{}
+	proposalCreateOpts := &workProposalCreateOptions{}
+	verifyOpts := &workVerifyOptions{}
+	projectionOpts := &workProjectionOptions{format: "markdown"}
+
+	cmd := &cobra.Command{
+		Use:   "work",
+		Short: "Inspect and mutate durable work graph state",
+	}
+
+	createCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a work item",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			acceptance, err := parseJSONObjectFlag(createOpts.acceptance)
+			if err != nil {
+				return exitf(2, "invalid --acceptance JSON: %v", err)
+			}
+			work, err := svc.CreateWork(context.Background(), service.WorkCreateRequest{
+				Title:                createOpts.title,
+				Objective:            createOpts.objective,
+				Kind:                 createOpts.kind,
+				ParentWorkID:         createOpts.parent,
+				Priority:             createOpts.priority,
+				RequiredCapabilities: splitCSV(createOpts.requiredCapabilities),
+				RequiredModelTraits:  splitCSV(createOpts.requiredModelTraits),
+				PreferredAdapters:    splitCSV(createOpts.preferredAdapters),
+				ForbiddenAdapters:    splitCSV(createOpts.forbiddenAdapters),
+				PreferredModels:      splitCSV(createOpts.preferredModels),
+				AvoidModels:          splitCSV(createOpts.avoidModels),
+				Acceptance:           acceptance,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	createCmd.Flags().StringVar(&createOpts.title, "title", "", "work title")
+	createCmd.Flags().StringVar(&createOpts.objective, "objective", "", "work objective")
+	createCmd.Flags().StringVar(&createOpts.kind, "kind", "task", "work kind")
+	createCmd.Flags().StringVar(&createOpts.parent, "parent", "", "optional parent work id")
+	createCmd.Flags().IntVar(&createOpts.priority, "priority", 0, "priority")
+	createCmd.Flags().StringVar(&createOpts.requiredCapabilities, "required-capabilities", "", "comma-separated required capabilities")
+	createCmd.Flags().StringVar(&createOpts.requiredModelTraits, "required-model-traits", "", "comma-separated required model traits")
+	createCmd.Flags().StringVar(&createOpts.preferredAdapters, "preferred-adapters", "", "comma-separated preferred adapters")
+	createCmd.Flags().StringVar(&createOpts.forbiddenAdapters, "forbidden-adapters", "", "comma-separated forbidden adapters")
+	createCmd.Flags().StringVar(&createOpts.preferredModels, "preferred-models", "", "comma-separated preferred model ids")
+	createCmd.Flags().StringVar(&createOpts.avoidModels, "avoid-models", "", "comma-separated model ids to avoid")
+	createCmd.Flags().StringVar(&createOpts.acceptance, "acceptance", "", "JSON object for acceptance criteria")
+	_ = createCmd.MarkFlagRequired("title")
+	_ = createCmd.MarkFlagRequired("objective")
+
+	showCmd := &cobra.Command{
+		Use:   "show <work-id>",
+		Short: "Show one work item and its related state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			if showOpts.limit > 0 {
+				if len(result.Children) > showOpts.limit {
+					result.Children = result.Children[:showOpts.limit]
+				}
+				if len(result.Updates) > showOpts.limit {
+					result.Updates = result.Updates[:showOpts.limit]
+				}
+				if len(result.Notes) > showOpts.limit {
+					result.Notes = result.Notes[:showOpts.limit]
+				}
+				if len(result.Jobs) > showOpts.limit {
+					result.Jobs = result.Jobs[:showOpts.limit]
+				}
+				if len(result.Proposals) > showOpts.limit {
+					result.Proposals = result.Proposals[:showOpts.limit]
+				}
+				if len(result.Verifications) > showOpts.limit {
+					result.Verifications = result.Verifications[:showOpts.limit]
+				}
+				if len(result.Artifacts) > showOpts.limit {
+					result.Artifacts = result.Artifacts[:showOpts.limit]
+				}
+			}
+			return renderWorkShow(cmd, root.jsonOutput, result)
+		},
+	}
+	showCmd.Flags().IntVar(&showOpts.limit, "limit", 50, "maximum related records per section")
+
+	listCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List work items",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			items, err := svc.ListWork(context.Background(), service.WorkListRequest{
+				Limit:          listOpts.limit,
+				Kind:           listOpts.kind,
+				ExecutionState: listOpts.executionState,
+				ApprovalState:  listOpts.approvalState,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItems(cmd, root.jsonOutput, items)
+		},
+	}
+	listCmd.Flags().IntVar(&listOpts.limit, "limit", 50, "maximum number of work items")
+	listCmd.Flags().StringVar(&listOpts.kind, "kind", "", "filter by work kind")
+	listCmd.Flags().StringVar(&listOpts.executionState, "execution-state", "", "filter by execution state")
+	listCmd.Flags().StringVar(&listOpts.approvalState, "approval-state", "", "filter by approval state")
+
+	readyCmd := &cobra.Command{
+		Use:   "ready",
+		Short: "List work items that are currently ready",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			items, err := svc.ReadyWork(context.Background(), readyOpts.limit)
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItems(cmd, root.jsonOutput, items)
+		},
+	}
+	readyCmd.Flags().IntVar(&readyOpts.limit, "limit", 50, "maximum number of work items")
+
+	claimCmd := &cobra.Command{
+		Use:   "claim <work-id>",
+		Short: "Claim a work item for a lease interval",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			work, err := svc.ClaimWork(context.Background(), service.WorkClaimRequest{
+				WorkID:        args[0],
+				Claimant:      claimOpts.claimant,
+				LeaseDuration: claimOpts.lease,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	claimCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
+	claimCmd.Flags().DurationVar(&claimOpts.lease, "lease", 15*time.Minute, "lease duration")
+
+	claimNextCmd := &cobra.Command{
+		Use:   "claim-next",
+		Short: "Claim the next compatible ready work item",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			work, err := svc.ClaimNextWork(context.Background(), service.WorkClaimNextRequest{
+				Claimant:      claimOpts.claimant,
+				LeaseDuration: claimOpts.lease,
+				Limit:         claimOpts.limit,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	claimNextCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
+	claimNextCmd.Flags().DurationVar(&claimOpts.lease, "lease", 15*time.Minute, "lease duration")
+	claimNextCmd.Flags().IntVar(&claimOpts.limit, "limit", 25, "maximum compatible ready candidates to inspect")
+
+	releaseCmd := &cobra.Command{
+		Use:   "release <work-id>",
+		Short: "Release a work claim",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			work, err := svc.ReleaseWork(context.Background(), service.WorkReleaseRequest{
+				WorkID:    args[0],
+				Claimant:  claimOpts.claimant,
+				CreatedBy: "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	releaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime releasing the claim")
+
+	updateCmd := &cobra.Command{
+		Use:   "update <work-id>",
+		Short: "Append a structured work update and mutate current work state",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
+				WorkID:         args[0],
+				ExecutionState: core.WorkExecutionState(updateOpts.executionState),
+				ApprovalState:  core.WorkApprovalState(updateOpts.approvalState),
+				Phase:          updateOpts.phase,
+				Message:        updateOpts.message,
+				JobID:          updateOpts.jobID,
+				SessionID:      updateOpts.sessionID,
+				ArtifactID:     updateOpts.artifactID,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	updateCmd.Flags().StringVar(&updateOpts.executionState, "execution-state", "", "new execution state")
+	updateCmd.Flags().StringVar(&updateOpts.approvalState, "approval-state", "", "new approval state")
+	updateCmd.Flags().StringVar(&updateOpts.phase, "phase", "", "phase label")
+	updateCmd.Flags().StringVar(&updateOpts.message, "message", "", "update message")
+	updateCmd.Flags().StringVar(&updateOpts.jobID, "job", "", "related job id")
+	updateCmd.Flags().StringVar(&updateOpts.sessionID, "session", "", "related session id")
+	updateCmd.Flags().StringVar(&updateOpts.artifactID, "artifact", "", "related artifact id")
+
+	completeCmd := &cobra.Command{
+		Use:   "complete <work-id>",
+		Short: "Mark work done and append an update",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
+				WorkID:         args[0],
+				ExecutionState: core.WorkExecutionStateDone,
+				Message:        updateOpts.message,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	completeCmd.Flags().StringVar(&updateOpts.message, "message", "", "completion message")
+
+	blockCmd := &cobra.Command{
+		Use:   "block <work-id>",
+		Short: "Mark work blocked and append an update",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
+				WorkID:         args[0],
+				ExecutionState: core.WorkExecutionStateBlocked,
+				Message:        updateOpts.message,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	blockCmd.Flags().StringVar(&updateOpts.message, "message", "", "blocker message")
+
+	failCmd := &cobra.Command{
+		Use:   "fail <work-id>",
+		Short: "Mark work failed and append an update",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
+				WorkID:         args[0],
+				ExecutionState: core.WorkExecutionStateFailed,
+				Message:        updateOpts.message,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+	failCmd.Flags().StringVar(&updateOpts.message, "message", "", "failure message")
+
+	notesCmd := &cobra.Command{
+		Use:   "notes <work-id>",
+		Short: "List notes for a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkNotes(cmd, root.jsonOutput, result.Notes)
+		},
+	}
+
+	noteAddCmd := &cobra.Command{
+		Use:   "note-add <work-id>",
+		Short: "Append a note to a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			note, err := svc.AddWorkNote(context.Background(), service.WorkNoteRequest{
+				WorkID:    args[0],
+				NoteType:  noteOpts.noteType,
+				Body:      noteOpts.text,
+				CreatedBy: "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkNote(cmd, root.jsonOutput, note)
+		},
+	}
+	noteAddCmd.Flags().StringVar(&noteOpts.noteType, "type", "", "note type")
+	noteAddCmd.Flags().StringVar(&noteOpts.text, "text", "", "note body")
+	_ = noteAddCmd.MarkFlagRequired("text")
+
+	childrenCmd := &cobra.Command{
+		Use:   "children <work-id>",
+		Short: "List child work items",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItems(cmd, root.jsonOutput, result.Children)
+		},
+	}
+
+	discoverCmd := &cobra.Command{
+		Use:   "discover <work-id>",
+		Short: "Create a discovery proposal from a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			proposal, err := svc.DiscoverWork(context.Background(), args[0], discoverOpts.title, discoverOpts.objective, discoverOpts.kind, discoverOpts.rationale)
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+		},
+	}
+	discoverCmd.Flags().StringVar(&discoverOpts.title, "title", "", "discovered work title")
+	discoverCmd.Flags().StringVar(&discoverOpts.objective, "objective", "", "discovered work objective")
+	discoverCmd.Flags().StringVar(&discoverOpts.kind, "kind", "task", "discovered work kind")
+	discoverCmd.Flags().StringVar(&discoverOpts.rationale, "rationale", "", "why this discovered work matters")
+	_ = discoverCmd.MarkFlagRequired("title")
+	_ = discoverCmd.MarkFlagRequired("objective")
+
+	verifyCmd := &cobra.Command{
+		Use:   "verify <work-id>",
+		Short: "Record a verification result for a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			record, work, err := svc.VerifyWork(context.Background(), service.WorkVerifyRequest{
+				WorkID:     args[0],
+				Result:     verifyOpts.result,
+				Summary:    verifyOpts.summary,
+				JobID:      verifyOpts.jobID,
+				SessionID:  verifyOpts.sessionID,
+				ArtifactID: verifyOpts.artifactID,
+				CreatedBy:  "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderVerification(cmd, root.jsonOutput, record, work)
+		},
+	}
+	verifyCmd.Flags().StringVar(&verifyOpts.result, "result", "", "verification result: passed, failed, blocked, inconclusive")
+	verifyCmd.Flags().StringVar(&verifyOpts.summary, "summary", "", "verification summary")
+	verifyCmd.Flags().StringVar(&verifyOpts.jobID, "job", "", "related job id")
+	verifyCmd.Flags().StringVar(&verifyOpts.sessionID, "session", "", "related session id")
+	verifyCmd.Flags().StringVar(&verifyOpts.artifactID, "artifact", "", "related artifact id")
+	_ = verifyCmd.MarkFlagRequired("result")
+
+	proposalCmd := &cobra.Command{
+		Use:   "proposal",
+		Short: "Inspect and review work proposals",
+	}
+
+	proposalCreateCmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a work proposal",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			patch, err := parseJSONObjectFlag(proposalCreateOpts.patch)
+			if err != nil {
+				return exitf(2, "invalid --patch JSON: %v", err)
+			}
+			proposal, err := svc.CreateWorkProposal(context.Background(), service.WorkProposalCreateRequest{
+				ProposalType: proposalCreateOpts.proposalType,
+				TargetWorkID: proposalCreateOpts.target,
+				SourceWorkID: proposalCreateOpts.source,
+				Rationale:    proposalCreateOpts.rationale,
+				Patch:        patch,
+				CreatedBy:    "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+		},
+	}
+	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.proposalType, "type", "", "proposal type")
+	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.target, "target", "", "target work id")
+	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.source, "source", "", "source work id")
+	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.rationale, "rationale", "", "proposal rationale")
+	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.patch, "patch", "", "JSON object describing the proposed change")
+	_ = proposalCreateCmd.MarkFlagRequired("type")
+
+	projectionCmd := &cobra.Command{
+		Use:   "projection",
+		Short: "Render deterministic text projections from work state",
+	}
+
+	proposalListCmd := &cobra.Command{
+		Use:   "list",
+		Short: "List work proposals",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			proposals, err := svc.ListWorkProposals(context.Background(), service.WorkProposalListRequest{
+				Limit:        proposalListOpts.limit,
+				State:        proposalListOpts.state,
+				TargetWorkID: proposalListOpts.target,
+				SourceWorkID: proposalListOpts.source,
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposals(cmd, root.jsonOutput, proposals)
+		},
+	}
+	proposalListCmd.Flags().IntVar(&proposalListOpts.limit, "limit", 50, "maximum number of proposals")
+	proposalListCmd.Flags().StringVar(&proposalListOpts.state, "state", "", "filter by proposal state")
+	proposalListCmd.Flags().StringVar(&proposalListOpts.target, "target", "", "filter by target work id")
+	proposalListCmd.Flags().StringVar(&proposalListOpts.source, "source", "", "filter by source work id")
+
+	proposalShowCmd := &cobra.Command{
+		Use:   "show <proposal-id>",
+		Short: "Show one work proposal",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			proposal, err := svc.GetWorkProposal(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+		},
+	}
+
+	proposalAcceptCmd := &cobra.Command{
+		Use:   "accept <proposal-id>",
+		Short: "Accept a work proposal",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			proposal, created, err := svc.ReviewWorkProposal(context.Background(), args[0], "accept")
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, proposal, created)
+		},
+	}
+
+	proposalRejectCmd := &cobra.Command{
+		Use:   "reject <proposal-id>",
+		Short: "Reject a work proposal",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			proposal, _, err := svc.ReviewWorkProposal(context.Background(), args[0], "reject")
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+		},
+	}
+
+	proposalCmd.AddCommand(proposalCreateCmd, proposalListCmd, proposalShowCmd, proposalAcceptCmd, proposalRejectCmd)
+	projectionChecklistCmd := &cobra.Command{
+		Use:   "checklist <work-id>",
+		Short: "Render a checklist projection for a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProjection(cmd, root.jsonOutput, "checklist", projectionOpts.format, result)
+		},
+	}
+	projectionChecklistCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
+
+	projectionStatusCmd := &cobra.Command{
+		Use:   "status <work-id>",
+		Short: "Render a status projection for a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkProjection(cmd, root.jsonOutput, "status", projectionOpts.format, result)
+		},
+	}
+	projectionStatusCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
+
+	projectionCmd.AddCommand(projectionChecklistCmd, projectionStatusCmd)
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, updateCmd, completeCmd, blockCmd, failCmd, notesCmd, noteAddCmd, childrenCmd, discoverCmd, verifyCmd, proposalCmd, projectionCmd)
 	return cmd
 }
 
@@ -1138,6 +1979,9 @@ func renderSession(cmd *cobra.Command, jsonOutput bool, result *service.SessionR
 
 func renderArtifacts(cmd *cobra.Command, jsonOutput bool, artifacts []core.ArtifactRecord) error {
 	if jsonOutput {
+		if artifacts == nil {
+			artifacts = []core.ArtifactRecord{}
+		}
 		return writeJSON(cmd.OutOrStdout(), artifacts)
 	}
 
@@ -1198,6 +2042,9 @@ func renderArtifact(cmd *cobra.Command, jsonOutput bool, result *service.Artifac
 
 func renderHistoryMatches(cmd *cobra.Command, jsonOutput bool, matches []core.HistoryMatch) error {
 	if jsonOutput {
+		if matches == nil {
+			matches = []core.HistoryMatch{}
+		}
 		return writeJSON(cmd.OutOrStdout(), matches)
 	}
 
@@ -1233,6 +2080,361 @@ func renderHistoryMatches(cmd *cobra.Command, jsonOutput bool, matches []core.Hi
 		}
 	}
 	return nil
+}
+
+func renderWorkItem(cmd *cobra.Command, jsonOutput bool, work *core.WorkItemRecord) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), work)
+	}
+	if err := writef(
+		cmd.OutOrStdout(),
+		"%s\t%s\t%s\t%s\t%s\n",
+		work.WorkID,
+		work.Kind,
+		work.ExecutionState,
+		work.ApprovalState,
+		work.Title,
+	); err != nil {
+		return err
+	}
+	if work.Objective != "" {
+		if err := writef(cmd.OutOrStdout(), "  objective=%s\n", work.Objective); err != nil {
+			return err
+		}
+	}
+	if work.Phase != "" {
+		if err := writef(cmd.OutOrStdout(), "  phase=%s\n", work.Phase); err != nil {
+			return err
+		}
+	}
+	if len(work.RequiredModelTraits) > 0 {
+		if err := writef(cmd.OutOrStdout(), "  required_model_traits=%s\n", strings.Join(work.RequiredModelTraits, ",")); err != nil {
+			return err
+		}
+	}
+	if len(work.PreferredModels) > 0 {
+		if err := writef(cmd.OutOrStdout(), "  preferred_models=%s\n", strings.Join(work.PreferredModels, ",")); err != nil {
+			return err
+		}
+	}
+	if len(work.AvoidModels) > 0 {
+		if err := writef(cmd.OutOrStdout(), "  avoid_models=%s\n", strings.Join(work.AvoidModels, ",")); err != nil {
+			return err
+		}
+	}
+	if work.CurrentJobID != "" || work.CurrentSessionID != "" {
+		if err := writef(cmd.OutOrStdout(), "  session=%s job=%s\n", emptyDash(work.CurrentSessionID), emptyDash(work.CurrentJobID)); err != nil {
+			return err
+		}
+	}
+	if work.ClaimedBy != "" || work.ClaimedUntil != nil {
+		if err := writef(cmd.OutOrStdout(), "  claim=%s until=%s\n", emptyDash(work.ClaimedBy), timeStringPtr(work.ClaimedUntil)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderBootstrapAssessment(cmd *cobra.Command, jsonOutput bool, assessment *service.BootstrapAssessment) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), assessment)
+	}
+	if err := writef(cmd.OutOrStdout(), "roots: %s\n", strings.Join(assessment.Roots, ", ")); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "bootstrap_ready: %t\n", assessment.BootstrapReady); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "score: %d\n", assessment.Score); err != nil {
+		return err
+	}
+	if err := writef(cmd.OutOrStdout(), "recommended_action: %s\n", assessment.RecommendedAction); err != nil {
+		return err
+	}
+	if len(assessment.Entrypoints) > 0 {
+		if err := writef(cmd.OutOrStdout(), "entrypoints:\n"); err != nil {
+			return err
+		}
+		for _, entry := range assessment.Entrypoints {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", entry.Role, entry.Kind, entry.Path); err != nil {
+				return err
+			}
+		}
+	}
+	if len(assessment.Missing) > 0 {
+		if err := writef(cmd.OutOrStdout(), "missing:\n"); err != nil {
+			return err
+		}
+		for _, item := range assessment.Missing {
+			if err := writef(cmd.OutOrStdout(), "  %s\n", item); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func renderBootstrapCreateResult(cmd *cobra.Command, jsonOutput bool, result *service.BootstrapCreateResult) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), result)
+	}
+	if err := renderWorkItem(cmd, false, &result.Work); err != nil {
+		return err
+	}
+	return renderBootstrapAssessment(cmd, false, result.Assessment)
+}
+
+func renderWorkItems(cmd *cobra.Command, jsonOutput bool, items []core.WorkItemRecord) error {
+	if jsonOutput {
+		if items == nil {
+			items = []core.WorkItemRecord{}
+		}
+		return writeJSON(cmd.OutOrStdout(), items)
+	}
+	for _, item := range items {
+		if err := writef(
+			cmd.OutOrStdout(),
+			"%s\t%s\t%s\t%s\t%s\n",
+			item.WorkID,
+			item.Kind,
+			item.ExecutionState,
+			item.ApprovalState,
+			item.Title,
+		); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkShowResult) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), result)
+	}
+	if err := renderWorkItem(cmd, false, &result.Work); err != nil {
+		return err
+	}
+	if len(result.Children) > 0 {
+		if err := writef(cmd.OutOrStdout(), "children: %d\n", len(result.Children)); err != nil {
+			return err
+		}
+		for _, child := range result.Children {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\n", child.WorkID, child.Kind, child.ExecutionState, child.Title); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Updates) > 0 {
+		if err := writef(cmd.OutOrStdout(), "updates: %d\n", len(result.Updates)); err != nil {
+			return err
+		}
+		for _, update := range result.Updates {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", update.CreatedAt.Format("2006-01-02 15:04:05"), emptyDash(update.Phase), update.Message); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Notes) > 0 {
+		if err := writef(cmd.OutOrStdout(), "notes: %d\n", len(result.Notes)); err != nil {
+			return err
+		}
+		for _, note := range result.Notes {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", note.CreatedAt.Format("2006-01-02 15:04:05"), emptyDash(note.NoteType), note.Body); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Jobs) > 0 {
+		if err := writef(cmd.OutOrStdout(), "jobs: %d\n", len(result.Jobs)); err != nil {
+			return err
+		}
+		for _, job := range result.Jobs {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", job.JobID, job.State, emptyDash(summaryStringMap(job.Summary, "message"))); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Proposals) > 0 {
+		if err := writef(cmd.OutOrStdout(), "proposals: %d\n", len(result.Proposals)); err != nil {
+			return err
+		}
+		for _, proposal := range result.Proposals {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", proposal.ProposalID, proposal.ProposalType, proposal.State); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Verifications) > 0 {
+		if err := writef(cmd.OutOrStdout(), "verifications: %d\n", len(result.Verifications)); err != nil {
+			return err
+		}
+		for _, verification := range result.Verifications {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", verification.CreatedAt.Format("2006-01-02 15:04:05"), verification.Result, verification.Summary); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func renderWorkNotes(cmd *cobra.Command, jsonOutput bool, notes []core.WorkNoteRecord) error {
+	if jsonOutput {
+		if notes == nil {
+			notes = []core.WorkNoteRecord{}
+		}
+		return writeJSON(cmd.OutOrStdout(), notes)
+	}
+	for _, note := range notes {
+		if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", note.CreatedAt.Format("2006-01-02 15:04:05"), emptyDash(note.NoteType), note.Body); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderWorkNote(cmd *cobra.Command, jsonOutput bool, note *core.WorkNoteRecord) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), note)
+	}
+	return writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", note.NoteID, emptyDash(note.NoteType), note.Body)
+}
+
+func renderWorkProposals(cmd *cobra.Command, jsonOutput bool, proposals []core.WorkProposalRecord) error {
+	if jsonOutput {
+		if proposals == nil {
+			proposals = []core.WorkProposalRecord{}
+		}
+		return writeJSON(cmd.OutOrStdout(), proposals)
+	}
+	for _, proposal := range proposals {
+		if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\ttarget=%s\tsource=%s\n", proposal.ProposalID, proposal.ProposalType, proposal.State, emptyDash(proposal.TargetWorkID), emptyDash(proposal.SourceWorkID)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderWorkProposal(cmd *cobra.Command, jsonOutput bool, proposal *core.WorkProposalRecord, created *core.WorkItemRecord) error {
+	if jsonOutput {
+		payload := map[string]any{"proposal": proposal}
+		if created != nil {
+			payload["created_work"] = created
+		}
+		return writeJSON(cmd.OutOrStdout(), payload)
+	}
+	if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", proposal.ProposalID, proposal.ProposalType, proposal.State); err != nil {
+		return err
+	}
+	if proposal.Rationale != "" {
+		if err := writef(cmd.OutOrStdout(), "  rationale=%s\n", proposal.Rationale); err != nil {
+			return err
+		}
+	}
+	if created != nil {
+		if err := writef(cmd.OutOrStdout(), "  created_work=%s\n", created.WorkID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderVerification(cmd *cobra.Command, jsonOutput bool, record *core.VerificationRecord, work *core.WorkItemRecord) error {
+	if jsonOutput {
+		payload := map[string]any{
+			"verification": record,
+			"work":         work,
+		}
+		return writeJSON(cmd.OutOrStdout(), payload)
+	}
+	if err := writef(cmd.OutOrStdout(), "%s\t%s\t%s\n", record.VerificationID, record.Result, record.TargetID); err != nil {
+		return err
+	}
+	if record.Summary != "" {
+		if err := writef(cmd.OutOrStdout(), "  %s\n", record.Summary); err != nil {
+			return err
+		}
+	}
+	if work != nil {
+		if err := writef(cmd.OutOrStdout(), "  approval=%s\n", work.ApprovalState); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func renderWorkProjection(cmd *cobra.Command, jsonOutput bool, kind, format string, result *service.WorkShowResult) error {
+	if jsonOutput {
+		payload := map[string]any{
+			"kind":    kind,
+			"format":  format,
+			"work_id": result.Work.WorkID,
+			"content": workProjection(kind, result),
+		}
+		return writeJSON(cmd.OutOrStdout(), payload)
+	}
+	_, err := io.WriteString(cmd.OutOrStdout(), workProjection(kind, result))
+	return err
+}
+
+func workProjection(kind string, result *service.WorkShowResult) string {
+	switch kind {
+	case "checklist":
+		return renderChecklistProjection(result)
+	default:
+		return renderStatusProjection(result)
+	}
+}
+
+func renderChecklistProjection(result *service.WorkShowResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", result.Work.Title)
+	fmt.Fprintf(&b, "Work: `%s`\n\n", result.Work.WorkID)
+	fmt.Fprintf(&b, "- Objective: %s\n", result.Work.Objective)
+	fmt.Fprintf(&b, "- Execution: %s\n", result.Work.ExecutionState)
+	fmt.Fprintf(&b, "- Approval: %s\n\n", result.Work.ApprovalState)
+	if len(result.Children) == 0 {
+		b.WriteString("- [ ] No child work items yet\n")
+		return b.String()
+	}
+	for _, child := range result.Children {
+		box := " "
+		if child.ExecutionState == "done" {
+			box = "x"
+		}
+		fmt.Fprintf(&b, "- [%s] %s (%s / %s) `%s`\n", box, child.Title, child.ExecutionState, child.ApprovalState, child.WorkID)
+	}
+	return b.String()
+}
+
+func renderStatusProjection(result *service.WorkShowResult) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n", result.Work.Title)
+	fmt.Fprintf(&b, "- Work: `%s`\n", result.Work.WorkID)
+	fmt.Fprintf(&b, "- Kind: %s\n", result.Work.Kind)
+	fmt.Fprintf(&b, "- Objective: %s\n", result.Work.Objective)
+	fmt.Fprintf(&b, "- Execution: %s\n", result.Work.ExecutionState)
+	fmt.Fprintf(&b, "- Approval: %s\n", result.Work.ApprovalState)
+	if result.Work.Phase != "" {
+		fmt.Fprintf(&b, "- Phase: %s\n", result.Work.Phase)
+	}
+	if result.Work.CurrentSessionID != "" || result.Work.CurrentJobID != "" {
+		fmt.Fprintf(&b, "- Current session/job: `%s` / `%s`\n", emptyDash(result.Work.CurrentSessionID), emptyDash(result.Work.CurrentJobID))
+	}
+	if len(result.Updates) > 0 {
+		update := result.Updates[0]
+		fmt.Fprintf(&b, "\n## Latest Update\n\n%s\n", update.Message)
+	}
+	if len(result.Verifications) > 0 {
+		verification := result.Verifications[0]
+		fmt.Fprintf(&b, "\n## Latest Verification\n\n- Result: %s\n- Summary: %s\n", verification.Result, emptyDash(verification.Summary))
+	}
+	if len(result.Children) > 0 {
+		b.WriteString("\n## Children\n\n")
+		for _, child := range result.Children {
+			fmt.Fprintf(&b, "- `%s` %s (%s / %s)\n", child.WorkID, child.Title, child.ExecutionState, child.ApprovalState)
+		}
+	}
+	return b.String()
 }
 
 func followEvents(cmd *cobra.Command, svc *service.Service, jobID string, jsonOutput bool, limit int) error {
@@ -1449,7 +2651,7 @@ func renderCatalog(cmd *cobra.Command, jsonOutput bool, result *service.CatalogR
 		}
 		if err := writef(
 			cmd.OutOrStdout(),
-			"%s\t%s\t%s\tselected=%t\tauth=%s\tbilling=%s\tpricing=%s\tprobe=%s\thistory=%s\tsource=%s\n",
+			"%s\t%s\t%s\tselected=%t\tauth=%s\tbilling=%s\tpricing=%s\tprobe=%s\thistory=%s\tsource=%s\ttraits=%s\n",
 			entry.Adapter,
 			emptyDash(entry.Provider),
 			emptyDash(entry.Model),
@@ -1460,6 +2662,7 @@ func renderCatalog(cmd *cobra.Command, jsonOutput bool, result *service.CatalogR
 			probeText,
 			historyText,
 			emptyDash(entry.Source),
+			emptyDash(strings.Join(entry.Traits, ",")),
 		); err != nil {
 			return err
 		}
@@ -1526,6 +2729,20 @@ func mustJSON(v any) []byte {
 	return encoded
 }
 
+func parseJSONObjectFlag(value string) (map[string]any, error) {
+	if strings.TrimSpace(value) == "" {
+		return map[string]any{}, nil
+	}
+	var decoded map[string]any
+	if err := json.Unmarshal([]byte(value), &decoded); err != nil {
+		return nil, err
+	}
+	if decoded == nil {
+		decoded = map[string]any{}
+	}
+	return decoded, nil
+}
+
 func splitCSV(value string) []string {
 	if strings.TrimSpace(value) == "" {
 		return nil
@@ -1539,6 +2756,14 @@ func splitCSV(value string) []string {
 		}
 	}
 	return result
+}
+
+func summaryStringMap(summary map[string]any, key string) string {
+	if summary == nil {
+		return ""
+	}
+	value, _ := summary[key].(string)
+	return value
 }
 
 const timeLayout = "2006-01-02T15:04:05Z07:00"
@@ -1561,4 +2786,11 @@ func emptyDash(value string) string {
 		return "-"
 	}
 	return value
+}
+
+func timeStringPtr(value *time.Time) string {
+	if value == nil {
+		return "-"
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }

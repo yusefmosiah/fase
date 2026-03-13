@@ -16,7 +16,10 @@ import (
 	"github.com/yusefmosiah/cagent/internal/core"
 )
 
-var ErrNotFound = errors.New("record not found")
+var (
+	ErrNotFound = errors.New("record not found")
+	ErrBusy     = errors.New("record busy")
+)
 
 type Store struct {
 	db   *sql.DB
@@ -174,11 +177,12 @@ func (s *Store) insertJob(ctx context.Context, db execer, rec core.JobRecord) er
 	_, err = db.ExecContext(
 		ctx,
 		`INSERT INTO jobs (
-			job_id, session_id, adapter, state, label, native_session_id, cwd,
+			job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
 			created_at, updated_at, finished_at, summary_json, last_raw_artifact
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.JobID,
 		rec.SessionID,
+		nullIfEmpty(rec.WorkID),
 		rec.Adapter,
 		rec.State,
 		rec.Label,
@@ -206,7 +210,8 @@ func (s *Store) UpdateJob(ctx context.Context, rec core.JobRecord) error {
 	result, err := s.db.ExecContext(
 		ctx,
 		`UPDATE jobs
-		    SET state = ?,
+		    SET work_id = ?,
+		        state = ?,
 		        label = ?,
 		        native_session_id = ?,
 		        updated_at = ?,
@@ -214,6 +219,7 @@ func (s *Store) UpdateJob(ctx context.Context, rec core.JobRecord) error {
 		        summary_json = ?,
 		        last_raw_artifact = ?
 		  WHERE job_id = ?`,
+		nullIfEmpty(rec.WorkID),
 		rec.State,
 		rec.Label,
 		nullIfEmpty(rec.NativeSessionID),
@@ -241,7 +247,7 @@ func (s *Store) UpdateJob(ctx context.Context, rec core.JobRecord) error {
 func (s *Store) GetJob(ctx context.Context, jobID string) (core.JobRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
+		`SELECT job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
 		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
 		   FROM jobs
 		  WHERE job_id = ?`,
@@ -282,7 +288,7 @@ func (s *Store) ListJobsFiltered(ctx context.Context, limit int, adapter, state,
 		args = append(args, sessionID)
 	}
 
-	query := `SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
+	query := `SELECT job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
 		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
 		   FROM jobs`
 	if len(clauses) > 0 {
@@ -367,6 +373,904 @@ func (s *Store) ListSessions(ctx context.Context, limit int, adapter, status str
 	return sessions, nil
 }
 
+func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) error {
+	required, err := marshalJSON(rec.RequiredCapabilities)
+	if err != nil {
+		return fmt.Errorf("marshal work required capabilities: %w", err)
+	}
+	requiredModelTraits, err := marshalJSON(rec.RequiredModelTraits)
+	if err != nil {
+		return fmt.Errorf("marshal work required model traits: %w", err)
+	}
+	preferred, err := marshalJSON(rec.PreferredAdapters)
+	if err != nil {
+		return fmt.Errorf("marshal work preferred adapters: %w", err)
+	}
+	forbidden, err := marshalJSON(rec.ForbiddenAdapters)
+	if err != nil {
+		return fmt.Errorf("marshal work forbidden adapters: %w", err)
+	}
+	preferredModels, err := marshalJSON(rec.PreferredModels)
+	if err != nil {
+		return fmt.Errorf("marshal work preferred models: %w", err)
+	}
+	avoidModels, err := marshalJSON(rec.AvoidModels)
+	if err != nil {
+		return fmt.Errorf("marshal work avoid models: %w", err)
+	}
+	acceptance, err := marshalJSON(rec.Acceptance)
+	if err != nil {
+		return fmt.Errorf("marshal work acceptance: %w", err)
+	}
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO work_items (
+			work_id, title, objective, kind, execution_state, approval_state, phase,
+			priority, required_capabilities_json, required_model_traits_json,
+			preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json, acceptance_json, metadata_json,
+			current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.WorkID,
+		rec.Title,
+		rec.Objective,
+		rec.Kind,
+		rec.ExecutionState,
+		rec.ApprovalState,
+		nullIfEmpty(rec.Phase),
+		rec.Priority,
+		string(required),
+		string(requiredModelTraits),
+		string(preferred),
+		string(forbidden),
+		string(preferredModels),
+		string(avoidModels),
+		string(acceptance),
+		string(metadata),
+		nullIfEmpty(rec.CurrentJobID),
+		nullIfEmpty(rec.CurrentSessionID),
+		nullIfEmpty(rec.ClaimedBy),
+		formatTimePtr(rec.ClaimedUntil),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+		rec.UpdatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert work item: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) error {
+	required, err := marshalJSON(rec.RequiredCapabilities)
+	if err != nil {
+		return fmt.Errorf("marshal work required capabilities: %w", err)
+	}
+	requiredModelTraits, err := marshalJSON(rec.RequiredModelTraits)
+	if err != nil {
+		return fmt.Errorf("marshal work required model traits: %w", err)
+	}
+	preferred, err := marshalJSON(rec.PreferredAdapters)
+	if err != nil {
+		return fmt.Errorf("marshal work preferred adapters: %w", err)
+	}
+	forbidden, err := marshalJSON(rec.ForbiddenAdapters)
+	if err != nil {
+		return fmt.Errorf("marshal work forbidden adapters: %w", err)
+	}
+	preferredModels, err := marshalJSON(rec.PreferredModels)
+	if err != nil {
+		return fmt.Errorf("marshal work preferred models: %w", err)
+	}
+	avoidModels, err := marshalJSON(rec.AvoidModels)
+	if err != nil {
+		return fmt.Errorf("marshal work avoid models: %w", err)
+	}
+	acceptance, err := marshalJSON(rec.Acceptance)
+	if err != nil {
+		return fmt.Errorf("marshal work acceptance: %w", err)
+	}
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work metadata: %w", err)
+	}
+
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE work_items
+		    SET title = ?,
+		        objective = ?,
+		        kind = ?,
+		        execution_state = ?,
+		        approval_state = ?,
+		        phase = ?,
+		        priority = ?,
+		        required_capabilities_json = ?,
+		        required_model_traits_json = ?,
+		        preferred_adapters_json = ?,
+		        forbidden_adapters_json = ?,
+		        preferred_models_json = ?,
+		        avoid_models_json = ?,
+		        acceptance_json = ?,
+		        metadata_json = ?,
+		        current_job_id = ?,
+		        current_session_id = ?,
+		        claimed_by = ?,
+		        claimed_until = ?,
+		        updated_at = ?
+		  WHERE work_id = ?`,
+		rec.Title,
+		rec.Objective,
+		rec.Kind,
+		rec.ExecutionState,
+		rec.ApprovalState,
+		nullIfEmpty(rec.Phase),
+		rec.Priority,
+		string(required),
+		string(requiredModelTraits),
+		string(preferred),
+		string(forbidden),
+		string(preferredModels),
+		string(avoidModels),
+		string(acceptance),
+		string(metadata),
+		nullIfEmpty(rec.CurrentJobID),
+		nullIfEmpty(rec.CurrentSessionID),
+		nullIfEmpty(rec.ClaimedBy),
+		formatTimePtr(rec.ClaimedUntil),
+		rec.UpdatedAt.UTC().Format(time.RFC3339Nano),
+		rec.WorkID,
+	)
+	if err != nil {
+		return fmt.Errorf("update work item: %w", err)
+	}
+
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check updated work item rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: work %s", ErrNotFound, rec.WorkID)
+	}
+	return nil
+}
+
+func (s *Store) GetWorkItem(ctx context.Context, workID string) (core.WorkItemRecord, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT work_id, title, objective, kind, execution_state, approval_state, phase,
+		        priority, required_capabilities_json, required_model_traits_json,
+		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json, acceptance_json, metadata_json,
+		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
+		   FROM work_items
+		  WHERE work_id = ?`,
+		workID,
+	)
+	return scanWorkItem(row)
+}
+
+func (s *Store) ListWorkItems(ctx context.Context, limit int, kind, executionState, approvalState string) ([]core.WorkItemRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		clauses []string
+		args    []any
+	)
+	if kind != "" {
+		clauses = append(clauses, "kind = ?")
+		args = append(args, kind)
+	}
+	if executionState != "" {
+		clauses = append(clauses, "execution_state = ?")
+		args = append(args, executionState)
+	}
+	if approvalState != "" {
+		clauses = append(clauses, "approval_state = ?")
+		args = append(args, approvalState)
+	}
+
+	query := `SELECT work_id, title, objective, kind, execution_state, approval_state, phase,
+		        priority, required_capabilities_json, required_model_traits_json,
+		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json, acceptance_json, metadata_json,
+		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
+		   FROM work_items`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY updated_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query work items: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []core.WorkItemRecord
+	for rows.Next() {
+		rec, err := scanWorkItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work items: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) ListReadyWork(ctx context.Context, limit int) ([]core.WorkItemRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.phase,
+		        wi.priority, wi.required_capabilities_json, wi.required_model_traits_json,
+		        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json, wi.acceptance_json, wi.metadata_json,
+		        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
+		   FROM work_items wi
+		  WHERE (
+		        wi.execution_state = 'ready'
+		        OR (
+		            wi.execution_state = 'claimed'
+		            AND wi.claimed_by IS NOT NULL
+		            AND wi.claimed_by <> ''
+		            AND wi.claimed_until IS NOT NULL
+		            AND wi.claimed_until <= ?
+		        )
+		    )
+		    AND (
+		        wi.claimed_by IS NULL
+		        OR wi.claimed_by = ''
+		        OR (wi.claimed_until IS NOT NULL AND wi.claimed_until <= ?)
+		    )
+		    AND NOT EXISTS (
+		        SELECT 1
+		          FROM work_edges we
+		          JOIN work_items dep ON dep.work_id = we.from_work_id
+		         WHERE we.to_work_id = wi.work_id
+		           AND we.edge_type = 'blocks'
+		           AND dep.execution_state NOT IN ('done', 'cancelled')
+		    )
+		    AND NOT EXISTS (
+		        SELECT 1
+		          FROM work_edges we
+		          JOIN work_items newer ON newer.work_id = we.from_work_id
+		         WHERE we.to_work_id = wi.work_id
+		           AND we.edge_type = 'supersedes'
+		           AND newer.execution_state NOT IN ('failed', 'cancelled')
+		    )
+		  ORDER BY wi.priority DESC, wi.updated_at DESC
+		  LIMIT ?`,
+		now,
+		now,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query ready work: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []core.WorkItemRecord
+	for rows.Next() {
+		rec, err := scanWorkItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate ready work: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) ClaimWorkItem(ctx context.Context, workID, claimant string, leaseUntil time.Time) (core.WorkItemRecord, error) {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE work_items
+		    SET claimed_by = ?,
+		        claimed_until = ?,
+		        execution_state = CASE
+		            WHEN execution_state = 'ready' THEN 'claimed'
+		            ELSE execution_state
+		        END,
+		        updated_at = ?
+		  WHERE work_id = ?
+		    AND execution_state NOT IN ('done', 'failed', 'cancelled')
+		    AND (
+		        claimed_by IS NULL
+		        OR claimed_by = ''
+		        OR claimed_by = ?
+		        OR (claimed_until IS NOT NULL AND claimed_until <= ?)
+		    )`,
+		claimant,
+		leaseUntil.UTC().Format(time.RFC3339Nano),
+		now.Format(time.RFC3339Nano),
+		workID,
+		claimant,
+		now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("claim work item: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("check claimed work item rows: %w", err)
+	}
+	if rows == 0 {
+		current, getErr := s.GetWorkItem(ctx, workID)
+		if getErr != nil {
+			return core.WorkItemRecord{}, getErr
+		}
+		if current.ExecutionState == core.WorkExecutionStateDone ||
+			current.ExecutionState == core.WorkExecutionStateFailed ||
+			current.ExecutionState == core.WorkExecutionStateCancelled {
+			return core.WorkItemRecord{}, ErrBusy
+		}
+		if current.ClaimedBy != "" && current.ClaimedBy != claimant {
+			if current.ClaimedUntil == nil || current.ClaimedUntil.After(now) {
+				return core.WorkItemRecord{}, ErrBusy
+			}
+		}
+		return core.WorkItemRecord{}, ErrBusy
+	}
+	return s.GetWorkItem(ctx, workID)
+}
+
+func (s *Store) ReleaseWorkItemClaim(ctx context.Context, workID, claimant string) (core.WorkItemRecord, error) {
+	now := time.Now().UTC()
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE work_items
+		    SET claimed_by = NULL,
+		        claimed_until = NULL,
+		        execution_state = CASE
+		            WHEN execution_state = 'claimed' THEN 'ready'
+		            ELSE execution_state
+		        END,
+		        updated_at = ?
+		  WHERE work_id = ?
+		    AND (
+		        claimed_by IS NULL
+		        OR claimed_by = ''
+		        OR claimed_by = ?
+		        OR (claimed_until IS NOT NULL AND claimed_until <= ?)
+		    )`,
+		now.Format(time.RFC3339Nano),
+		workID,
+		claimant,
+		now.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("release work item claim: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("check released work item rows: %w", err)
+	}
+	if rows == 0 {
+		current, getErr := s.GetWorkItem(ctx, workID)
+		if getErr != nil {
+			return core.WorkItemRecord{}, getErr
+		}
+		if current.ClaimedBy != "" && current.ClaimedBy != claimant {
+			if current.ClaimedUntil == nil || current.ClaimedUntil.After(now) {
+				return core.WorkItemRecord{}, ErrBusy
+			}
+		}
+		return core.WorkItemRecord{}, ErrBusy
+	}
+	return s.GetWorkItem(ctx, workID)
+}
+
+func (s *Store) ListJobsByWork(ctx context.Context, workID string, limit int) ([]core.JobRecord, error) {
+	if limit <= 0 {
+		limit = 20
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
+		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
+		   FROM jobs
+		  WHERE work_id = ?
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		workID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query jobs by work: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var jobs []core.JobRecord
+	for rows.Next() {
+		rec, err := scanJob(rows)
+		if err != nil {
+			return nil, err
+		}
+		jobs = append(jobs, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate jobs by work: %w", err)
+	}
+	return jobs, nil
+}
+
+func (s *Store) CreateWorkEdge(ctx context.Context, rec core.WorkEdgeRecord) error {
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work edge metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO work_edges (edge_id, from_work_id, to_work_id, edge_type, metadata_json, created_by, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rec.EdgeID,
+		rec.FromWorkID,
+		rec.ToWorkID,
+		rec.EdgeType,
+		string(metadata),
+		nullIfEmpty(rec.CreatedBy),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert work edge: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListWorkEdges(ctx context.Context, limit int, edgeType, fromWorkID, toWorkID string) ([]core.WorkEdgeRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var (
+		clauses []string
+		args    []any
+	)
+	if edgeType != "" {
+		clauses = append(clauses, "edge_type = ?")
+		args = append(args, edgeType)
+	}
+	if fromWorkID != "" {
+		clauses = append(clauses, "from_work_id = ?")
+		args = append(args, fromWorkID)
+	}
+	if toWorkID != "" {
+		clauses = append(clauses, "to_work_id = ?")
+		args = append(args, toWorkID)
+	}
+	query := `SELECT edge_id, from_work_id, to_work_id, edge_type, metadata_json, created_by, created_at
+		   FROM work_edges`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY created_at ASC LIMIT ?"
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query work edges: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var edges []core.WorkEdgeRecord
+	for rows.Next() {
+		rec, err := scanWorkEdge(rows)
+		if err != nil {
+			return nil, err
+		}
+		edges = append(edges, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work edges: %w", err)
+	}
+	return edges, nil
+}
+
+func (s *Store) DeleteWorkEdge(ctx context.Context, edgeID string) error {
+	result, err := s.db.ExecContext(ctx, `DELETE FROM work_edges WHERE edge_id = ?`, edgeID)
+	if err != nil {
+		return fmt.Errorf("delete work edge: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check deleted work edge rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: work edge %s", ErrNotFound, edgeID)
+	}
+	return nil
+}
+
+func (s *Store) ListWorkChildren(ctx context.Context, workID string, limit int) ([]core.WorkItemRecord, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.phase,
+		        wi.priority, wi.required_capabilities_json, wi.required_model_traits_json,
+		        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json, wi.acceptance_json, wi.metadata_json,
+		        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
+		   FROM work_edges we
+		   JOIN work_items wi ON wi.work_id = we.to_work_id
+		  WHERE we.from_work_id = ?
+		    AND we.edge_type = 'parent_of'
+		  ORDER BY wi.priority DESC, wi.created_at ASC
+		  LIMIT ?`,
+		workID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query work children: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var items []core.WorkItemRecord
+	for rows.Next() {
+		rec, err := scanWorkItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work children: %w", err)
+	}
+	return items, nil
+}
+
+func (s *Store) CreateWorkUpdate(ctx context.Context, rec core.WorkUpdateRecord) error {
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work update metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO work_updates (
+			update_id, work_id, execution_state, approval_state, phase, message,
+			job_id, session_id, artifact_id, metadata_json, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.UpdateID,
+		rec.WorkID,
+		nullIfEmpty(string(rec.ExecutionState)),
+		nullIfEmpty(string(rec.ApprovalState)),
+		nullIfEmpty(rec.Phase),
+		nullIfEmpty(rec.Message),
+		nullIfEmpty(rec.JobID),
+		nullIfEmpty(rec.SessionID),
+		nullIfEmpty(rec.ArtifactID),
+		string(metadata),
+		nullIfEmpty(rec.CreatedBy),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert work update: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListWorkUpdates(ctx context.Context, workID string, limit int) ([]core.WorkUpdateRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT update_id, work_id, execution_state, approval_state, phase, message,
+		        job_id, session_id, artifact_id, metadata_json, created_by, created_at
+		   FROM work_updates
+		  WHERE work_id = ?
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		workID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query work updates: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var updates []core.WorkUpdateRecord
+	for rows.Next() {
+		rec, err := scanWorkUpdate(rows)
+		if err != nil {
+			return nil, err
+		}
+		updates = append(updates, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work updates: %w", err)
+	}
+	return updates, nil
+}
+
+func (s *Store) CreateWorkNote(ctx context.Context, rec core.WorkNoteRecord) error {
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work note metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO work_notes (note_id, work_id, note_type, body, metadata_json, created_by, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		rec.NoteID,
+		rec.WorkID,
+		nullIfEmpty(rec.NoteType),
+		rec.Body,
+		string(metadata),
+		nullIfEmpty(rec.CreatedBy),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert work note: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListWorkNotes(ctx context.Context, workID string, limit int) ([]core.WorkNoteRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT note_id, work_id, note_type, body, metadata_json, created_by, created_at
+		   FROM work_notes
+		  WHERE work_id = ?
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		workID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query work notes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var notes []core.WorkNoteRecord
+	for rows.Next() {
+		rec, err := scanWorkNote(rows)
+		if err != nil {
+			return nil, err
+		}
+		notes = append(notes, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work notes: %w", err)
+	}
+	return notes, nil
+}
+
+func (s *Store) CreateWorkProposal(ctx context.Context, rec core.WorkProposalRecord) error {
+	patch, err := marshalJSON(rec.ProposedPatch)
+	if err != nil {
+		return fmt.Errorf("marshal work proposal patch: %w", err)
+	}
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work proposal metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO work_proposals (
+			proposal_id, proposal_type, state, target_work_id, source_work_id, rationale,
+			proposed_patch_json, metadata_json, created_by, created_at, reviewed_by, reviewed_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.ProposalID,
+		rec.ProposalType,
+		rec.State,
+		nullIfEmpty(rec.TargetWorkID),
+		nullIfEmpty(rec.SourceWorkID),
+		nullIfEmpty(rec.Rationale),
+		string(patch),
+		string(metadata),
+		nullIfEmpty(rec.CreatedBy),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+		nullIfEmpty(rec.ReviewedBy),
+		formatTimePtr(rec.ReviewedAt),
+	)
+	if err != nil {
+		return fmt.Errorf("insert work proposal: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) UpdateWorkProposal(ctx context.Context, rec core.WorkProposalRecord) error {
+	patch, err := marshalJSON(rec.ProposedPatch)
+	if err != nil {
+		return fmt.Errorf("marshal work proposal patch: %w", err)
+	}
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal work proposal metadata: %w", err)
+	}
+
+	result, err := s.db.ExecContext(
+		ctx,
+		`UPDATE work_proposals
+		    SET proposal_type = ?,
+		        state = ?,
+		        target_work_id = ?,
+		        source_work_id = ?,
+		        rationale = ?,
+		        proposed_patch_json = ?,
+		        metadata_json = ?,
+		        reviewed_by = ?,
+		        reviewed_at = ?
+		  WHERE proposal_id = ?`,
+		rec.ProposalType,
+		rec.State,
+		nullIfEmpty(rec.TargetWorkID),
+		nullIfEmpty(rec.SourceWorkID),
+		nullIfEmpty(rec.Rationale),
+		string(patch),
+		string(metadata),
+		nullIfEmpty(rec.ReviewedBy),
+		formatTimePtr(rec.ReviewedAt),
+		rec.ProposalID,
+	)
+	if err != nil {
+		return fmt.Errorf("update work proposal: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check updated work proposal rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: proposal %s", ErrNotFound, rec.ProposalID)
+	}
+	return nil
+}
+
+func (s *Store) GetWorkProposal(ctx context.Context, proposalID string) (core.WorkProposalRecord, error) {
+	row := s.db.QueryRowContext(
+		ctx,
+		`SELECT proposal_id, proposal_type, state, target_work_id, source_work_id, rationale,
+		        proposed_patch_json, metadata_json, created_by, created_at, reviewed_by, reviewed_at
+		   FROM work_proposals
+		  WHERE proposal_id = ?`,
+		proposalID,
+	)
+	return scanWorkProposal(row)
+}
+
+func (s *Store) ListWorkProposals(ctx context.Context, limit int, state, targetWorkID, sourceWorkID string) ([]core.WorkProposalRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	var (
+		clauses []string
+		args    []any
+	)
+	if state != "" {
+		clauses = append(clauses, "state = ?")
+		args = append(args, state)
+	}
+	if targetWorkID != "" {
+		clauses = append(clauses, "target_work_id = ?")
+		args = append(args, targetWorkID)
+	}
+	if sourceWorkID != "" {
+		clauses = append(clauses, "source_work_id = ?")
+		args = append(args, sourceWorkID)
+	}
+
+	query := `SELECT proposal_id, proposal_type, state, target_work_id, source_work_id, rationale,
+		        proposed_patch_json, metadata_json, created_by, created_at, reviewed_by, reviewed_at
+		   FROM work_proposals`
+	if len(clauses) > 0 {
+		query += " WHERE " + strings.Join(clauses, " AND ")
+	}
+	query += " ORDER BY created_at DESC LIMIT ?"
+	args = append(args, limit)
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query work proposals: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var proposals []core.WorkProposalRecord
+	for rows.Next() {
+		rec, err := scanWorkProposal(rows)
+		if err != nil {
+			return nil, err
+		}
+		proposals = append(proposals, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate work proposals: %w", err)
+	}
+	return proposals, nil
+}
+
+func (s *Store) CreateVerificationRecord(ctx context.Context, rec core.VerificationRecord) error {
+	metadata, err := marshalJSON(rec.Metadata)
+	if err != nil {
+		return fmt.Errorf("marshal verification metadata: %w", err)
+	}
+
+	_, err = s.db.ExecContext(
+		ctx,
+		`INSERT INTO verification_records (
+			verification_id, target_kind, target_id, result, summary, artifact_id,
+			job_id, session_id, metadata_json, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		rec.VerificationID,
+		rec.TargetKind,
+		rec.TargetID,
+		rec.Result,
+		nullIfEmpty(rec.Summary),
+		nullIfEmpty(rec.ArtifactID),
+		nullIfEmpty(rec.JobID),
+		nullIfEmpty(rec.SessionID),
+		string(metadata),
+		nullIfEmpty(rec.CreatedBy),
+		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return fmt.Errorf("insert verification record: %w", err)
+	}
+	return nil
+}
+
+func (s *Store) ListVerificationRecords(ctx context.Context, targetKind, targetID string, limit int) ([]core.VerificationRecord, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT verification_id, target_kind, target_id, result, summary, artifact_id,
+		        job_id, session_id, metadata_json, created_by, created_at
+		   FROM verification_records
+		  WHERE target_kind = ?
+		    AND target_id = ?
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		targetKind,
+		targetID,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query verification records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var records []core.VerificationRecord
+	for rows.Next() {
+		rec, err := scanVerificationRecord(rows)
+		if err != nil {
+			return nil, err
+		}
+		records = append(records, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate verification records: %w", err)
+	}
+	return records, nil
+}
+
 func (s *Store) ListJobsBySession(ctx context.Context, sessionID string, limit int) ([]core.JobRecord, error) {
 	if limit <= 0 {
 		limit = 20
@@ -374,7 +1278,7 @@ func (s *Store) ListJobsBySession(ctx context.Context, sessionID string, limit i
 
 	rows, err := s.db.QueryContext(
 		ctx,
-		`SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
+		`SELECT job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
 		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
 		   FROM jobs
 		  WHERE session_id = ?
@@ -898,7 +1802,7 @@ func (s *Store) ListRecentTurns(ctx context.Context, limit int) ([]core.TurnReco
 func (s *Store) FindActiveJobBySession(ctx context.Context, sessionID string) (*core.JobRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
-		`SELECT job_id, session_id, adapter, state, label, native_session_id, cwd,
+		`SELECT job_id, session_id, work_id, adapter, state, label, native_session_id, cwd,
 		        created_at, updated_at, finished_at, summary_json, last_raw_artifact
 		   FROM jobs
 		  WHERE session_id = ?
@@ -1187,6 +2091,10 @@ func (s *Store) bootstrap(ctx context.Context) error {
 
 	migrations := []string{
 		`ALTER TABLE native_sessions ADD COLUMN metadata_json TEXT NOT NULL DEFAULT '{}'`,
+		`ALTER TABLE jobs ADD COLUMN work_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL`,
+		`ALTER TABLE work_items ADD COLUMN required_model_traits_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE work_items ADD COLUMN preferred_models_json TEXT NOT NULL DEFAULT '[]'`,
+		`ALTER TABLE work_items ADD COLUMN avoid_models_json TEXT NOT NULL DEFAULT '[]'`,
 	}
 	for _, stmt := range migrations {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !ignorableSQLiteMigrationErr(err) {
@@ -1263,6 +2171,7 @@ func scanJob(scanner interface{ Scan(...any) error }) (core.JobRecord, error) {
 	var createdAt string
 	var updatedAt string
 	var finishedAt sql.NullString
+	var workID sql.NullString
 	var label sql.NullString
 	var nativeSessionID sql.NullString
 	var summaryJSON string
@@ -1271,6 +2180,7 @@ func scanJob(scanner interface{ Scan(...any) error }) (core.JobRecord, error) {
 	if err := scanner.Scan(
 		&rec.JobID,
 		&rec.SessionID,
+		&workID,
 		&rec.Adapter,
 		&rec.State,
 		&label,
@@ -1288,6 +2198,7 @@ func scanJob(scanner interface{ Scan(...any) error }) (core.JobRecord, error) {
 		return core.JobRecord{}, fmt.Errorf("scan job: %w", err)
 	}
 
+	rec.WorkID = workID.String
 	rec.Label = label.String
 	rec.NativeSessionID = nativeSessionID.String
 	rec.LastRawArtifact = lastRaw.String
@@ -1656,6 +2567,367 @@ func scanJobRuntime(scanner interface{ Scan(...any) error }) (core.JobRuntimeRec
 	return rec, nil
 }
 
+func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord, error) {
+	var rec core.WorkItemRecord
+	var phase sql.NullString
+	var currentJobID sql.NullString
+	var currentSessionID sql.NullString
+	var claimedBy sql.NullString
+	var claimedUntil sql.NullString
+	var createdAt string
+	var updatedAt string
+	var requiredJSON string
+	var requiredModelTraitsJSON string
+	var preferredJSON string
+	var forbiddenJSON string
+	var preferredModelsJSON string
+	var avoidModelsJSON string
+	var acceptanceJSON string
+	var metadataJSON string
+
+	if err := scanner.Scan(
+		&rec.WorkID,
+		&rec.Title,
+		&rec.Objective,
+		&rec.Kind,
+		&rec.ExecutionState,
+		&rec.ApprovalState,
+		&phase,
+		&rec.Priority,
+		&requiredJSON,
+		&requiredModelTraitsJSON,
+		&preferredJSON,
+		&forbiddenJSON,
+		&preferredModelsJSON,
+		&avoidModelsJSON,
+		&acceptanceJSON,
+		&metadataJSON,
+		&currentJobID,
+		&currentSessionID,
+		&claimedBy,
+		&claimedUntil,
+		&createdAt,
+		&updatedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.WorkItemRecord{}, ErrNotFound
+		}
+		return core.WorkItemRecord{}, fmt.Errorf("scan work item: %w", err)
+	}
+
+	rec.Phase = phase.String
+	rec.CurrentJobID = currentJobID.String
+	rec.CurrentSessionID = currentSessionID.String
+	rec.ClaimedBy = claimedBy.String
+
+	created, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("parse work created_at: %w", err)
+	}
+	updated, err := time.Parse(time.RFC3339Nano, updatedAt)
+	if err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("parse work updated_at: %w", err)
+	}
+	rec.CreatedAt = created
+	rec.UpdatedAt = updated
+	if claimedUntil.Valid {
+		parsed, err := time.Parse(time.RFC3339Nano, claimedUntil.String)
+		if err != nil {
+			return core.WorkItemRecord{}, fmt.Errorf("parse work claimed_until: %w", err)
+		}
+		rec.ClaimedUntil = &parsed
+	}
+
+	if err := json.Unmarshal([]byte(requiredJSON), &rec.RequiredCapabilities); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work required capabilities: %w", err)
+	}
+	if err := json.Unmarshal([]byte(requiredModelTraitsJSON), &rec.RequiredModelTraits); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work required model traits: %w", err)
+	}
+	if err := json.Unmarshal([]byte(preferredJSON), &rec.PreferredAdapters); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work preferred adapters: %w", err)
+	}
+	if err := json.Unmarshal([]byte(forbiddenJSON), &rec.ForbiddenAdapters); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work forbidden adapters: %w", err)
+	}
+	if err := json.Unmarshal([]byte(preferredModelsJSON), &rec.PreferredModels); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work preferred models: %w", err)
+	}
+	if err := json.Unmarshal([]byte(avoidModelsJSON), &rec.AvoidModels); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work avoid models: %w", err)
+	}
+	if err := json.Unmarshal([]byte(acceptanceJSON), &rec.Acceptance); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work acceptance: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.WorkItemRecord{}, fmt.Errorf("decode work metadata: %w", err)
+	}
+	if rec.RequiredCapabilities == nil {
+		rec.RequiredCapabilities = []string{}
+	}
+	if rec.PreferredAdapters == nil {
+		rec.PreferredAdapters = []string{}
+	}
+	if rec.ForbiddenAdapters == nil {
+		rec.ForbiddenAdapters = []string{}
+	}
+	if rec.RequiredModelTraits == nil {
+		rec.RequiredModelTraits = []string{}
+	}
+	if rec.PreferredModels == nil {
+		rec.PreferredModels = []string{}
+	}
+	if rec.AvoidModels == nil {
+		rec.AvoidModels = []string{}
+	}
+	if rec.Acceptance == nil {
+		rec.Acceptance = map[string]any{}
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
+func scanWorkEdge(scanner interface{ Scan(...any) error }) (core.WorkEdgeRecord, error) {
+	var rec core.WorkEdgeRecord
+	var metadataJSON string
+	var createdAt string
+
+	if err := scanner.Scan(
+		&rec.EdgeID,
+		&rec.FromWorkID,
+		&rec.ToWorkID,
+		&rec.EdgeType,
+		&metadataJSON,
+		&rec.CreatedBy,
+		&createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.WorkEdgeRecord{}, ErrNotFound
+		}
+		return core.WorkEdgeRecord{}, fmt.Errorf("scan work edge: %w", err)
+	}
+
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.WorkEdgeRecord{}, fmt.Errorf("parse work edge created_at: %w", err)
+	}
+	rec.CreatedAt = parsed
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.WorkEdgeRecord{}, fmt.Errorf("decode work edge metadata: %w", err)
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
+func scanWorkUpdate(scanner interface{ Scan(...any) error }) (core.WorkUpdateRecord, error) {
+	var rec core.WorkUpdateRecord
+	var executionState sql.NullString
+	var approvalState sql.NullString
+	var phase sql.NullString
+	var message sql.NullString
+	var jobID sql.NullString
+	var sessionID sql.NullString
+	var artifactID sql.NullString
+	var metadataJSON string
+	var createdBy sql.NullString
+	var createdAt string
+
+	if err := scanner.Scan(
+		&rec.UpdateID,
+		&rec.WorkID,
+		&executionState,
+		&approvalState,
+		&phase,
+		&message,
+		&jobID,
+		&sessionID,
+		&artifactID,
+		&metadataJSON,
+		&createdBy,
+		&createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.WorkUpdateRecord{}, ErrNotFound
+		}
+		return core.WorkUpdateRecord{}, fmt.Errorf("scan work update: %w", err)
+	}
+
+	rec.ExecutionState = core.WorkExecutionState(executionState.String)
+	rec.ApprovalState = core.WorkApprovalState(approvalState.String)
+	rec.Phase = phase.String
+	rec.Message = message.String
+	rec.JobID = jobID.String
+	rec.SessionID = sessionID.String
+	rec.ArtifactID = artifactID.String
+	rec.CreatedBy = createdBy.String
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.WorkUpdateRecord{}, fmt.Errorf("parse work update created_at: %w", err)
+	}
+	rec.CreatedAt = parsed
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.WorkUpdateRecord{}, fmt.Errorf("decode work update metadata: %w", err)
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
+func scanWorkNote(scanner interface{ Scan(...any) error }) (core.WorkNoteRecord, error) {
+	var rec core.WorkNoteRecord
+	var noteType sql.NullString
+	var metadataJSON string
+	var createdBy sql.NullString
+	var createdAt string
+
+	if err := scanner.Scan(
+		&rec.NoteID,
+		&rec.WorkID,
+		&noteType,
+		&rec.Body,
+		&metadataJSON,
+		&createdBy,
+		&createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.WorkNoteRecord{}, ErrNotFound
+		}
+		return core.WorkNoteRecord{}, fmt.Errorf("scan work note: %w", err)
+	}
+
+	rec.NoteType = noteType.String
+	rec.CreatedBy = createdBy.String
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.WorkNoteRecord{}, fmt.Errorf("parse work note created_at: %w", err)
+	}
+	rec.CreatedAt = parsed
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.WorkNoteRecord{}, fmt.Errorf("decode work note metadata: %w", err)
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
+func scanWorkProposal(scanner interface{ Scan(...any) error }) (core.WorkProposalRecord, error) {
+	var rec core.WorkProposalRecord
+	var targetWorkID sql.NullString
+	var sourceWorkID sql.NullString
+	var rationale sql.NullString
+	var patchJSON string
+	var metadataJSON string
+	var createdBy sql.NullString
+	var createdAt string
+	var reviewedBy sql.NullString
+	var reviewedAt sql.NullString
+
+	if err := scanner.Scan(
+		&rec.ProposalID,
+		&rec.ProposalType,
+		&rec.State,
+		&targetWorkID,
+		&sourceWorkID,
+		&rationale,
+		&patchJSON,
+		&metadataJSON,
+		&createdBy,
+		&createdAt,
+		&reviewedBy,
+		&reviewedAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.WorkProposalRecord{}, ErrNotFound
+		}
+		return core.WorkProposalRecord{}, fmt.Errorf("scan work proposal: %w", err)
+	}
+
+	rec.TargetWorkID = targetWorkID.String
+	rec.SourceWorkID = sourceWorkID.String
+	rec.Rationale = rationale.String
+	rec.CreatedBy = createdBy.String
+	rec.ReviewedBy = reviewedBy.String
+	parsedCreatedAt, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.WorkProposalRecord{}, fmt.Errorf("parse work proposal created_at: %w", err)
+	}
+	rec.CreatedAt = parsedCreatedAt
+	if reviewedAt.Valid {
+		parsed, err := time.Parse(time.RFC3339Nano, reviewedAt.String)
+		if err != nil {
+			return core.WorkProposalRecord{}, fmt.Errorf("parse work proposal reviewed_at: %w", err)
+		}
+		rec.ReviewedAt = &parsed
+	}
+	if err := json.Unmarshal([]byte(patchJSON), &rec.ProposedPatch); err != nil {
+		return core.WorkProposalRecord{}, fmt.Errorf("decode work proposal patch: %w", err)
+	}
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.WorkProposalRecord{}, fmt.Errorf("decode work proposal metadata: %w", err)
+	}
+	if rec.ProposedPatch == nil {
+		rec.ProposedPatch = map[string]any{}
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
+func scanVerificationRecord(scanner interface{ Scan(...any) error }) (core.VerificationRecord, error) {
+	var rec core.VerificationRecord
+	var summary sql.NullString
+	var artifactID sql.NullString
+	var jobID sql.NullString
+	var sessionID sql.NullString
+	var metadataJSON string
+	var createdBy sql.NullString
+	var createdAt string
+
+	if err := scanner.Scan(
+		&rec.VerificationID,
+		&rec.TargetKind,
+		&rec.TargetID,
+		&rec.Result,
+		&summary,
+		&artifactID,
+		&jobID,
+		&sessionID,
+		&metadataJSON,
+		&createdBy,
+		&createdAt,
+	); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return core.VerificationRecord{}, ErrNotFound
+		}
+		return core.VerificationRecord{}, fmt.Errorf("scan verification record: %w", err)
+	}
+
+	rec.Summary = summary.String
+	rec.ArtifactID = artifactID.String
+	rec.JobID = jobID.String
+	rec.SessionID = sessionID.String
+	rec.CreatedBy = createdBy.String
+	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
+	if err != nil {
+		return core.VerificationRecord{}, fmt.Errorf("parse verification created_at: %w", err)
+	}
+	rec.CreatedAt = parsed
+	if err := json.Unmarshal([]byte(metadataJSON), &rec.Metadata); err != nil {
+		return core.VerificationRecord{}, fmt.Errorf("decode verification metadata: %w", err)
+	}
+	if rec.Metadata == nil {
+		rec.Metadata = map[string]any{}
+	}
+	return rec, nil
+}
+
 func marshalJSON(value any) ([]byte, error) {
 	if value == nil {
 		return []byte("{}"), nil
@@ -1751,6 +3023,7 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS jobs (
 	job_id TEXT PRIMARY KEY,
 	session_id TEXT NOT NULL REFERENCES sessions(session_id) ON DELETE CASCADE,
+	work_id TEXT REFERENCES work_items(work_id) ON DELETE SET NULL,
 	adapter TEXT NOT NULL,
 	state TEXT NOT NULL,
 	label TEXT,
@@ -1848,10 +3121,108 @@ CREATE TABLE IF NOT EXISTS catalog_snapshots (
 	issues_json TEXT NOT NULL DEFAULT '[]'
 );
 
+CREATE TABLE IF NOT EXISTS work_items (
+	work_id TEXT PRIMARY KEY,
+	title TEXT NOT NULL,
+	objective TEXT NOT NULL,
+	kind TEXT NOT NULL,
+	execution_state TEXT NOT NULL,
+	approval_state TEXT NOT NULL,
+	phase TEXT,
+	priority INTEGER NOT NULL DEFAULT 0,
+	configuration_class TEXT,
+	budget_class TEXT,
+	required_capabilities_json TEXT NOT NULL DEFAULT '[]',
+	required_model_traits_json TEXT NOT NULL DEFAULT '[]',
+	preferred_adapters_json TEXT NOT NULL DEFAULT '[]',
+	forbidden_adapters_json TEXT NOT NULL DEFAULT '[]',
+	preferred_models_json TEXT NOT NULL DEFAULT '[]',
+	avoid_models_json TEXT NOT NULL DEFAULT '[]',
+	acceptance_json TEXT NOT NULL DEFAULT '{}',
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	current_job_id TEXT,
+	current_session_id TEXT,
+	claimed_by TEXT,
+	claimed_until TEXT,
+	created_at TEXT NOT NULL,
+	updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_edges (
+	edge_id TEXT PRIMARY KEY,
+	from_work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+	to_work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+	edge_type TEXT NOT NULL,
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	created_by TEXT,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_updates (
+	update_id TEXT PRIMARY KEY,
+	work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+	execution_state TEXT,
+	approval_state TEXT,
+	phase TEXT,
+	message TEXT,
+	job_id TEXT,
+	session_id TEXT,
+	artifact_id TEXT,
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	created_by TEXT,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_notes (
+	note_id TEXT PRIMARY KEY,
+	work_id TEXT NOT NULL REFERENCES work_items(work_id) ON DELETE CASCADE,
+	note_type TEXT,
+	body TEXT NOT NULL,
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	created_by TEXT,
+	created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS work_proposals (
+	proposal_id TEXT PRIMARY KEY,
+	proposal_type TEXT NOT NULL,
+	state TEXT NOT NULL,
+	target_work_id TEXT,
+	source_work_id TEXT,
+	rationale TEXT,
+	proposed_patch_json TEXT NOT NULL DEFAULT '{}',
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	created_by TEXT,
+	created_at TEXT NOT NULL,
+	reviewed_by TEXT,
+	reviewed_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS verification_records (
+	verification_id TEXT PRIMARY KEY,
+	target_kind TEXT NOT NULL,
+	target_id TEXT NOT NULL,
+	result TEXT NOT NULL,
+	summary TEXT,
+	artifact_id TEXT,
+	job_id TEXT,
+	session_id TEXT,
+	metadata_json TEXT NOT NULL DEFAULT '{}',
+	created_by TEXT,
+	created_at TEXT NOT NULL
+);
+
 CREATE INDEX IF NOT EXISTS idx_jobs_session_id ON jobs(session_id);
+CREATE INDEX IF NOT EXISTS idx_jobs_work_id ON jobs(work_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_events_job_seq_unique ON events(job_id, seq);
-CREATE INDEX IF NOT EXISTS idx_events_job_id_seq ON events(job_id, seq);
 CREATE INDEX IF NOT EXISTS idx_events_session_id_ts ON events(session_id, ts);
 CREATE INDEX IF NOT EXISTS idx_artifacts_job_id ON artifacts(job_id);
 CREATE INDEX IF NOT EXISTS idx_catalog_snapshots_created_at ON catalog_snapshots(created_at);
+CREATE INDEX IF NOT EXISTS idx_work_items_state ON work_items(execution_state, approval_state, updated_at);
+CREATE INDEX IF NOT EXISTS idx_work_edges_to_type ON work_edges(to_work_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_work_edges_from_type ON work_edges(from_work_id, edge_type);
+CREATE INDEX IF NOT EXISTS idx_work_updates_work_id_created_at ON work_updates(work_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_notes_work_id_created_at ON work_notes(work_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_work_proposals_target_state_created_at ON work_proposals(target_work_id, state, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_verification_records_target_created_at ON verification_records(target_kind, target_id, created_at DESC);
 `

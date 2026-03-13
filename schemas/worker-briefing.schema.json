@@ -1,0 +1,371 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/yusefmosiah/cagent/schemas/worker-briefing.schema.json",
+  "title": "cagent Worker Briefing",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "briefing_kind",
+    "generated_at",
+    "runtime",
+    "assignment",
+    "requirements",
+    "graph_context",
+    "evidence",
+    "worker_contract",
+    "hydration"
+  ],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "cagent.worker_briefing.v1"
+    },
+    "briefing_kind": {
+      "type": "string",
+      "enum": ["assignment", "claim_next", "recovery", "verification", "review"]
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "runtime": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["runtime_version", "config_path", "state_dir"],
+      "properties": {
+        "runtime_version": { "type": "string" },
+        "config_path": { "type": "string" },
+        "state_dir": { "type": "string" },
+        "host_adapter": { "type": "string" },
+        "host_model": { "type": "string" },
+        "claimant": { "type": "string" }
+      }
+    },
+    "assignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "work_id",
+        "title",
+        "objective",
+        "kind",
+        "execution_state",
+        "approval_state"
+      ],
+      "properties": {
+        "work_id": { "type": "string" },
+        "title": { "type": "string" },
+        "objective": { "type": "string" },
+        "kind": { "type": "string" },
+        "phase": { "type": "string" },
+        "execution_state": { "type": "string" },
+        "approval_state": { "type": "string" },
+        "priority": { "type": "integer" },
+        "current_job_id": { "type": "string" },
+        "current_session_id": { "type": "string" },
+        "claimed_by": { "type": "string" },
+        "claimed_until": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "configuration_class": { "type": "string" },
+        "budget_class": { "type": "string" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      }
+    },
+    "requirements": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "acceptance",
+        "required_capabilities",
+        "preferred_adapters",
+        "forbidden_adapters",
+        "policy"
+      ],
+      "properties": {
+        "acceptance": {
+          "type": "object",
+          "additionalProperties": true
+        },
+        "required_capabilities": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "preferred_adapters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "forbidden_adapters": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "child_creation",
+            "dependency_edits",
+            "scope_expansion",
+            "verification_policy"
+          ],
+          "properties": {
+            "child_creation": { "type": "string" },
+            "dependency_edits": { "type": "string" },
+            "scope_expansion": { "type": "string" },
+            "verification_policy": { "type": "string" }
+          }
+        }
+      }
+    },
+    "graph_context": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "parent",
+        "blocking_inbound",
+        "blocking_outbound",
+        "children",
+        "verifier_nodes",
+        "discovered_nodes",
+        "supersession"
+      ],
+      "properties": {
+        "parent": {
+          "anyOf": [
+            { "$ref": "#/$defs/workRef" },
+            { "type": "null" }
+          ]
+        },
+        "blocking_inbound": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workRef" }
+        },
+        "blocking_outbound": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workRef" }
+        },
+        "children": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workRef" }
+        },
+        "verifier_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workRef" }
+        },
+        "discovered_nodes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/workRef" }
+        },
+        "supersession": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["supersedes", "superseded_by"],
+          "properties": {
+            "supersedes": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/workRef" }
+            },
+            "superseded_by": {
+              "type": "array",
+              "items": { "$ref": "#/$defs/workRef" }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "latest_updates",
+        "latest_notes",
+        "latest_verifications",
+        "artifacts",
+        "recent_jobs",
+        "history_matches"
+      ],
+      "properties": {
+        "latest_updates": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/updateRef" }
+        },
+        "latest_notes": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/noteRef" }
+        },
+        "latest_verifications": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/verificationRef" }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/artifactRef" }
+        },
+        "recent_jobs": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/jobRef" }
+        },
+        "history_matches": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/historyRef" }
+        }
+      }
+    },
+    "worker_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["read_commands", "write_commands", "rules"],
+      "properties": {
+        "read_commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "write_commands": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "rules": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "hydration": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "summary",
+        "open_questions",
+        "recommended_next_actions"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string",
+          "enum": ["thin", "standard", "deep"]
+        },
+        "summary": { "type": "string" },
+        "open_questions": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "recommended_next_actions": {
+          "type": "array",
+          "items": { "type": "string" }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "workRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "work_id",
+        "title",
+        "kind",
+        "execution_state",
+        "approval_state"
+      ],
+      "properties": {
+        "work_id": { "type": "string" },
+        "title": { "type": "string" },
+        "kind": { "type": "string" },
+        "execution_state": { "type": "string" },
+        "approval_state": { "type": "string" }
+      }
+    },
+    "updateRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["update_id", "created_at", "message"],
+      "properties": {
+        "update_id": { "type": "string" },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "phase": { "type": "string" },
+        "execution_state": { "type": "string" },
+        "approval_state": { "type": "string" },
+        "message": { "type": "string" },
+        "job_id": { "type": "string" },
+        "session_id": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    },
+    "noteRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["note_id", "created_at", "body"],
+      "properties": {
+        "note_id": { "type": "string" },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "note_type": { "type": "string" },
+        "body": { "type": "string" }
+      }
+    },
+    "verificationRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["verification_id", "created_at", "result"],
+      "properties": {
+        "verification_id": { "type": "string" },
+        "created_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "result": { "type": "string" },
+        "summary": { "type": "string" },
+        "artifact_id": { "type": "string" }
+      }
+    },
+    "artifactRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "kind", "path"],
+      "properties": {
+        "artifact_id": { "type": "string" },
+        "kind": { "type": "string" },
+        "path": { "type": "string" },
+        "job_id": { "type": "string" },
+        "session_id": { "type": "string" }
+      }
+    },
+    "jobRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["job_id", "state", "adapter"],
+      "properties": {
+        "job_id": { "type": "string" },
+        "state": { "type": "string" },
+        "adapter": { "type": "string" },
+        "native_session_id": { "type": "string" },
+        "summary_message": { "type": "string" }
+      }
+    },
+    "historyRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "id", "snippet"],
+      "properties": {
+        "kind": { "type": "string" },
+        "id": { "type": "string" },
+        "job_id": { "type": "string" },
+        "session_id": { "type": "string" },
+        "adapter": { "type": "string" },
+        "model": { "type": "string" },
+        "snippet": { "type": "string" },
+        "path": { "type": "string" }
+      }
+    }
+  }
+}

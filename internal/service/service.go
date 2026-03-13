@@ -23,7 +23,7 @@ import (
 	"github.com/yusefmosiah/cagent/internal/core"
 	debriefpkg "github.com/yusefmosiah/cagent/internal/debrief"
 	"github.com/yusefmosiah/cagent/internal/events"
-	transferpkg "github.com/yusefmosiah/cagent/internal/handoff"
+	transferpkg "github.com/yusefmosiah/cagent/internal/transfer"
 	"github.com/yusefmosiah/cagent/internal/pricing"
 	"github.com/yusefmosiah/cagent/internal/store"
 )
@@ -55,9 +55,9 @@ type RunRequest struct {
 	Label           string
 	Model           string
 	Profile         string
-	EnvFile         string
 	ArtifactDir     string
 	SessionID       string
+	WorkID          string
 	ParentSessionID string
 	TransferID      string
 }
@@ -69,6 +69,7 @@ type SendRequest struct {
 	PromptSource string
 	Model        string
 	Profile      string
+	WorkID       string
 }
 
 type DebriefRequest struct {
@@ -121,7 +122,7 @@ type StatusResult struct {
 	NativeSessions []core.NativeSessionRecord `json:"native_sessions"`
 	Events         []core.EventRecord         `json:"events"`
 	Usage          *core.UsageReport          `json:"usage,omitempty"`
-	UsageByModel   []core.ModelUsageReport    `json:"usage_by_model,omitempty"`
+	UsageByModel   []core.UsageReport    `json:"usage_by_model,omitempty"`
 	Cost           *core.CostEstimate         `json:"cost,omitempty"`
 	VendorCost     *core.CostEstimate         `json:"vendor_cost,omitempty"`
 	EstimatedCost  *core.CostEstimate         `json:"estimated_cost,omitempty"`
@@ -189,6 +190,7 @@ type RawLogEntry struct {
 type ArtifactsRequest struct {
 	JobID     string
 	SessionID string
+	WorkID    string
 	Kind      string
 	Limit     int
 }
@@ -196,6 +198,16 @@ type ArtifactsRequest struct {
 type ArtifactResult struct {
 	Artifact core.ArtifactRecord `json:"artifact"`
 	Content  string              `json:"content,omitempty"`
+}
+
+type AttachArtifactRequest struct {
+	JobID     string
+	SessionID string
+	WorkID    string
+	Path      string
+	Kind      string
+	Copy      bool
+	Metadata  map[string]any
 }
 
 type ListJobsRequest struct {
@@ -226,6 +238,107 @@ type HistorySearchResult struct {
 	Matches []core.HistoryMatch `json:"matches"`
 }
 
+type WorkCreateRequest struct {
+	Title                string
+	Objective            string
+	Kind                 string
+	ParentWorkID         string
+	Priority             int
+	RequiredCapabilities []string
+	RequiredModelTraits  []string
+	PreferredAdapters    []string
+	ForbiddenAdapters    []string
+	PreferredModels      []string
+	AvoidModels          []string
+	Acceptance           map[string]any
+	Metadata             map[string]any
+}
+
+type WorkListRequest struct {
+	Limit          int
+	Kind           string
+	ExecutionState string
+	ApprovalState  string
+}
+
+type WorkUpdateRequest struct {
+	WorkID         string
+	ExecutionState core.WorkExecutionState
+	ApprovalState  core.WorkApprovalState
+	Phase          string
+	Message        string
+	JobID          string
+	SessionID      string
+	ArtifactID     string
+	Metadata       map[string]any
+	CreatedBy      string
+}
+
+type WorkNoteRequest struct {
+	WorkID    string
+	NoteType  string
+	Body      string
+	Metadata  map[string]any
+	CreatedBy string
+}
+
+type WorkProposalCreateRequest struct {
+	ProposalType string
+	TargetWorkID string
+	SourceWorkID string
+	Rationale    string
+	Patch        map[string]any
+	Metadata     map[string]any
+	CreatedBy    string
+}
+
+type WorkProposalListRequest struct {
+	Limit        int
+	State        string
+	TargetWorkID string
+	SourceWorkID string
+}
+
+type WorkVerifyRequest struct {
+	WorkID     string
+	Result     string
+	Summary    string
+	ArtifactID string
+	JobID      string
+	SessionID  string
+	Metadata   map[string]any
+	CreatedBy  string
+}
+
+type WorkShowResult struct {
+	Work          core.WorkItemRecord       `json:"work"`
+	Children      []core.WorkItemRecord     `json:"children,omitempty"`
+	Updates       []core.WorkUpdateRecord   `json:"updates,omitempty"`
+	Notes         []core.WorkNoteRecord     `json:"notes,omitempty"`
+	Jobs          []core.JobRecord          `json:"jobs,omitempty"`
+	Proposals     []core.WorkProposalRecord `json:"proposals,omitempty"`
+	Verifications []core.VerificationRecord `json:"verifications,omitempty"`
+	Artifacts     []core.ArtifactRecord     `json:"artifacts,omitempty"`
+}
+
+type WorkClaimRequest struct {
+	WorkID        string
+	Claimant      string
+	LeaseDuration time.Duration
+}
+
+type WorkClaimNextRequest struct {
+	Claimant      string
+	LeaseDuration time.Duration
+	Limit         int
+}
+
+type WorkReleaseRequest struct {
+	WorkID    string
+	Claimant  string
+	CreatedBy string
+}
+
 type lineItem struct {
 	stream string
 	line   string
@@ -247,6 +360,7 @@ type continuationRequest struct {
 	Model        string
 	Profile      string
 	Summary      map[string]any
+	WorkID       string
 }
 
 func Open(ctx context.Context, configPath string) (*Service, error) {
@@ -315,6 +429,11 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	if _, _, err := s.resolveAdapter(ctx, req.Adapter); err != nil {
 		return nil, err
 	}
+	if req.WorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.WorkID); err != nil {
+			return nil, normalizeStoreError("work", req.WorkID, err)
+		}
+	}
 
 	now := time.Now().UTC()
 	jobID := core.GenerateID("job")
@@ -361,6 +480,7 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	job := core.JobRecord{
 		JobID:     jobID,
 		SessionID: sessionID,
+		WorkID:    req.WorkID,
 		Adapter:   req.Adapter,
 		State:     core.JobStateCreated,
 		Label:     req.Label,
@@ -386,6 +506,11 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		}
 	} else {
 		if err := s.store.CreateJobAndUpdateSession(ctx, sessionID, now, job); err != nil {
+			return nil, err
+		}
+	}
+	if req.WorkID != "" {
+		if err := s.markWorkQueued(ctx, req.WorkID, job, session); err != nil {
 			return nil, err
 		}
 	}
@@ -453,6 +578,11 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 	if !descriptor.Capabilities.NativeResume {
 		return nil, fmt.Errorf("%w: adapter %q does not support continuation", ErrUnsupported, target.Adapter)
 	}
+	if req.WorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.WorkID); err != nil {
+			return nil, normalizeStoreError("work", req.WorkID, err)
+		}
+	}
 
 	return s.queueContinuation(ctx, session, target, continuationRequest{
 		Prompt:       req.Prompt,
@@ -463,6 +593,7 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 			"prompt_source": req.PromptSource,
 			"continued":     true,
 		},
+		WorkID: req.WorkID,
 	})
 }
 
@@ -960,6 +1091,709 @@ func (s *Service) ListSessions(ctx context.Context, req ListSessionsRequest) ([]
 	return s.store.ListSessions(ctx, req.Limit, req.Adapter, req.Status)
 }
 
+func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.WorkItemRecord, error) {
+	title := strings.TrimSpace(req.Title)
+	objective := strings.TrimSpace(req.Objective)
+	if title == "" {
+		return nil, fmt.Errorf("%w: title must not be empty", ErrInvalidInput)
+	}
+	if objective == "" {
+		return nil, fmt.Errorf("%w: objective must not be empty", ErrInvalidInput)
+	}
+	kind := strings.TrimSpace(req.Kind)
+	if kind == "" {
+		kind = "task"
+	}
+	now := time.Now().UTC()
+	work := core.WorkItemRecord{
+		WorkID:               core.GenerateID("work"),
+		Title:                title,
+		Objective:            objective,
+		Kind:                 kind,
+		ExecutionState:       core.WorkExecutionStateReady,
+		ApprovalState:        core.WorkApprovalStateNone,
+		Priority:             req.Priority,
+		RequiredCapabilities: cloneSlice(req.RequiredCapabilities),
+		RequiredModelTraits:  cloneSlice(req.RequiredModelTraits),
+		PreferredAdapters:    cloneSlice(req.PreferredAdapters),
+		ForbiddenAdapters:    cloneSlice(req.ForbiddenAdapters),
+		PreferredModels:      cloneSlice(req.PreferredModels),
+		AvoidModels:          cloneSlice(req.AvoidModels),
+		Acceptance:           cloneMap(req.Acceptance),
+		Metadata:             cloneMap(req.Metadata),
+		CreatedAt:            now,
+		UpdatedAt:            now,
+	}
+	if err := s.store.CreateWorkItem(ctx, work); err != nil {
+		return nil, err
+	}
+	if req.ParentWorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.ParentWorkID); err != nil {
+			return nil, normalizeStoreError("work", req.ParentWorkID, err)
+		}
+		if err := s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+			EdgeID:     core.GenerateID("wedge"),
+			FromWorkID: req.ParentWorkID,
+			ToWorkID:   work.WorkID,
+			EdgeType:   "parent_of",
+			CreatedBy:  "service",
+			CreatedAt:  now,
+			Metadata:   map[string]any{},
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return &work, nil
+}
+
+func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, error) {
+	work, err := s.store.GetWorkItem(ctx, workID)
+	if err != nil {
+		return nil, normalizeStoreError("work", workID, err)
+	}
+	children, err := s.store.ListWorkChildren(ctx, workID, 100)
+	if err != nil {
+		return nil, err
+	}
+	updates, err := s.store.ListWorkUpdates(ctx, workID, 50)
+	if err != nil {
+		return nil, err
+	}
+	notes, err := s.store.ListWorkNotes(ctx, workID, 50)
+	if err != nil {
+		return nil, err
+	}
+	jobs, err := s.store.ListJobsByWork(ctx, workID, 20)
+	if err != nil {
+		return nil, err
+	}
+	targetProposals, err := s.store.ListWorkProposals(ctx, 50, "", workID, "")
+	if err != nil {
+		return nil, err
+	}
+	sourceProposals, err := s.store.ListWorkProposals(ctx, 50, "", "", workID)
+	if err != nil {
+		return nil, err
+	}
+	proposals := targetProposals
+	seenProposals := map[string]bool{}
+	for _, proposal := range proposals {
+		seenProposals[proposal.ProposalID] = true
+	}
+	for _, proposal := range sourceProposals {
+		if seenProposals[proposal.ProposalID] {
+			continue
+		}
+		proposals = append(proposals, proposal)
+	}
+	verifications, err := s.store.ListVerificationRecords(ctx, "work", workID, 50)
+	if err != nil {
+		return nil, err
+	}
+	artifacts, err := s.listArtifactsForWork(ctx, workID, 50)
+	if err != nil {
+		return nil, err
+	}
+	return &WorkShowResult{
+		Work:          work,
+		Children:      children,
+		Updates:       updates,
+		Notes:         notes,
+		Jobs:          jobs,
+		Proposals:     proposals,
+		Verifications: verifications,
+		Artifacts:     artifacts,
+	}, nil
+}
+
+func (s *Service) ListWork(ctx context.Context, req WorkListRequest) ([]core.WorkItemRecord, error) {
+	return s.store.ListWorkItems(ctx, req.Limit, req.Kind, req.ExecutionState, req.ApprovalState)
+}
+
+func (s *Service) ReadyWork(ctx context.Context, limit int) ([]core.WorkItemRecord, error) {
+	items, err := s.store.ListReadyWork(ctx, limit*4)
+	if err != nil {
+		return nil, err
+	}
+	snapshot, snapErr := s.catalogSnapshotOrSync(ctx)
+	diags := adapters.CatalogFromConfig(s.Config)
+	filtered := make([]core.WorkItemRecord, 0, len(items))
+	for _, item := range items {
+		if s.workHasAvailableRuntime(item, snapshot.Entries, diags, snapErr == nil) {
+			filtered = append(filtered, item)
+		}
+		if limit > 0 && len(filtered) >= limit {
+			break
+		}
+	}
+	return filtered, nil
+}
+
+func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.WorkItemRecord, error) {
+	workID := strings.TrimSpace(req.WorkID)
+	claimant := strings.TrimSpace(req.Claimant)
+	if workID == "" {
+		return nil, fmt.Errorf("%w: work id must not be empty", ErrInvalidInput)
+	}
+	if claimant == "" {
+		return nil, fmt.Errorf("%w: claimant must not be empty", ErrInvalidInput)
+	}
+	leaseDuration := req.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = 15 * time.Minute
+	}
+	work, err := s.store.ClaimWorkItem(ctx, workID, claimant, time.Now().UTC().Add(leaseDuration))
+	if err != nil {
+		return nil, normalizeWorkClaimError(workID, err)
+	}
+	now := time.Now().UTC()
+	if err := s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       core.GenerateID("wup"),
+		WorkID:         work.WorkID,
+		ExecutionState: work.ExecutionState,
+		Message:        fmt.Sprintf("claimed by %s", claimant),
+		Metadata: map[string]any{
+			"claimed_by":    claimant,
+			"claimed_until": timeStringPtr(work.ClaimedUntil),
+			"lease_seconds": int(leaseDuration.Seconds()),
+		},
+		CreatedBy: claimant,
+		CreatedAt: now,
+	}); err != nil {
+		return nil, err
+	}
+	return &work, nil
+}
+
+func (s *Service) ClaimNextWork(ctx context.Context, req WorkClaimNextRequest) (*core.WorkItemRecord, error) {
+	claimant := strings.TrimSpace(req.Claimant)
+	if claimant == "" {
+		return nil, fmt.Errorf("%w: claimant must not be empty", ErrInvalidInput)
+	}
+	leaseDuration := req.LeaseDuration
+	if leaseDuration <= 0 {
+		leaseDuration = 15 * time.Minute
+	}
+	searchLimit := req.Limit
+	if searchLimit <= 0 {
+		searchLimit = 25
+	}
+	candidates, err := s.ReadyWork(ctx, searchLimit)
+	if err != nil {
+		return nil, err
+	}
+	for _, candidate := range candidates {
+		work, claimErr := s.ClaimWork(ctx, WorkClaimRequest{
+			WorkID:        candidate.WorkID,
+			Claimant:      claimant,
+			LeaseDuration: leaseDuration,
+		})
+		if claimErr == nil {
+			return work, nil
+		}
+		if errors.Is(claimErr, ErrBusy) {
+			continue
+		}
+		return nil, claimErr
+	}
+	return nil, fmt.Errorf("%w: no claimable work", ErrNotFound)
+}
+
+func (s *Service) ReleaseWork(ctx context.Context, req WorkReleaseRequest) (*core.WorkItemRecord, error) {
+	workID := strings.TrimSpace(req.WorkID)
+	claimant := strings.TrimSpace(req.Claimant)
+	if workID == "" {
+		return nil, fmt.Errorf("%w: work id must not be empty", ErrInvalidInput)
+	}
+	if claimant == "" {
+		return nil, fmt.Errorf("%w: claimant must not be empty", ErrInvalidInput)
+	}
+	before, err := s.store.GetWorkItem(ctx, workID)
+	if err != nil {
+		return nil, normalizeStoreError("work", workID, err)
+	}
+	work, err := s.store.ReleaseWorkItemClaim(ctx, workID, claimant)
+	if err != nil {
+		return nil, normalizeWorkClaimError(workID, err)
+	}
+	if before.ClaimedBy != "" {
+		if err := s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+			UpdateID:       core.GenerateID("wup"),
+			WorkID:         work.WorkID,
+			ExecutionState: work.ExecutionState,
+			Message:        fmt.Sprintf("claim released by %s", claimant),
+			Metadata: map[string]any{
+				"previous_claimed_by":    before.ClaimedBy,
+				"previous_claimed_until": timeStringPtr(before.ClaimedUntil),
+			},
+			CreatedBy: req.CreatedBy,
+			CreatedAt: time.Now().UTC(),
+		}); err != nil {
+			return nil, err
+		}
+	}
+	return &work, nil
+}
+
+func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.WorkItemRecord, error) {
+	work, err := s.store.GetWorkItem(ctx, req.WorkID)
+	if err != nil {
+		return nil, normalizeStoreError("work", req.WorkID, err)
+	}
+	now := time.Now().UTC()
+	if req.ExecutionState != "" {
+		work.ExecutionState = req.ExecutionState
+	}
+	if req.ApprovalState != "" {
+		work.ApprovalState = req.ApprovalState
+	}
+	if req.Phase != "" {
+		work.Phase = req.Phase
+	}
+	if req.ExecutionState == core.WorkExecutionStateReady ||
+		req.ExecutionState == core.WorkExecutionStateBlocked ||
+		req.ExecutionState == core.WorkExecutionStateDone ||
+		req.ExecutionState == core.WorkExecutionStateFailed ||
+		req.ExecutionState == core.WorkExecutionStateCancelled {
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+	}
+	if req.JobID != "" {
+		work.CurrentJobID = req.JobID
+	}
+	if req.SessionID != "" {
+		work.CurrentSessionID = req.SessionID
+	}
+	work.UpdatedAt = now
+	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
+		return nil, err
+	}
+	if err := s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       core.GenerateID("wup"),
+		WorkID:         work.WorkID,
+		ExecutionState: req.ExecutionState,
+		ApprovalState:  req.ApprovalState,
+		Phase:          req.Phase,
+		Message:        req.Message,
+		JobID:          req.JobID,
+		SessionID:      req.SessionID,
+		ArtifactID:     req.ArtifactID,
+		Metadata:       cloneMap(req.Metadata),
+		CreatedBy:      req.CreatedBy,
+		CreatedAt:      now,
+	}); err != nil {
+		return nil, err
+	}
+	return &work, nil
+}
+
+func (s *Service) AddWorkNote(ctx context.Context, req WorkNoteRequest) (*core.WorkNoteRecord, error) {
+	if strings.TrimSpace(req.Body) == "" {
+		return nil, fmt.Errorf("%w: note body must not be empty", ErrInvalidInput)
+	}
+	if _, err := s.store.GetWorkItem(ctx, req.WorkID); err != nil {
+		return nil, normalizeStoreError("work", req.WorkID, err)
+	}
+	note := core.WorkNoteRecord{
+		NoteID:    core.GenerateID("wnote"),
+		WorkID:    req.WorkID,
+		NoteType:  req.NoteType,
+		Body:      req.Body,
+		Metadata:  cloneMap(req.Metadata),
+		CreatedBy: req.CreatedBy,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.store.CreateWorkNote(ctx, note); err != nil {
+		return nil, err
+	}
+	return &note, nil
+}
+
+func (s *Service) DiscoverWork(ctx context.Context, sourceWorkID, title, objective, kind, rationale string) (*core.WorkProposalRecord, error) {
+	if _, err := s.store.GetWorkItem(ctx, sourceWorkID); err != nil {
+		return nil, normalizeStoreError("work", sourceWorkID, err)
+	}
+	if strings.TrimSpace(title) == "" || strings.TrimSpace(objective) == "" {
+		return nil, fmt.Errorf("%w: title and objective must not be empty", ErrInvalidInput)
+	}
+	if strings.TrimSpace(kind) == "" {
+		kind = "task"
+	}
+	proposal := core.WorkProposalRecord{
+		ProposalID:   core.GenerateID("wprop"),
+		ProposalType: "promote_discovery",
+		State:        "proposed",
+		SourceWorkID: sourceWorkID,
+		Rationale:    strings.TrimSpace(rationale),
+		ProposedPatch: map[string]any{
+			"title":     strings.TrimSpace(title),
+			"objective": strings.TrimSpace(objective),
+			"kind":      strings.TrimSpace(kind),
+		},
+		Metadata:  map[string]any{"discovered": true},
+		CreatedBy: "service",
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := s.store.CreateWorkProposal(ctx, proposal); err != nil {
+		return nil, err
+	}
+	return &proposal, nil
+}
+
+func (s *Service) CreateWorkProposal(ctx context.Context, req WorkProposalCreateRequest) (*core.WorkProposalRecord, error) {
+	proposalType := strings.TrimSpace(req.ProposalType)
+	if proposalType == "" {
+		return nil, fmt.Errorf("%w: proposal type must not be empty", ErrInvalidInput)
+	}
+	if req.TargetWorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.TargetWorkID); err != nil {
+			return nil, normalizeStoreError("work", req.TargetWorkID, err)
+		}
+	}
+	if req.SourceWorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.SourceWorkID); err != nil {
+			return nil, normalizeStoreError("work", req.SourceWorkID, err)
+		}
+	}
+	proposal := core.WorkProposalRecord{
+		ProposalID:    core.GenerateID("wprop"),
+		ProposalType:  proposalType,
+		State:         "proposed",
+		TargetWorkID:  req.TargetWorkID,
+		SourceWorkID:  req.SourceWorkID,
+		Rationale:     strings.TrimSpace(req.Rationale),
+		ProposedPatch: cloneMap(req.Patch),
+		Metadata:      cloneMap(req.Metadata),
+		CreatedBy:     req.CreatedBy,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if err := s.store.CreateWorkProposal(ctx, proposal); err != nil {
+		return nil, err
+	}
+	return &proposal, nil
+}
+
+func (s *Service) ListWorkProposals(ctx context.Context, req WorkProposalListRequest) ([]core.WorkProposalRecord, error) {
+	return s.store.ListWorkProposals(ctx, req.Limit, req.State, req.TargetWorkID, req.SourceWorkID)
+}
+
+func (s *Service) GetWorkProposal(ctx context.Context, proposalID string) (*core.WorkProposalRecord, error) {
+	proposal, err := s.store.GetWorkProposal(ctx, proposalID)
+	if err != nil {
+		return nil, normalizeStoreError("proposal", proposalID, err)
+	}
+	return &proposal, nil
+}
+
+func (s *Service) ReviewWorkProposal(ctx context.Context, proposalID, decision string) (*core.WorkProposalRecord, *core.WorkItemRecord, error) {
+	proposal, err := s.store.GetWorkProposal(ctx, proposalID)
+	if err != nil {
+		return nil, nil, normalizeStoreError("proposal", proposalID, err)
+	}
+	now := time.Now().UTC()
+	switch decision {
+	case "accept":
+		proposal.State = "accepted"
+		proposal.ReviewedBy = "service"
+		proposal.ReviewedAt = &now
+		var created *core.WorkItemRecord
+		switch proposal.ProposalType {
+		case "promote_discovery":
+			item, err := s.createWorkFromPatch(ctx, proposal, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			if proposal.SourceWorkID != "" {
+				if err := s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+					EdgeID:     core.GenerateID("wedge"),
+					FromWorkID: item.WorkID,
+					ToWorkID:   proposal.SourceWorkID,
+					EdgeType:   "discovered_from",
+					CreatedBy:  "service",
+					CreatedAt:  now,
+					Metadata:   map[string]any{},
+				}); err != nil {
+					return nil, nil, err
+				}
+			}
+			proposal.TargetWorkID = item.WorkID
+			created = item
+		case "create_child":
+			parentID := proposal.TargetWorkID
+			if parentID == "" {
+				parentID = proposal.SourceWorkID
+			}
+			if parentID == "" {
+				return nil, nil, fmt.Errorf("%w: create_child requires target or source work id", ErrInvalidInput)
+			}
+			item, err := s.createWorkFromPatch(ctx, proposal, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			if err := s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+				EdgeID:     core.GenerateID("wedge"),
+				FromWorkID: parentID,
+				ToWorkID:   item.WorkID,
+				EdgeType:   "parent_of",
+				CreatedBy:  "service",
+				CreatedAt:  now,
+				Metadata:   map[string]any{},
+			}); err != nil {
+				return nil, nil, err
+			}
+			proposal.TargetWorkID = item.WorkID
+			created = item
+		case "add_edge":
+			if err := s.applyAddEdgeProposal(ctx, proposal, now); err != nil {
+				return nil, nil, err
+			}
+		case "remove_edge":
+			if err := s.applyRemoveEdgeProposal(ctx, proposal); err != nil {
+				return nil, nil, err
+			}
+		case "change_acceptance":
+			if err := s.applyChangeAcceptanceProposal(ctx, proposal, now); err != nil {
+				return nil, nil, err
+			}
+		case "reparent_work":
+			if err := s.applyReparentProposal(ctx, proposal, now); err != nil {
+				return nil, nil, err
+			}
+		case "supersede_work":
+			item, err := s.applySupersedeProposal(ctx, proposal, now)
+			if err != nil {
+				return nil, nil, err
+			}
+			created = item
+		}
+		if err := s.store.UpdateWorkProposal(ctx, proposal); err != nil {
+			return nil, nil, err
+		}
+		return &proposal, created, nil
+	case "reject":
+		proposal.State = "rejected"
+		proposal.ReviewedBy = "service"
+		proposal.ReviewedAt = &now
+		if err := s.store.UpdateWorkProposal(ctx, proposal); err != nil {
+			return nil, nil, err
+		}
+		return &proposal, nil, nil
+	default:
+		return nil, nil, fmt.Errorf("%w: decision must be accept or reject", ErrInvalidInput)
+	}
+}
+
+func (s *Service) createWorkFromPatch(ctx context.Context, proposal core.WorkProposalRecord, now time.Time) (*core.WorkItemRecord, error) {
+	title := summaryString(proposal.ProposedPatch, "title")
+	objective := summaryString(proposal.ProposedPatch, "objective")
+	kind := summaryString(proposal.ProposedPatch, "kind")
+	if kind == "" {
+		kind = "task"
+	}
+	if title == "" || objective == "" {
+		return nil, fmt.Errorf("%w: proposal patch requires title and objective", ErrInvalidInput)
+	}
+	item := core.WorkItemRecord{
+		WorkID:         core.GenerateID("work"),
+		Title:          title,
+		Objective:      objective,
+		Kind:           kind,
+		ExecutionState: core.WorkExecutionStateReady,
+		ApprovalState:  core.WorkApprovalStateNone,
+		Metadata:       map[string]any{"proposal_id": proposal.ProposalID},
+		CreatedAt:      now,
+		UpdatedAt:      now,
+	}
+	if err := s.store.CreateWorkItem(ctx, item); err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
+func (s *Service) applyAddEdgeProposal(ctx context.Context, proposal core.WorkProposalRecord, now time.Time) error {
+	fromWorkID := summaryString(proposal.ProposedPatch, "from_work_id")
+	toWorkID := summaryString(proposal.ProposedPatch, "to_work_id")
+	edgeType := summaryString(proposal.ProposedPatch, "edge_type")
+	if fromWorkID == "" || toWorkID == "" || edgeType == "" {
+		return fmt.Errorf("%w: add_edge requires from_work_id, to_work_id, and edge_type", ErrInvalidInput)
+	}
+	if _, err := s.store.GetWorkItem(ctx, fromWorkID); err != nil {
+		return normalizeStoreError("work", fromWorkID, err)
+	}
+	if _, err := s.store.GetWorkItem(ctx, toWorkID); err != nil {
+		return normalizeStoreError("work", toWorkID, err)
+	}
+	return s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+		EdgeID:     core.GenerateID("wedge"),
+		FromWorkID: fromWorkID,
+		ToWorkID:   toWorkID,
+		EdgeType:   edgeType,
+		CreatedBy:  "service",
+		CreatedAt:  now,
+		Metadata:   cloneMap(proposal.Metadata),
+	})
+}
+
+func (s *Service) applyRemoveEdgeProposal(ctx context.Context, proposal core.WorkProposalRecord) error {
+	edgeID := summaryString(proposal.ProposedPatch, "edge_id")
+	if edgeID != "" {
+		return s.store.DeleteWorkEdge(ctx, edgeID)
+	}
+	fromWorkID := summaryString(proposal.ProposedPatch, "from_work_id")
+	toWorkID := summaryString(proposal.ProposedPatch, "to_work_id")
+	edgeType := summaryString(proposal.ProposedPatch, "edge_type")
+	edges, err := s.store.ListWorkEdges(ctx, 100, edgeType, fromWorkID, toWorkID)
+	if err != nil {
+		return err
+	}
+	if len(edges) == 0 {
+		return fmt.Errorf("%w: no matching edge found", ErrNotFound)
+	}
+	for _, edge := range edges {
+		if err := s.store.DeleteWorkEdge(ctx, edge.EdgeID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) applyChangeAcceptanceProposal(ctx context.Context, proposal core.WorkProposalRecord, now time.Time) error {
+	targetID := proposal.TargetWorkID
+	if targetID == "" {
+		return fmt.Errorf("%w: change_acceptance requires target work id", ErrInvalidInput)
+	}
+	work, err := s.store.GetWorkItem(ctx, targetID)
+	if err != nil {
+		return normalizeStoreError("work", targetID, err)
+	}
+	for key, value := range proposal.ProposedPatch {
+		work.Acceptance[key] = value
+	}
+	work.UpdatedAt = now
+	return s.store.UpdateWorkItem(ctx, work)
+}
+
+func (s *Service) applyReparentProposal(ctx context.Context, proposal core.WorkProposalRecord, now time.Time) error {
+	targetID := proposal.TargetWorkID
+	newParentID := summaryString(proposal.ProposedPatch, "parent_work_id")
+	if targetID == "" || newParentID == "" {
+		return fmt.Errorf("%w: reparent_work requires target work id and parent_work_id", ErrInvalidInput)
+	}
+	if _, err := s.store.GetWorkItem(ctx, targetID); err != nil {
+		return normalizeStoreError("work", targetID, err)
+	}
+	if _, err := s.store.GetWorkItem(ctx, newParentID); err != nil {
+		return normalizeStoreError("work", newParentID, err)
+	}
+	existing, err := s.store.ListWorkEdges(ctx, 100, "parent_of", "", targetID)
+	if err != nil {
+		return err
+	}
+	for _, edge := range existing {
+		if err := s.store.DeleteWorkEdge(ctx, edge.EdgeID); err != nil {
+			return err
+		}
+	}
+	return s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+		EdgeID:     core.GenerateID("wedge"),
+		FromWorkID: newParentID,
+		ToWorkID:   targetID,
+		EdgeType:   "parent_of",
+		CreatedBy:  "service",
+		CreatedAt:  now,
+		Metadata:   map[string]any{},
+	})
+}
+
+func (s *Service) applySupersedeProposal(ctx context.Context, proposal core.WorkProposalRecord, now time.Time) (*core.WorkItemRecord, error) {
+	targetID := proposal.TargetWorkID
+	if targetID == "" {
+		return nil, fmt.Errorf("%w: supersede_work requires target work id", ErrInvalidInput)
+	}
+	if _, err := s.store.GetWorkItem(ctx, targetID); err != nil {
+		return nil, normalizeStoreError("work", targetID, err)
+	}
+	replacementID := summaryString(proposal.ProposedPatch, "existing_work_id")
+	var created *core.WorkItemRecord
+	if replacementID == "" {
+		item, err := s.createWorkFromPatch(ctx, proposal, now)
+		if err != nil {
+			return nil, err
+		}
+		created = item
+		replacementID = item.WorkID
+	} else {
+		if _, err := s.store.GetWorkItem(ctx, replacementID); err != nil {
+			return nil, normalizeStoreError("work", replacementID, err)
+		}
+	}
+	if err := s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+		EdgeID:     core.GenerateID("wedge"),
+		FromWorkID: replacementID,
+		ToWorkID:   targetID,
+		EdgeType:   "supersedes",
+		CreatedBy:  "service",
+		CreatedAt:  now,
+		Metadata:   map[string]any{},
+	}); err != nil {
+		return nil, err
+	}
+	return created, nil
+}
+
+func (s *Service) VerifyWork(ctx context.Context, req WorkVerifyRequest) (*core.VerificationRecord, *core.WorkItemRecord, error) {
+	work, err := s.store.GetWorkItem(ctx, req.WorkID)
+	if err != nil {
+		return nil, nil, normalizeStoreError("work", req.WorkID, err)
+	}
+	now := time.Now().UTC()
+	record := core.VerificationRecord{
+		VerificationID: core.GenerateID("verify"),
+		TargetKind:     "work",
+		TargetID:       req.WorkID,
+		Result:         req.Result,
+		Summary:        req.Summary,
+		ArtifactID:     req.ArtifactID,
+		JobID:          req.JobID,
+		SessionID:      req.SessionID,
+		Metadata:       cloneMap(req.Metadata),
+		CreatedBy:      req.CreatedBy,
+		CreatedAt:      now,
+	}
+	if err := s.store.CreateVerificationRecord(ctx, record); err != nil {
+		return nil, nil, err
+	}
+	switch req.Result {
+	case "passed":
+		work.ApprovalState = core.WorkApprovalStateVerified
+	case "failed":
+		work.ApprovalState = core.WorkApprovalStateRejected
+	case "blocked", "inconclusive":
+		work.ApprovalState = core.WorkApprovalStatePendingVerification
+	default:
+		return nil, nil, fmt.Errorf("%w: invalid verification result", ErrInvalidInput)
+	}
+	work.UpdatedAt = now
+	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
+		return nil, nil, err
+	}
+	if err := s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:      core.GenerateID("wup"),
+		WorkID:        work.WorkID,
+		ApprovalState: work.ApprovalState,
+		Message:       req.Summary,
+		JobID:         req.JobID,
+		SessionID:     req.SessionID,
+		ArtifactID:    req.ArtifactID,
+		CreatedBy:     req.CreatedBy,
+		CreatedAt:     now,
+		Metadata:      map[string]any{"verification_result": req.Result},
+	}); err != nil {
+		return nil, nil, err
+	}
+	return &record, &work, nil
+}
+
 func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (*HistorySearchResult, error) {
 	query := strings.TrimSpace(req.Query)
 	if query == "" {
@@ -1016,6 +1850,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 		matches = append(matches, core.HistoryMatch{
 			Kind:      "job",
 			ID:        job.JobID,
+			WorkID:    job.WorkID,
 			SessionID: job.SessionID,
 			JobID:     job.JobID,
 			Adapter:   job.Adapter,
@@ -1047,6 +1882,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			matches = append(matches, core.HistoryMatch{
 				Kind:      "turn",
 				ID:        turn.TurnID,
+				WorkID:    job.WorkID,
 				SessionID: turn.SessionID,
 				JobID:     turn.JobID,
 				Adapter:   turn.Adapter,
@@ -1079,6 +1915,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			matches = append(matches, core.HistoryMatch{
 				Kind:      "event",
 				ID:        event.EventID,
+				WorkID:    job.WorkID,
 				SessionID: event.SessionID,
 				JobID:     event.JobID,
 				Adapter:   event.Adapter,
@@ -1126,6 +1963,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			matches = append(matches, core.HistoryMatch{
 				Kind:      "artifact",
 				ID:        artifact.ArtifactID,
+				WorkID:    job.WorkID,
 				SessionID: artifact.SessionID,
 				JobID:     artifact.JobID,
 				Adapter:   job.Adapter,
@@ -1177,8 +2015,18 @@ func (s *Service) RawLogs(ctx context.Context, jobID string, limit int) ([]RawLo
 }
 
 func (s *Service) ListArtifacts(ctx context.Context, req ArtifactsRequest) ([]core.ArtifactRecord, error) {
-	if (req.JobID == "" && req.SessionID == "") || (req.JobID != "" && req.SessionID != "") {
-		return nil, fmt.Errorf("%w: specify exactly one of job_id or session_id", ErrInvalidInput)
+	count := 0
+	if req.JobID != "" {
+		count++
+	}
+	if req.SessionID != "" {
+		count++
+	}
+	if req.WorkID != "" {
+		count++
+	}
+	if count != 1 {
+		return nil, fmt.Errorf("%w: specify exactly one of job_id, session_id, or work_id", ErrInvalidInput)
 	}
 	if req.JobID != "" {
 		if _, err := s.store.GetJob(ctx, req.JobID); err != nil {
@@ -1189,6 +2037,12 @@ func (s *Service) ListArtifacts(ctx context.Context, req ArtifactsRequest) ([]co
 		if _, err := s.store.GetSession(ctx, req.SessionID); err != nil {
 			return nil, normalizeStoreError("session", req.SessionID, err)
 		}
+	}
+	if req.WorkID != "" {
+		if _, err := s.store.GetWorkItem(ctx, req.WorkID); err != nil {
+			return nil, normalizeStoreError("work", req.WorkID, err)
+		}
+		return s.listArtifactsForWork(ctx, req.WorkID, req.Limit)
 	}
 	return s.store.ListArtifactsFiltered(ctx, req.JobID, req.SessionID, req.Kind, req.Limit)
 }
@@ -1215,6 +2069,125 @@ func (s *Service) ReadArtifact(ctx context.Context, artifactID string) (*Artifac
 		Artifact: artifact,
 		Content:  string(data),
 	}, nil
+}
+
+func (s *Service) AttachArtifact(ctx context.Context, req AttachArtifactRequest) (*core.ArtifactRecord, error) {
+	targetCount := 0
+	if req.JobID != "" {
+		targetCount++
+	}
+	if req.SessionID != "" {
+		targetCount++
+	}
+	if req.WorkID != "" {
+		targetCount++
+	}
+	if targetCount != 1 {
+		return nil, fmt.Errorf("%w: specify exactly one of job_id, session_id, or work_id", ErrInvalidInput)
+	}
+
+	sourcePath := strings.TrimSpace(req.Path)
+	if sourcePath == "" {
+		return nil, fmt.Errorf("%w: path must not be empty", ErrInvalidInput)
+	}
+	absoluteSource, err := filepath.Abs(sourcePath)
+	if err != nil {
+		return nil, fmt.Errorf("%w: resolve path %q: %v", ErrInvalidInput, sourcePath, err)
+	}
+	info, err := os.Stat(absoluteSource)
+	if err != nil {
+		return nil, fmt.Errorf("%w: stat path %q: %v", ErrInvalidInput, absoluteSource, err)
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%w: path %q is a directory", ErrInvalidInput, absoluteSource)
+	}
+
+	kind := strings.TrimSpace(req.Kind)
+	if kind == "" {
+		kind = inferArtifactKind(absoluteSource)
+	}
+
+	jobID := strings.TrimSpace(req.JobID)
+	sessionID := strings.TrimSpace(req.SessionID)
+	if jobID != "" {
+		job, err := s.store.GetJob(ctx, jobID)
+		if err != nil {
+			return nil, normalizeStoreError("job", jobID, err)
+		}
+		if sessionID == "" {
+			sessionID = job.SessionID
+		}
+	}
+	if sessionID != "" {
+		if _, err := s.store.GetSession(ctx, sessionID); err != nil {
+			return nil, normalizeStoreError("session", sessionID, err)
+		}
+	}
+	if req.WorkID != "" {
+		work, err := s.store.GetWorkItem(ctx, req.WorkID)
+		if err != nil {
+			return nil, normalizeStoreError("work", req.WorkID, err)
+		}
+		if work.CurrentJobID == "" || work.CurrentSessionID == "" {
+			return nil, fmt.Errorf("%w: work %s has no current job/session to attach against", ErrInvalidInput, req.WorkID)
+		}
+		jobID = work.CurrentJobID
+		sessionID = work.CurrentSessionID
+	}
+
+	storedPath := absoluteSource
+	if req.Copy {
+		artifactID := core.GenerateID("art")
+		targetDir := filepath.Join(s.Paths.StateDir, "artifacts", "attached", artifactID)
+		if err := os.MkdirAll(targetDir, 0o755); err != nil {
+			return nil, fmt.Errorf("create attachment directory: %w", err)
+		}
+		targetPath := filepath.Join(targetDir, filepath.Base(absoluteSource))
+		data, err := os.ReadFile(absoluteSource)
+		if err != nil {
+			return nil, fmt.Errorf("read attachment source: %w", err)
+		}
+		if err := os.WriteFile(targetPath, data, 0o644); err != nil {
+			return nil, fmt.Errorf("write attachment copy: %w", err)
+		}
+		artifact := core.ArtifactRecord{
+			ArtifactID: artifactID,
+			JobID:      jobID,
+			SessionID:  sessionID,
+			Kind:       kind,
+			Path:       targetPath,
+			CreatedAt:  time.Now().UTC(),
+			Metadata:   cloneMap(req.Metadata),
+		}
+		artifact.Metadata["attached_from"] = absoluteSource
+		artifact.Metadata["copied"] = true
+		if req.WorkID != "" {
+			artifact.Metadata["work_id"] = req.WorkID
+		}
+		if err := s.store.InsertArtifact(ctx, artifact); err != nil {
+			return nil, err
+		}
+		return &artifact, nil
+	}
+
+	artifact := core.ArtifactRecord{
+		ArtifactID: core.GenerateID("art"),
+		JobID:      jobID,
+		SessionID:  sessionID,
+		Kind:       kind,
+		Path:       storedPath,
+		CreatedAt:  time.Now().UTC(),
+		Metadata:   cloneMap(req.Metadata),
+	}
+	artifact.Metadata["attached_from"] = absoluteSource
+	artifact.Metadata["copied"] = false
+	if req.WorkID != "" {
+		artifact.Metadata["work_id"] = req.WorkID
+	}
+	if err := s.store.InsertArtifact(ctx, artifact); err != nil {
+		return nil, err
+	}
+	return &artifact, nil
 }
 
 func (s *Service) RawLogsAfter(ctx context.Context, jobID string, afterSeq int64, limit int) ([]RawLogEntry, []core.EventRecord, error) {
@@ -1711,7 +2684,7 @@ func (s *Service) launchDetachedWorker(jobID, turnID string) (int, error) {
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
 	cmd.Stdin = devNull
-	cmd.Env = os.Environ()
+	cmd.Env = s.detachedWorkerEnv(exePath)
 	adapterapi.PrepareCommand(cmd)
 
 	if err := cmd.Start(); err != nil {
@@ -1719,6 +2692,47 @@ func (s *Service) launchDetachedWorker(jobID, turnID string) (int, error) {
 	}
 
 	return cmd.Process.Pid, nil
+}
+
+func (s *Service) detachedWorkerEnv(exePath string) []string {
+	envMap := make(map[string]string)
+	for _, entry := range os.Environ() {
+		key, value, ok := strings.Cut(entry, "=")
+		if !ok {
+			continue
+		}
+		envMap[key] = value
+	}
+
+	envMap["CAGENT_EXECUTABLE"] = exePath
+	if s.ConfigPath != "" {
+		envMap["CAGENT_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
+	}
+	if s.Paths.StateDir != "" {
+		envMap["CAGENT_STATE_DIR"] = s.Paths.StateDir
+	}
+	if s.Paths.CacheDir != "" {
+		envMap["CAGENT_CACHE_DIR"] = s.Paths.CacheDir
+	}
+	if exeDir := filepath.Dir(exePath); exeDir != "" {
+		if pathValue, ok := envMap["PATH"]; ok && pathValue != "" {
+			envMap["PATH"] = exeDir + string(os.PathListSeparator) + pathValue
+		} else {
+			envMap["PATH"] = exeDir
+		}
+	}
+
+	keys := make([]string, 0, len(envMap))
+	for key := range envMap {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	env := make([]string, 0, len(keys))
+	for _, key := range keys {
+		env = append(env, key+"="+envMap[key])
+	}
+	return env
 }
 
 func (s *Service) releaseContinuationLock(ctx context.Context, job core.JobRecord) {
@@ -1739,6 +2753,7 @@ func (s *Service) queueContinuation(
 	job := core.JobRecord{
 		JobID:           core.GenerateID("job"),
 		SessionID:       session.SessionID,
+		WorkID:          req.WorkID,
 		Adapter:         target.Adapter,
 		State:           core.JobStateCreated,
 		CWD:             session.CWD,
@@ -1771,6 +2786,11 @@ func (s *Service) queueContinuation(
 	}
 	session.LatestJobID = job.JobID
 	session.UpdatedAt = now
+	if req.WorkID != "" {
+		if err := s.markWorkQueued(ctx, req.WorkID, job, session); err != nil {
+			return nil, err
+		}
+	}
 
 	lock := core.LockRecord{
 		LockKey:         lockKey(target.Adapter, target.NativeSessionID),
@@ -2038,6 +3058,173 @@ func cloneMap(src map[string]any) map[string]any {
 	return dst
 }
 
+func cloneSlice(src []string) []string {
+	if len(src) == 0 {
+		return []string{}
+	}
+	dst := make([]string, len(src))
+	copy(dst, src)
+	return dst
+}
+
+func (s *Service) listArtifactsForWork(ctx context.Context, workID string, limit int) ([]core.ArtifactRecord, error) {
+	jobs, err := s.store.ListJobsByWork(ctx, workID, limit)
+	if err != nil {
+		return nil, err
+	}
+	if len(jobs) == 0 {
+		return []core.ArtifactRecord{}, nil
+	}
+	artifacts := make([]core.ArtifactRecord, 0, limit)
+	seen := map[string]bool{}
+	for _, job := range jobs {
+		jobArtifacts, err := s.store.ListArtifactsByJob(ctx, job.JobID, limit)
+		if err != nil {
+			return nil, err
+		}
+		for _, artifact := range jobArtifacts {
+			if seen[artifact.ArtifactID] {
+				continue
+			}
+			seen[artifact.ArtifactID] = true
+			artifacts = append(artifacts, artifact)
+			if len(artifacts) >= limit {
+				return artifacts, nil
+			}
+		}
+	}
+	return artifacts, nil
+}
+
+func (s *Service) workHasAvailableAdapter(work core.WorkItemRecord, diags []adapters.Diagnosis) bool {
+	for _, diag := range diags {
+		if !diag.Enabled || !diag.Available || !diag.Implemented {
+			continue
+		}
+		if containsString(work.ForbiddenAdapters, diag.Adapter) {
+			continue
+		}
+		if len(work.PreferredAdapters) > 0 && !containsString(work.PreferredAdapters, diag.Adapter) {
+			continue
+		}
+		if s.adapterSatisfiesWork(work, diag) {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Service) workHasAvailableRuntime(work core.WorkItemRecord, entries []core.CatalogEntry, diags []adapters.Diagnosis, haveCatalog bool) bool {
+	if haveCatalog {
+		for _, entry := range entries {
+			if !entry.Available {
+				continue
+			}
+			if containsString(work.ForbiddenAdapters, entry.Adapter) {
+				continue
+			}
+			if len(work.PreferredAdapters) > 0 && !containsString(work.PreferredAdapters, entry.Adapter) {
+				continue
+			}
+			if len(work.PreferredModels) > 0 && !containsString(work.PreferredModels, entry.Model) {
+				continue
+			}
+			if containsString(work.AvoidModels, entry.Model) {
+				continue
+			}
+			if catalogEntrySatisfiesWork(work, entry) {
+				return true
+			}
+		}
+		return false
+	}
+	return s.workHasAvailableAdapter(work, diags)
+}
+
+func (s *Service) adapterSatisfiesWork(work core.WorkItemRecord, diag adapters.Diagnosis) bool {
+	cfg, _ := s.Config.Adapters.ByName(diag.Adapter)
+	tagSet := map[string]bool{}
+	for _, tag := range cfg.Tags {
+		tagSet[strings.ToLower(strings.TrimSpace(tag))] = true
+	}
+	for _, required := range work.RequiredCapabilities {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required == "" {
+			continue
+		}
+		if tagSet[required] {
+			continue
+		}
+		switch required {
+		case "headless_run":
+			if !diag.Capabilities.HeadlessRun {
+				return false
+			}
+		case "stream_json":
+			if !diag.Capabilities.StreamJSON {
+				return false
+			}
+		case "native_resume", "resume":
+			if !diag.Capabilities.NativeResume {
+				return false
+			}
+		case "native_fork", "fork":
+			if !diag.Capabilities.NativeFork {
+				return false
+			}
+		case "structured_output":
+			if !diag.Capabilities.StructuredOutput {
+				return false
+			}
+		case "interactive_mode":
+			if !diag.Capabilities.InteractiveMode {
+				return false
+			}
+		case "rpc_mode":
+			if !diag.Capabilities.RPCMode {
+				return false
+			}
+		case "mcp":
+			if !diag.Capabilities.MCP {
+				return false
+			}
+		case "checkpointing":
+			if !diag.Capabilities.Checkpointing {
+				return false
+			}
+		case "session_export":
+			if !diag.Capabilities.SessionExport {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func catalogEntrySatisfiesWork(work core.WorkItemRecord, entry core.CatalogEntry) bool {
+	for _, required := range work.RequiredModelTraits {
+		required = strings.ToLower(strings.TrimSpace(required))
+		if required == "" {
+			continue
+		}
+		if !containsString(entry.Traits, required) {
+			return false
+		}
+	}
+	return true
+}
+
+func containsString(values []string, target string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), strings.TrimSpace(target)) {
+			return true
+		}
+	}
+	return false
+}
+
 func summaryString(summary map[string]any, key string) string {
 	if summary == nil {
 		return ""
@@ -2071,6 +3258,7 @@ func (s *Service) annotateCatalogSnapshot(ctx context.Context, snapshot *core.Ca
 	for idx := range snapshot.Entries {
 		entry := &snapshot.Entries[idx]
 		entry.Pricing = pricing.Resolve(s.Config, entry.Provider, entry.Model)
+		entry.Traits = inferCatalogTraits(*entry, s.Config)
 		entry.History = nil
 		if hist, ok := history[catalogEntryKey(*entry)]; ok {
 			historyCopy := hist
@@ -2083,9 +3271,70 @@ func (s *Service) annotateCatalogSnapshot(ctx context.Context, snapshot *core.Ca
 	return nil
 }
 
+func inferCatalogTraits(entry core.CatalogEntry, cfg core.Config) []string {
+	traits := map[string]bool{}
+	add := func(values ...string) {
+		for _, value := range values {
+			value = strings.ToLower(strings.TrimSpace(value))
+			if value == "" {
+				continue
+			}
+			traits[value] = true
+		}
+	}
+
+	add(entry.Adapter, entry.Provider, entry.BillingClass, entry.AuthMethod)
+	if adapterCfg, ok := cfg.Adapters.ByName(entry.Adapter); ok {
+		add(adapterCfg.Tags...)
+		if adapterCfg.Speed != "" {
+			add("speed:" + adapterCfg.Speed)
+		}
+		if adapterCfg.Cost != "" {
+			add("cost:" + adapterCfg.Cost)
+		}
+	}
+
+	model := strings.ToLower(entry.Model)
+	switch {
+	case strings.Contains(model, "gpt-5.4"):
+		add("reasoning:high", "planning", "review", "premium", "implementation:strong")
+	case strings.Contains(model, "glm-5"):
+		add("planning", "verification", "reasoning:high", "speed:slow", "long_run")
+	case strings.Contains(model, "haiku"):
+		add("speed:fast", "reasoning:light", "review", "cheap")
+	case strings.Contains(model, "minimax"):
+		add("implementation", "speed:fast", "cheap", "reasoning:light")
+	case strings.Contains(model, "mimo"):
+		add("implementation", "speed:fast", "cheap", "reasoning:light")
+	case strings.Contains(model, "nano"):
+		add("cheap", "speed:fast", "reasoning:light")
+	case strings.Contains(model, "sonnet"):
+		add("planning", "review", "implementation:strong", "reasoning:high")
+	case strings.Contains(model, "opus"):
+		add("planning", "review", "reasoning:high", "premium")
+	}
+
+	if entry.BillingClass == "subscription" {
+		add("account-backed")
+	}
+	if entry.BillingClass == "metered_api" || entry.BillingClass == "cloud_project" {
+		add("api-metered")
+	}
+
+	result := make([]string, 0, len(traits))
+	for trait := range traits {
+		result = append(result, trait)
+	}
+	sort.Strings(result)
+	return result
+}
+
 func (s *Service) catalogSnapshotOrSync(ctx context.Context) (core.CatalogSnapshot, error) {
 	snapshot, err := s.store.LatestCatalogSnapshot(ctx)
 	if err == nil {
+		if annotateErr := s.annotateCatalogSnapshot(ctx, &snapshot); annotateErr != nil {
+			return core.CatalogSnapshot{}, annotateErr
+		}
 		return snapshot, nil
 	}
 	if !errors.Is(err, store.ErrNotFound) {
@@ -2566,12 +3815,12 @@ func mergeUsageReports(existing *core.UsageReport, incoming core.UsageReport) *c
 		return &copy
 	}
 	merged := *existing
-	merged.InputTokens = max64(merged.InputTokens, incoming.InputTokens)
-	merged.OutputTokens = max64(merged.OutputTokens, incoming.OutputTokens)
-	merged.TotalTokens = max64(merged.TotalTokens, incoming.TotalTokens)
-	merged.CachedInputTokens = max64(merged.CachedInputTokens, incoming.CachedInputTokens)
-	merged.CacheReadInputTokens = max64(merged.CacheReadInputTokens, incoming.CacheReadInputTokens)
-	merged.CacheCreationInputTokens = max64(merged.CacheCreationInputTokens, incoming.CacheCreationInputTokens)
+	merged.InputTokens = max(merged.InputTokens, incoming.InputTokens)
+	merged.OutputTokens = max(merged.OutputTokens, incoming.OutputTokens)
+	merged.TotalTokens = max(merged.TotalTokens, incoming.TotalTokens)
+	merged.CachedInputTokens = max(merged.CachedInputTokens, incoming.CachedInputTokens)
+	merged.CacheReadInputTokens = max(merged.CacheReadInputTokens, incoming.CacheReadInputTokens)
+	merged.CacheCreationInputTokens = max(merged.CacheCreationInputTokens, incoming.CacheCreationInputTokens)
 	if merged.Model == "" {
 		merged.Model = incoming.Model
 	}
@@ -2584,19 +3833,19 @@ func mergeUsageReports(existing *core.UsageReport, incoming core.UsageReport) *c
 	return &merged
 }
 
-func modelUsageFromPayload(payload map[string]any) []core.ModelUsageReport {
+func modelUsageFromPayload(payload map[string]any) []core.UsageReport {
 	raw, ok := payload["model_usage"].([]any)
 	if !ok {
 		return nil
 	}
 
-	models := make([]core.ModelUsageReport, 0, len(raw))
+	models := make([]core.UsageReport, 0, len(raw))
 	for _, item := range raw {
 		entry, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		report := core.ModelUsageReport{
+		report := core.UsageReport{
 			Provider:                 summaryString(entry, "provider"),
 			Model:                    summaryString(entry, "model"),
 			InputTokens:              summaryInt64(entry, "input_tokens"),
@@ -2625,7 +3874,7 @@ func modelUsageFromPayload(payload map[string]any) []core.ModelUsageReport {
 	return models
 }
 
-func modelUsageFromSummary(summary map[string]any) []core.ModelUsageReport {
+func modelUsageFromSummary(summary map[string]any) []core.UsageReport {
 	if summary == nil {
 		return nil
 	}
@@ -2633,13 +3882,13 @@ func modelUsageFromSummary(summary map[string]any) []core.ModelUsageReport {
 	if !ok {
 		return nil
 	}
-	models := make([]core.ModelUsageReport, 0, len(raw))
+	models := make([]core.UsageReport, 0, len(raw))
 	for _, item := range raw {
 		entry, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		model := core.ModelUsageReport{
+		model := core.UsageReport{
 			Provider:                 summaryString(entry, "provider"),
 			Model:                    summaryString(entry, "model"),
 			InputTokens:              summaryInt64(entry, "input_tokens"),
@@ -2668,7 +3917,7 @@ func modelUsageFromSummary(summary map[string]any) []core.ModelUsageReport {
 	return models
 }
 
-func modelUsageMaps(models []core.ModelUsageReport) []map[string]any {
+func modelUsageMaps(models []core.UsageReport) []map[string]any {
 	if len(models) == 0 {
 		return nil
 	}
@@ -2792,10 +4041,6 @@ func (s *Service) estimateCostForJob(job core.JobRecord) *core.CostEstimate {
 	return pricing.Estimate(*usage, pricing.Resolve(s.Config, provider, model))
 }
 
-func (s *Service) costFromSummary(job core.JobRecord) *core.CostEstimate {
-	return preferredCostFromSummary(job)
-}
-
 func pricingLookupContext(job core.JobRecord, usage *core.UsageReport) (string, string) {
 	provider := ""
 	model := ""
@@ -2915,12 +4160,6 @@ func summaryBool(summary map[string]any, key string) bool {
 	return value
 }
 
-func max64(left, right int64) int64 {
-	if right > left {
-		return right
-	}
-	return left
-}
 
 func (s *Service) upsertJobRuntime(ctx context.Context, jobID string, mutate func(*core.JobRuntimeRecord)) error {
 	now := time.Now().UTC()
@@ -2952,6 +4191,103 @@ func (s *Service) isCancelRequested(ctx context.Context, jobID string) bool {
 	return rec.CancelRequestedAt != nil
 }
 
+func (s *Service) markWorkQueued(ctx context.Context, workID string, job core.JobRecord, session core.SessionRecord) error {
+	work, err := s.store.GetWorkItem(ctx, workID)
+	if err != nil {
+		return err
+	}
+	now := time.Now().UTC()
+	work.CurrentJobID = job.JobID
+	work.CurrentSessionID = session.SessionID
+	work.ExecutionState = core.WorkExecutionStateClaimed
+	work.UpdatedAt = now
+	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
+		return err
+	}
+	return s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       core.GenerateID("wup"),
+		WorkID:         workID,
+		ExecutionState: core.WorkExecutionStateClaimed,
+		Message:        "job queued",
+		JobID:          job.JobID,
+		SessionID:      session.SessionID,
+		CreatedBy:      "service",
+		CreatedAt:      now,
+		Metadata:       map[string]any{"job_state": string(job.State)},
+	})
+}
+
+func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, payload map[string]any) error {
+	if job.WorkID == "" {
+		return nil
+	}
+	work, err := s.store.GetWorkItem(ctx, job.WorkID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	now := time.Now().UTC()
+	work.CurrentJobID = job.JobID
+	work.CurrentSessionID = job.SessionID
+	work.UpdatedAt = now
+
+	var (
+		workState core.WorkExecutionState
+		message   string
+	)
+	switch job.State {
+	case core.JobStateQueued, core.JobStateCreated:
+		workState = core.WorkExecutionStateClaimed
+	case core.JobStateStarting, core.JobStateRunning, core.JobStateWaitingInput:
+		workState = core.WorkExecutionStateInProgress
+	case core.JobStateCompleted:
+		workState = core.WorkExecutionStateDone
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+		if work.ApprovalState == core.WorkApprovalStateNone {
+			work.ApprovalState = core.WorkApprovalStatePendingVerification
+		}
+	case core.JobStateFailed:
+		workState = core.WorkExecutionStateFailed
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+	case core.JobStateCancelled:
+		workState = core.WorkExecutionStateCancelled
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+	case core.JobStateBlocked:
+		workState = core.WorkExecutionStateBlocked
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+	default:
+		workState = work.ExecutionState
+	}
+	work.ExecutionState = workState
+	if payload != nil {
+		message = summaryString(payload, "message")
+	}
+	if message == "" {
+		message = summaryString(job.Summary, "message")
+	}
+	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
+		return err
+	}
+	return s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       core.GenerateID("wup"),
+		WorkID:         work.WorkID,
+		ExecutionState: work.ExecutionState,
+		ApprovalState:  work.ApprovalState,
+		Message:        message,
+		JobID:          job.JobID,
+		SessionID:      job.SessionID,
+		CreatedBy:      "service",
+		CreatedAt:      now,
+		Metadata:       map[string]any{"job_state": string(job.State)},
+	})
+}
+
 func signalProcessGroup(pid int, sig syscall.Signal) error {
 	if pid == 0 {
 		return nil
@@ -2971,6 +4307,9 @@ func (s *Service) transitionJob(ctx context.Context, job *core.JobRecord, state 
 	if err := s.store.UpdateJob(ctx, *job); err != nil {
 		return err
 	}
+	if err := s.syncWorkStateFromJob(ctx, *job, payload); err != nil {
+		return err
+	}
 	_, err := s.emitEvent(ctx, *job, "job.state_changed", "lifecycle", map[string]any{
 		"state":   state,
 		"message": payload["message"],
@@ -2983,7 +4322,10 @@ func (s *Service) finishJob(ctx context.Context, job *core.JobRecord, state core
 	job.State = state
 	job.UpdatedAt = now
 	job.FinishedAt = &now
-	return s.store.UpdateJob(ctx, *job)
+	if err := s.store.UpdateJob(ctx, *job); err != nil {
+		return err
+	}
+	return s.syncWorkStateFromJob(ctx, *job, job.Summary)
 }
 
 func (s *Service) emitEvent(
@@ -3124,7 +4466,7 @@ func (s *Service) buildTransferPacket(
 		ImportantFiles:       collectImportantFiles(session.CWD, events, artifacts),
 		RecentTurnsInline:    condenseTurns(turns, 3),
 		RecentEventsInline:   condenseEvents(events, 6),
-		EvidenceRefs:         []core.TransferEvidenceRef{},
+		EvidenceRefs:         []core.TransferArtifact{},
 		Artifacts:            toTransferArtifacts(s.Paths.StateDir, artifacts),
 		Constraints:          []string{"Keep CLI flags and JSON output backward compatible.", fmt.Sprintf("Work within %s.", session.CWD)},
 		RecommendedNextSteps: recommendNextSteps(job, turns),
@@ -3157,7 +4499,7 @@ func (s *Service) buildTransferPacket(
 		packet.Artifacts = []core.TransferArtifact{}
 	}
 	if packet.EvidenceRefs == nil {
-		packet.EvidenceRefs = []core.TransferEvidenceRef{}
+		packet.EvidenceRefs = []core.TransferArtifact{}
 	}
 	return packet
 }
@@ -3195,8 +4537,8 @@ func (s *Service) writeTransferBundle(packet core.TransferPacket, outputPath str
 		return packet, "", err
 	}
 	packet.EvidenceRefs = append(packet.EvidenceRefs,
-		core.TransferEvidenceRef{Kind: "recent_turns_json", Path: turnsPath},
-		core.TransferEvidenceRef{Kind: "recent_events_jsonl", Path: eventsPath},
+		core.TransferArtifact{Kind: "recent_turns_json", Path: turnsPath},
+		core.TransferArtifact{Kind: "recent_events_jsonl", Path: eventsPath},
 	)
 
 	encoded, err := json.MarshalIndent(packet, "", "  ")
@@ -3503,6 +4845,42 @@ func normalizeStoreError(kind, id string, err error) error {
 		return fmt.Errorf("%w: %s %s", ErrNotFound, kind, id)
 	}
 	return err
+}
+
+func inferArtifactKind(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".md", ".markdown":
+		return "markdown"
+	case ".json":
+		return "json"
+	case ".jsonl":
+		return "jsonl"
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp":
+		return "image"
+	case ".mp4", ".mov", ".webm":
+		return "video"
+	case ".txt", ".log":
+		return "text"
+	default:
+		return "file"
+	}
+}
+
+func normalizeWorkClaimError(workID string, err error) error {
+	if errors.Is(err, store.ErrNotFound) {
+		return normalizeStoreError("work", workID, err)
+	}
+	if errors.Is(err, store.ErrBusy) {
+		return fmt.Errorf("%w: work %s is claimed by another worker", ErrBusy, workID)
+	}
+	return err
+}
+
+func timeStringPtr(value *time.Time) string {
+	if value == nil {
+		return ""
+	}
+	return value.UTC().Format(time.RFC3339Nano)
 }
 
 func streamFromRawRef(rawRef string) string {
