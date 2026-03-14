@@ -130,7 +130,35 @@ func EnsurePaths(paths Paths) error {
 		}
 	}
 
+	// Auto-add .cagent/ to repo .gitignore if state dir is inside a git repo
+	ensureGitignore(paths.StateDir)
+
 	return nil
+}
+
+// ensureGitignore adds .cagent/ to the repo's .gitignore if the state dir
+// is a .cagent/ directory inside a git repo.
+func ensureGitignore(stateDir string) {
+	if filepath.Base(stateDir) != ".cagent" {
+		return
+	}
+	repoRoot := filepath.Dir(stateDir)
+	gitignorePath := filepath.Join(repoRoot, ".gitignore")
+
+	// Check if .gitignore already contains .cagent/
+	if data, err := os.ReadFile(gitignorePath); err == nil {
+		if strings.Contains(string(data), ".cagent") {
+			return
+		}
+	}
+
+	// Append cagent ignores — track DB, ignore bulky artifacts
+	f, err := os.OpenFile(gitignorePath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	_, _ = f.WriteString("\n# cagent local state — track DB, ignore artifacts\n.cagent/raw/\n.cagent/jobs/\n.cagent/transfers/\n.cagent/debriefs/\n.cagent/cagent.db-shm\n.cagent/cagent.db-wal\n")
 }
 
 func resolveDir(override, xdgBase, home, fallbackBase string) (string, error) {
