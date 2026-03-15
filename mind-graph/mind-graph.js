@@ -157,6 +157,7 @@ const COL = {draft:"#5a6a7a",ready:"#c4a060",running:"#50b888",blocked:"#d06060"
 
 let W = [], byId = {}, BLOCKS = [], nodes = {};
 let focusPoint = [0, 0], focusTarget = [0, 0], focusId = null, hoverId = null;
+let activeFilter = "all"; // "all", "ready", "running", "blocked", "done", "draft"
 
 function initSimulation(items) {
   W = items;
@@ -166,10 +167,23 @@ function initSimulation(items) {
     if (w.bb) w.bb.forEach(bid => { if (byId[bid]) BLOCKS.push([bid, w.id]); });
   });
   nodes = {};
-  W.forEach((w, i) => {
-    const angle = (i / W.length) * Math.PI * 2;
-    const r = 0.15 + Math.random() * 0.25;
-    nodes[w.id] = { pos: [Math.cos(angle) * r, Math.sin(angle) * r], vel: [0, 0], depth: 0 };
+  // Sort by creation time for temporal ordering
+  const sorted = [...W].sort((a, b) => a.cr - b.cr);
+  const timeMin = sorted.length ? sorted[0].cr : 0;
+  const timeMax = sorted.length ? sorted[sorted.length - 1].cr : 1;
+  const timeRange = Math.max(timeMax - timeMin, 1);
+
+  W.forEach((w) => {
+    // Temporal angle: oldest at top (12 o'clock), newest clockwise
+    const timeFrac = (w.cr - timeMin) / timeRange;
+    const angle = -Math.PI / 2 + timeFrac * Math.PI * 2; // start at top, go clockwise
+    const r = 0.15 + Math.random() * 0.2;
+    nodes[w.id] = {
+      pos: [Math.cos(angle) * r, Math.sin(angle) * r],
+      vel: [0, 0],
+      depth: 0,
+      temporalAngle: angle, // preferred angular position
+    };
   });
   W.forEach(w => {
     let d = 0, cur = w;
@@ -290,7 +304,20 @@ function simulate() {
       if (n > 1e-8) F = add(F, scale(scale(toOrigin, 1/n), K_WALL * Math.exp((rhoI - RHO_WALL) / SIGMA_WALL)));
     }
 
-    // 6. Activity noise
+    // 6. Temporal angle spring — weak pull toward chronological position
+    if (ni.temporalAngle !== undefined && rhoI > 0.05) {
+      const currentAngle = Math.atan2(pi[1], pi[0]);
+      let angleDiff = ni.temporalAngle - currentAngle;
+      // Normalize to [-PI, PI]
+      while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+      while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+      // Tangential force proportional to angle error
+      const tangent = [-Math.sin(currentAngle), Math.cos(currentAngle)];
+      const K_ANGLE = 0.15; // weak — don't fight structure
+      F = add(F, scale(tangent, K_ANGLE * angleDiff));
+    }
+
+    // 7. Activity noise
     if (w.s === "running") F = add(F, [(Math.random()-0.5)*0.006, (Math.random()-0.5)*0.006]);
 
     // Integrate
@@ -384,7 +411,10 @@ function textSizeForNode(w) {
 function nodeAlpha(w) {
   const fp = focusTransform(focusPoint, nodes[w.id].pos);
   const cf = (1 - norm(fp) ** 2) / 2;
-  return Math.max(0.18, Math.min(1, cf * 2.2 + 0.1));
+  const base = Math.max(0.18, Math.min(1, cf * 2.2 + 0.1));
+  // Dim filtered-out items
+  if (activeFilter !== "all" && w.s !== activeFilter) return base * 0.12;
+  return base;
 }
 
 function draw() {
@@ -725,6 +755,18 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+// ── Filters ─────────────────────────────────────────────────
+
+document.querySelectorAll(".filter-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    const f = btn.dataset.filter;
+    activeFilter = (activeFilter === f && f !== "all") ? "all" : f;
+    document.querySelectorAll(".filter-btn").forEach(b =>
+      b.classList.toggle("active", b.dataset.filter === activeFilter || (activeFilter === "all" && b.dataset.filter === "all"))
+    );
+  });
+});
+
 // ── UI + Init ───────────────────────────────────────────────
 
 function updateUI() {
@@ -732,12 +774,21 @@ function updateUI() {
   W.forEach(w => { counts[w.s] = (counts[w.s] || 0) + 1; });
   const parts = [];
   if (counts.running) parts.push(`${counts.running} running`);
-  if (counts.done) parts.push(`${counts.done} done`);
+  if (counts.done || counts.completed) parts.push(`${(counts.done||0) + (counts.completed||0)} done`);
   if (counts.blocked) parts.push(`${counts.blocked} blocked`);
   parts.push(`${W.length} total`);
   document.getElementById("stats").textContent = parts.join(" · ");
   document.getElementById("focus-label").textContent = focusId ? ("→ " + byId[focusId].t) : "";
   document.getElementById("btn-back").style.display = focusId ? "inline" : "none";
+
+  // Update filter counts
+  const el = (id) => document.getElementById(id);
+  if (el("count-all")) el("count-all").textContent = W.length;
+  if (el("count-ready")) el("count-ready").textContent = counts.ready || 0;
+  if (el("count-running")) el("count-running").textContent = counts.running || 0;
+  if (el("count-blocked")) el("count-blocked").textContent = counts.blocked || 0;
+  if (el("count-done")) el("count-done").textContent = (counts.done || 0) + (counts.completed || 0);
+  if (el("count-draft")) el("count-draft").textContent = counts.draft || 0;
 }
 
 async function refresh() {

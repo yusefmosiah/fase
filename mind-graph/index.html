@@ -115,8 +115,18 @@
   #detail-panel .detail-list-item .item-prefix { color: #c4a060; margin-right: 6px; }
   #detail-panel .detail-list-item .item-prefix-green { color: #50b888; margin-right: 6px; }
 
-  #bottom { padding: 6px 16px 10px; display: flex; gap: 12px; align-items: center; font-size: 11px; color: #555; flex-wrap: wrap; }
-  .legend-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+  #bottom { padding: 6px 16px 10px; display: flex; gap: 8px; align-items: center; font-size: 11px; color: #555; flex-wrap: wrap; }
+  .filter-btn {
+    display: inline-flex; align-items: center; gap: 4px;
+    padding: 2px 10px; border-radius: 12px;
+    background: none; border: 1px solid transparent;
+    color: #555; cursor: pointer; font-family: inherit; font-size: 11px;
+    transition: all 0.2s;
+  }
+  .filter-btn:hover { border-color: #444; color: #999; }
+  .filter-btn.active { border-color: currentColor; color: inherit; font-weight: 500; }
+  .filter-btn .dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; }
+  .filter-btn .count { opacity: 0.5; margin-left: 2px; }
   #loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: #555; font-size: 14px; }
 
   @media (max-width: 768px) {
@@ -149,12 +159,13 @@
   </div>
 </div>
 <div id="bottom" style="display:none">
-  <span><span class="legend-dot" style="background:#5a6a7a"></span>draft</span>
-  <span><span class="legend-dot" style="background:#c4a060"></span>ready</span>
-  <span><span class="legend-dot" style="background:#50b888"></span>running</span>
-  <span><span class="legend-dot" style="background:#d06060"></span>blocked</span>
-  <span><span class="legend-dot" style="background:#408868"></span>done</span>
-  <span style="margin-left:auto;color:#444">click to focus &middot; esc to ascend &middot; hover for detail</span>
+  <button class="filter-btn active" data-filter="all"><span class="dot" style="background:#888"></span>all <span class="count" id="count-all"></span></button>
+  <button class="filter-btn" data-filter="ready"><span class="dot" style="background:#c4a060"></span>ready <span class="count" id="count-ready"></span></button>
+  <button class="filter-btn" data-filter="running"><span class="dot" style="background:#50b888"></span>running <span class="count" id="count-running"></span></button>
+  <button class="filter-btn" data-filter="blocked"><span class="dot" style="background:#d06060"></span>blocked <span class="count" id="count-blocked"></span></button>
+  <button class="filter-btn" data-filter="done"><span class="dot" style="background:#408868"></span>done <span class="count" id="count-done"></span></button>
+  <button class="filter-btn" data-filter="draft"><span class="dot" style="background:#5a6a7a"></span>draft <span class="count" id="count-draft"></span></button>
+  <span style="margin-left:auto;color:#444">click to focus &middot; esc to ascend</span>
 </div>
 <script type="module" src="/mind-graph.js"></script>
 </body>
