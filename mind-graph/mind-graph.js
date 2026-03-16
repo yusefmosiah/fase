@@ -755,6 +755,46 @@ function escapeHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
+// ── Sidebar ─────────────────────────────────────────────────
+
+function renderSidebar() {
+  const sidebar = document.getElementById("sidebar");
+  if (!sidebar) return;
+
+  // Group by state for ordering
+  const stateOrder = ["running", "claimed", "blocked", "ready", "draft", "done", "completed", "failed", "cancelled"];
+  const sorted = [...W].sort((a, b) => {
+    const sa = stateOrder.indexOf(a.s), sb = stateOrder.indexOf(b.s);
+    if (sa !== sb) return sa - sb;
+    return a.t.localeCompare(b.t);
+  });
+
+  sidebar.innerHTML = sorted.map(w => {
+    const col = COL[w.s] || "#666";
+    const filtered = activeFilter !== "all" && w.s !== activeFilter;
+    return `<div class="sidebar-item ${w.id === focusId ? 'active' : ''} ${filtered ? 'filtered-out' : ''}" data-id="${w.id}">
+      <span class="item-dot" style="background:${col}"></span>
+      <span class="item-title">${escapeHtml(w.t)}</span>
+      <span class="item-kind">${w.k.slice(0, 4)}</span>
+    </div>`;
+  }).join("");
+
+  sidebar.querySelectorAll(".sidebar-item").forEach(el => {
+    el.addEventListener("click", () => {
+      const id = el.dataset.id;
+      setFocus(focusId === id ? null : id);
+      renderSidebar(); // update active state
+      // Close mobile sidebar
+      sidebar.classList.remove("mobile-open");
+    });
+  });
+}
+
+// Mobile toggle
+document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
+  document.getElementById("sidebar")?.classList.toggle("mobile-open");
+});
+
 // ── Filters ─────────────────────────────────────────────────
 
 document.querySelectorAll(".filter-btn").forEach(btn => {
@@ -764,6 +804,7 @@ document.querySelectorAll(".filter-btn").forEach(btn => {
     document.querySelectorAll(".filter-btn").forEach(b =>
       b.classList.toggle("active", b.dataset.filter === activeFilter || (activeFilter === "all" && b.dataset.filter === "all"))
     );
+    renderSidebar();
   });
 });
 
@@ -800,6 +841,7 @@ async function refresh() {
     refreshData(items);
   }
   updateUI();
+  renderSidebar();
 }
 
 async function boot() {
@@ -818,6 +860,7 @@ async function boot() {
   window.addEventListener("resize", resize);
   resize();
   updateUI();
+  renderSidebar();
   draw();
   setInterval(refresh, 15000);
 }
