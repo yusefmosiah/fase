@@ -1987,13 +1987,59 @@ func (s *Service) ListPrivateNotes(ctx context.Context, workID string) ([]core.W
 	return s.store.ListPrivateNotes(ctx, workID, 50)
 }
 
-func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, format string) (*core.DocContentRecord, error) {
-	if _, err := s.store.GetWorkItem(ctx, workID); err != nil {
-		return nil, normalizeStoreError("work", workID, err)
-	}
+// SetDocContent stores doc content and auto-creates a work item if workID is empty.
+// This guarantees every doc has a corresponding work item.
+func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, format string) (*core.DocContentRecord, string, error) {
 	if format == "" {
 		format = "markdown"
 	}
+
+	// Auto-create work item if none specified
+	createdWork := false
+	if workID == "" {
+		// Check if a work item already exists for this doc path
+		existing, err := s.store.GetDocContentByPath(ctx, path)
+		if err == nil && existing != nil {
+			workID = existing.WorkID
+		} else {
+			// Infer kind from path
+			kind := "doc"
+			if strings.Contains(path, "/decisions/") || strings.Contains(path, "adr-") {
+				kind = "plan"
+			} else if strings.Contains(path, "/guides/") {
+				kind = "implement"
+			} else if strings.Contains(path, "/reports/") || strings.Contains(path, "/snapshots/") {
+				kind = "review"
+			}
+
+			// Infer title from content if not provided
+			if title == "" {
+				title = inferTitleFromMarkdown(body)
+			}
+			if title == "" {
+				title = filepath.Base(path)
+			}
+
+			// Extract first paragraph as objective
+			objective := path + ": " + extractFirstParagraph(body)
+
+			work, err := s.CreateWork(ctx, WorkCreateRequest{
+				Title:     title,
+				Objective: objective,
+				Kind:      kind,
+			})
+			if err != nil {
+				return nil, "", fmt.Errorf("auto-create work item for doc: %w", err)
+			}
+			workID = work.WorkID
+			createdWork = true
+		}
+	} else {
+		if _, err := s.store.GetWorkItem(ctx, workID); err != nil {
+			return nil, "", normalizeStoreError("work", workID, err)
+		}
+	}
+
 	rec := core.DocContentRecord{
 		DocID:  core.GenerateID("doc"),
 		WorkID: workID,
@@ -2003,9 +2049,50 @@ func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, 
 		Format: format,
 	}
 	if err := s.store.UpsertDocContent(ctx, rec); err != nil {
-		return nil, err
+		return nil, workID, err
 	}
-	return &rec, nil
+	_ = createdWork // could return this to caller
+	return &rec, workID, nil
+}
+
+func inferTitleFromMarkdown(body string) string {
+	for _, line := range strings.SplitN(body, "\n", 30) {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "# ") {
+			return strings.TrimPrefix(line, "# ")
+		}
+		if strings.HasPrefix(line, "## ") {
+			return strings.TrimPrefix(line, "## ")
+		}
+	}
+	return ""
+}
+
+func extractFirstParagraph(body string) string {
+	lines := strings.Split(body, "\n")
+	var para []string
+	inContent := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || trimmed == "---" {
+			if inContent && len(para) > 0 {
+				break
+			}
+			continue
+		}
+		if strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "Date:") ||
+			strings.HasPrefix(trimmed, "Kind:") || strings.HasPrefix(trimmed, "Status:") ||
+			strings.HasPrefix(trimmed, "Priority:") || strings.HasPrefix(trimmed, "Requires:") {
+			continue
+		}
+		inContent = true
+		para = append(para, trimmed)
+	}
+	result := strings.Join(para, " ")
+	if len(result) > 300 {
+		result = result[:300] + "..."
+	}
+	return result
 }
 
 func (s *Service) GetDocContent(ctx context.Context, workID string) ([]core.DocContentRecord, error) {

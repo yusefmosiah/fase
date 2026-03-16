@@ -1333,10 +1333,12 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	_ = privateNoteCmd.MarkFlagRequired("text")
 
 	docSetCmd := &cobra.Command{
-		Use:   "doc-set <work-id>",
-		Short: "Store or update doc content for a work item",
-		Long:  "Associates a document (from file or stdin) with a work item. The doc body is stored in the work graph DB.",
-		Args:  cobra.ExactArgs(1),
+		Use:   "doc-set [work-id]",
+		Short: "Store doc content, auto-creating a work item if needed",
+		Long: `Associates a document (from file or inline) with a work item.
+If no work-id is given, auto-creates a work item from the doc content.
+This guarantees every doc has a corresponding work item.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
@@ -1364,14 +1366,24 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				body = bodyFlag
 			}
 
-			doc, err := svc.SetDocContent(context.Background(), args[0], docPath, docTitle, body, docFormat)
+			workID := ""
+			if len(args) > 0 {
+				workID = args[0]
+			}
+
+			doc, resolvedWorkID, err := svc.SetDocContent(context.Background(), workID, docPath, docTitle, body, docFormat)
 			if err != nil {
 				return mapServiceError(err)
 			}
 			if root.jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), doc)
+				result := map[string]any{"doc": doc, "work_id": resolvedWorkID}
+				return writeJSON(cmd.OutOrStdout(), result)
 			}
-			_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s)\n", doc.DocID, len(body), docPath)
+			if workID == "" {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s) → work item %s (auto-created)\n", doc.DocID, len(body), docPath, resolvedWorkID)
+			} else {
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s)\n", doc.DocID, len(body), docPath)
+			}
 			return nil
 		},
 	}
