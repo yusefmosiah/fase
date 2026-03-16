@@ -419,12 +419,18 @@ function textSizeForNode(w) {
   return Math.max(5, baseSize * soft * 1.8);
 }
 
+function stateMatchesFilter(state, filter) {
+  if (filter === "all") return true;
+  if (filter === "done") return state === "done" || state === "completed" || state === "failed";
+  if (filter === "running") return state === "running" || state === "claimed";
+  return state === filter;
+}
+
 function nodeAlpha(w) {
   const fp = focusTransform(focusPoint, nodes[w.id].pos);
   const cf = (1 - norm(fp) ** 2) / 2;
   const base = Math.max(0.18, Math.min(1, cf * 2.2 + 0.1));
-  // Dim filtered-out items
-  if (activeFilter !== "all" && w.s !== activeFilter) return base * 0.12;
+  if (!stateMatchesFilter(w.s, activeFilter)) return base * 0.12;
   return base;
 }
 
@@ -794,7 +800,7 @@ function renderSidebar() {
 
   sidebar.innerHTML = sorted.map(w => {
     const col = COL[w.s] || "#666";
-    const filtered = activeFilter !== "all" && w.s !== activeFilter;
+    const filtered = !stateMatchesFilter(w.s, activeFilter);
     return `<div class="sidebar-item ${w.id === focusId ? 'active' : ''} ${filtered ? 'filtered-out' : ''}" data-id="${w.id}">
       <span class="item-dot" style="background:${col}"></span>
       <span class="item-title">${escapeHtml(w.t)}</span>
@@ -853,36 +859,62 @@ function appendDiffToPanel(diff) {
 let supervisorData = null;
 let currentDiff = "";
 
+let lastDiffStat = "";
+
 async function pollSupervisor() {
   try {
     const res = await fetch("/api/supervisor/status", { signal: AbortSignal.timeout(3000) });
     if (res.ok) {
       const data = await res.json();
       supervisorData = data.supervisor;
-      // Update header with supervisor info
-      const statsEl = document.getElementById("stats");
-      if (statsEl && supervisorData) {
-        const inf = supervisorData.in_flight || [];
-        const parts = [];
-        if (inf.length > 0) parts.push(`${inf.length} in-flight`);
-        parts.push(`cycle ${supervisorData.cycle}`);
-        parts.push(supervisorData.uptime);
-        if (data.diff_stat) {
-          const lines = data.diff_stat.trim().split('\n');
-          if (lines.length > 0 && lines[lines.length-1].includes('changed')) {
-            parts.push(lines[lines.length-1].trim());
-          }
-        }
-        // Append to existing stats
-        const workStats = statsEl.textContent.split(' · ').filter(s => !s.includes('cycle') && !s.includes('flight') && !s.includes('changed') && !s.includes('uptime'));
-        statsEl.textContent = [...workStats, ...parts].join(' · ');
+      if (data.diff_stat) {
+        const lines = data.diff_stat.trim().split('\n');
+        lastDiffStat = lines.length > 0 && lines[lines.length-1].includes('changed')
+          ? lines[lines.length-1].trim() : "";
+      } else {
+        lastDiffStat = "";
       }
     }
   } catch (e) { /* optional */ }
 }
 
-// Poll supervisor every 5s
 setInterval(pollSupervisor, 5000);
+pollSupervisor();
+
+// ── Diff Button ─────────────────────────────────────────────
+
+document.getElementById("btn-diff")?.addEventListener("click", async () => {
+  const panel = document.getElementById("detail-panel");
+  const canvasWrap = document.getElementById("canvas-wrap");
+  panel.classList.add("open");
+  canvasWrap.classList.add("has-detail");
+  resize();
+
+  document.getElementById("detail-kind").textContent = "LIVE";
+  document.getElementById("detail-title").textContent = "Uncommitted Changes";
+  document.getElementById("detail-meta").innerHTML = lastDiffStat ? `<span style="color:#888">${lastDiffStat}</span>` : "";
+  document.getElementById("detail-body").innerHTML = '<div style="color:#555;padding:20px 0">loading diff...</div>';
+
+  // Clear focus so diff isn't associated with a work item
+  focusId = null;
+  focusTarget = [0, 0];
+  renderSidebar();
+
+  try {
+    const res = await fetch("/api/diff", { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const { diff } = await res.json();
+      document.getElementById("detail-body").innerHTML = "";
+      if (diff) {
+        appendDiffToPanel(diff);
+      } else {
+        document.getElementById("detail-body").innerHTML = '<div style="color:#555;padding:20px 0">No uncommitted changes.</div>';
+      }
+    }
+  } catch (e) {
+    document.getElementById("detail-body").innerHTML = '<div style="color:#d06060;padding:20px 0">Failed to load diff.</div>';
+  }
+});
 
 // ── Filters ─────────────────────────────────────────────────
 
@@ -907,6 +939,15 @@ function updateUI() {
   if (counts.done || counts.completed) parts.push(`${(counts.done||0) + (counts.completed||0)} done`);
   if (counts.blocked) parts.push(`${counts.blocked} blocked`);
   parts.push(`${W.length} total`);
+
+  // Supervisor info (stable, no blinking)
+  if (supervisorData) {
+    const inf = supervisorData.in_flight || [];
+    if (inf.length > 0) parts.push(`${inf.length} in-flight`);
+    if (supervisorData.uptime) parts.push(supervisorData.uptime);
+  }
+  if (lastDiffStat) parts.push(lastDiffStat);
+
   document.getElementById("stats").textContent = parts.join(" · ");
   document.getElementById("focus-label").textContent = focusId ? ("→ " + byId[focusId].t) : "";
   document.getElementById("btn-back").style.display = focusId ? "inline" : "none";
