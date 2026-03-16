@@ -22,8 +22,10 @@ var (
 )
 
 type Store struct {
-	db   *sql.DB
-	path string
+	db        *sql.DB
+	path      string
+	privateDB *sql.DB
+	privatePath string
 }
 
 type execer interface {
@@ -52,12 +54,51 @@ func Open(ctx context.Context, path string) (*Store, error) {
 	return store, nil
 }
 
+// OpenWithPrivate opens both the public and private databases.
+func OpenWithPrivate(ctx context.Context, publicPath, privatePath string) (*Store, error) {
+	store, err := Open(ctx, publicPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(privatePath), 0o755); err != nil {
+		_ = store.db.Close()
+		return nil, fmt.Errorf("create private store directory: %w", err)
+	}
+
+	pdb, err := sql.Open("sqlite", privatePath)
+	if err != nil {
+		_ = store.db.Close()
+		return nil, fmt.Errorf("open private sqlite database: %w", err)
+	}
+	pdb.SetMaxOpenConns(1)
+	pdb.SetMaxIdleConns(1)
+
+	store.privateDB = pdb
+	store.privatePath = privatePath
+
+	if err := store.bootstrapPrivate(ctx); err != nil {
+		_ = pdb.Close()
+		_ = store.db.Close()
+		return nil, err
+	}
+
+	return store, nil
+}
+
 func (s *Store) Close() error {
+	if s.privateDB != nil {
+		_ = s.privateDB.Close()
+	}
 	return s.db.Close()
 }
 
 func (s *Store) Path() string {
 	return s.path
+}
+
+func (s *Store) HasPrivate() bool {
+	return s.privateDB != nil
 }
 
 func (s *Store) CreateSession(ctx context.Context, rec core.SessionRecord) error {
@@ -3668,3 +3709,103 @@ CREATE INDEX IF NOT EXISTS idx_attestation_records_subject_created_at ON attesta
 CREATE INDEX IF NOT EXISTS idx_approval_records_work_id_approved_at ON approval_records(work_id, approved_at DESC);
 CREATE INDEX IF NOT EXISTS idx_promotion_records_work_id_promoted_at ON promotion_records(work_id, promoted_at DESC);
 `
+
+// ── Private DB ──────────────────────────────────────────────
+
+const privateSchema = `
+CREATE TABLE IF NOT EXISTS private_notes (
+    note_id         TEXT PRIMARY KEY,
+    work_id         TEXT NOT NULL,
+    note_type       TEXT NOT NULL DEFAULT 'private',
+    text            TEXT NOT NULL,
+    created_by      TEXT NOT NULL DEFAULT '',
+    created_at      TEXT NOT NULL,
+    supersedes_note_id TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_private_notes_work_id ON private_notes(work_id, created_at DESC);
+`
+
+func (s *Store) bootstrapPrivate(ctx context.Context) error {
+	statements := []string{
+		`PRAGMA foreign_keys = ON;`,
+		`PRAGMA busy_timeout = 5000;`,
+		`PRAGMA journal_mode = WAL;`,
+		privateSchema,
+	}
+	for _, stmt := range statements {
+		if _, err := s.privateDB.ExecContext(ctx, stmt); err != nil {
+			return fmt.Errorf("apply private sqlite bootstrap: %w", err)
+		}
+	}
+	return nil
+}
+
+// AddPrivateNote stores a note in the private (gitignored) database.
+func (s *Store) AddPrivateNote(ctx context.Context, noteID, workID, noteType, text, createdBy string) error {
+	if s.privateDB == nil {
+		return fmt.Errorf("private database not available")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.privateDB.ExecContext(ctx,
+		`INSERT INTO private_notes (note_id, work_id, note_type, text, created_by, created_at)
+		 VALUES (?, ?, ?, ?, ?, ?)`,
+		noteID, workID, noteType, text, createdBy, now)
+	return err
+}
+
+// ListPrivateNotes returns private notes for a work item.
+func (s *Store) ListPrivateNotes(ctx context.Context, workID string, limit int) ([]core.WorkNoteRecord, error) {
+	if s.privateDB == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = 20
+	}
+	rows, err := s.privateDB.QueryContext(ctx,
+		`SELECT note_id, work_id, note_type, text, created_by, created_at, supersedes_note_id
+		   FROM private_notes WHERE work_id = ? ORDER BY created_at DESC LIMIT ?`,
+		workID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var notes []core.WorkNoteRecord
+	for rows.Next() {
+		var n core.WorkNoteRecord
+		var supersedes sql.NullString
+		if err := rows.Scan(&n.NoteID, &n.WorkID, &n.NoteType, &n.Body, &n.CreatedBy, &n.CreatedAt, &supersedes); err != nil {
+			return nil, err
+		}
+		// supersedes_note_id stored but not surfaced on WorkNoteRecord — ignore for now
+		notes = append(notes, n)
+	}
+	return notes, rows.Err()
+}
+
+// AllPrivateNotes returns all private notes across all work items.
+func (s *Store) AllPrivateNotes(ctx context.Context) ([]core.WorkNoteRecord, error) {
+	if s.privateDB == nil {
+		return nil, nil
+	}
+	rows, err := s.privateDB.QueryContext(ctx,
+		`SELECT note_id, work_id, note_type, text, created_by, created_at, supersedes_note_id
+		   FROM private_notes ORDER BY created_at DESC LIMIT 200`)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	var notes []core.WorkNoteRecord
+	for rows.Next() {
+		var n core.WorkNoteRecord
+		var supersedes sql.NullString
+		if err := rows.Scan(&n.NoteID, &n.WorkID, &n.NoteType, &n.Body, &n.CreatedBy, &n.CreatedAt, &supersedes); err != nil {
+			return nil, err
+		}
+		// supersedes_note_id stored but not surfaced on WorkNoteRecord — ignore for now
+		notes = append(notes, n)
+	}
+	return notes, rows.Err()
+}

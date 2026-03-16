@@ -1311,6 +1311,27 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	noteAddCmd.Flags().StringVar(&noteOpts.text, "text", "", "note body")
 	_ = noteAddCmd.MarkFlagRequired("text")
 
+	privateNoteCmd := &cobra.Command{
+		Use:   "private-note <work-id>",
+		Short: "Add a private note (stored in gitignored DB, never committed)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			note, err := svc.AddPrivateNote(context.Background(), args[0], noteOpts.noteType, noteOpts.text, "cli")
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkNote(cmd, root.jsonOutput, note)
+		},
+	}
+	privateNoteCmd.Flags().StringVar(&noteOpts.noteType, "type", "private", "note type")
+	privateNoteCmd.Flags().StringVar(&noteOpts.text, "text", "", "note body")
+	_ = privateNoteCmd.MarkFlagRequired("text")
+
 	childrenCmd := &cobra.Command{
 		Use:   "children <work-id>",
 		Short: "List child work items",
@@ -1692,7 +1713,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	projectionStatusCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
 
 	projectionCmd.AddCommand(projectionChecklistCmd, projectionStatusCmd)
-	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, completeCmd, blockCmd, failCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, childrenCmd, discoverCmd, attestCmd, hydrateCmd, proposalCmd, projectionCmd)
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, completeCmd, blockCmd, failCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, childrenCmd, discoverCmd, attestCmd, hydrateCmd, proposalCmd, projectionCmd)
 	return cmd
 }
 

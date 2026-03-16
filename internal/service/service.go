@@ -431,7 +431,7 @@ func Open(ctx context.Context, configPath string) (*Service, error) {
 		return nil, fmt.Errorf("ensure runtime paths: %w", err)
 	}
 
-	db, err := store.Open(ctx, paths.DBPath)
+	db, err := store.OpenWithPrivate(ctx, paths.DBPath, paths.PrivateDBPath)
 	if err != nil {
 		return nil, err
 	}
@@ -1956,6 +1956,31 @@ func (s *Service) AddWorkNote(ctx context.Context, req WorkNoteRequest) (*core.W
 		return nil, err
 	}
 	return &note, nil
+}
+
+func (s *Service) AddPrivateNote(ctx context.Context, workID, noteType, text, createdBy string) (*core.WorkNoteRecord, error) {
+	if strings.TrimSpace(text) == "" {
+		return nil, fmt.Errorf("%w: note text must not be empty", ErrInvalidInput)
+	}
+	if _, err := s.store.GetWorkItem(ctx, workID); err != nil {
+		return nil, normalizeStoreError("work", workID, err)
+	}
+	noteID := core.GenerateID("pnote")
+	if err := s.store.AddPrivateNote(ctx, noteID, workID, noteType, text, createdBy); err != nil {
+		return nil, err
+	}
+	return &core.WorkNoteRecord{
+		NoteID:    noteID,
+		WorkID:    workID,
+		NoteType:  noteType,
+		Body:      text,
+		CreatedBy: createdBy,
+		CreatedAt: time.Now().UTC(),
+	}, nil
+}
+
+func (s *Service) ListPrivateNotes(ctx context.Context, workID string) ([]core.WorkNoteRecord, error) {
+	return s.store.ListPrivateNotes(ctx, workID, 50)
 }
 
 func (s *Service) DiscoverWork(ctx context.Context, sourceWorkID, title, objective, kind, rationale string) (*core.WorkProposalRecord, error) {

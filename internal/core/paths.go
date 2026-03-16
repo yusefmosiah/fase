@@ -8,15 +8,16 @@ import (
 )
 
 type Paths struct {
-	ConfigDir    string
-	StateDir     string
-	CacheDir     string
-	ConfigPath   string
-	DBPath       string
-	JobsDir      string
-	RawDir       string
-	TransfersDir string
-	DebriefsDir  string
+	ConfigDir     string
+	StateDir      string
+	CacheDir      string
+	ConfigPath    string
+	DBPath        string
+	PrivateDBPath string
+	JobsDir       string
+	RawDir        string
+	TransfersDir  string
+	DebriefsDir   string
 }
 
 func ResolvePaths() (Paths, error) {
@@ -87,21 +88,23 @@ func ResolvePathsFromEnv(home string, getenv func(string) string) (Paths, error)
 	}
 
 	return Paths{
-		ConfigDir:    configDir,
-		StateDir:     stateDir,
-		CacheDir:     cacheDir,
-		ConfigPath:   filepath.Join(configDir, "config.toml"),
-		DBPath:       filepath.Join(stateDir, "cagent.db"),
-		JobsDir:      filepath.Join(stateDir, "jobs"),
-		RawDir:       filepath.Join(stateDir, "raw"),
-		TransfersDir: filepath.Join(stateDir, "transfers"),
-		DebriefsDir:  filepath.Join(stateDir, "debriefs"),
+		ConfigDir:     configDir,
+		StateDir:      stateDir,
+		CacheDir:      cacheDir,
+		ConfigPath:    filepath.Join(configDir, "config.toml"),
+		DBPath:        filepath.Join(stateDir, "cagent.db"),
+		PrivateDBPath: filepath.Join(stateDir, "cagent-private.db"),
+		JobsDir:       filepath.Join(stateDir, "jobs"),
+		RawDir:        filepath.Join(stateDir, "raw"),
+		TransfersDir:  filepath.Join(stateDir, "transfers"),
+		DebriefsDir:   filepath.Join(stateDir, "debriefs"),
 	}, nil
 }
 
 func (p Paths) WithStateDir(stateDir string) Paths {
 	p.StateDir = stateDir
 	p.DBPath = filepath.Join(stateDir, "cagent.db")
+	p.PrivateDBPath = filepath.Join(stateDir, "cagent-private.db")
 	p.JobsDir = filepath.Join(stateDir, "jobs")
 	p.RawDir = filepath.Join(stateDir, "raw")
 	p.TransfersDir = filepath.Join(stateDir, "transfers")
@@ -158,7 +161,7 @@ func ensureGitignore(stateDir string) {
 		return
 	}
 	defer f.Close()
-	_, _ = f.WriteString("\n# cagent local state — track DB, ignore artifacts\n.cagent/raw/\n.cagent/jobs/\n.cagent/transfers/\n.cagent/debriefs/\n.cagent/cagent.db-shm\n.cagent/cagent.db-wal\n")
+	_, _ = f.WriteString("\n# cagent local state — track public DB, ignore private DB and artifacts\n.cagent/raw/\n.cagent/jobs/\n.cagent/transfers/\n.cagent/debriefs/\n.cagent/cagent.db-shm\n.cagent/cagent.db-wal\n.cagent/cagent-private.db\n.cagent/cagent-private.db-shm\n.cagent/cagent-private.db-wal\n")
 }
 
 func resolveDir(override, xdgBase, home, fallbackBase string) (string, error) {
