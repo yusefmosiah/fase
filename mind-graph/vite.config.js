@@ -91,6 +91,59 @@ function cagentApiPlugin() {
         return
       }
 
+      // Bash command log from a job's raw session data
+      if (req.method === 'GET' && url.pathname === '/api/bash-log') {
+        const jobId = url.searchParams.get('job') || 'latest'
+        try {
+          const rawDir = path.join(targetRepo, '.cagent', 'raw', 'stdout')
+          let jobDir
+          if (jobId === 'latest') {
+            // Find the most recent job dir
+            const dirs = fs.readdirSync(rawDir).filter(d => d.startsWith('job_')).sort().reverse()
+            jobDir = dirs[0] ? path.join(rawDir, dirs[0]) : null
+          } else {
+            jobDir = path.join(rawDir, jobId)
+          }
+
+          if (!jobDir || !fs.existsSync(jobDir)) {
+            writeJSON(res, 200, { commands: [], job_id: jobId })
+            return
+          }
+
+          const files = fs.readdirSync(jobDir).filter(f => f.endsWith('.jsonl')).sort()
+          const commands = []
+          for (const f of files) {
+            const content = fs.readFileSync(path.join(jobDir, f), 'utf-8')
+            for (const line of content.split('\n')) {
+              if (!line.trim()) continue
+              try {
+                const ev = JSON.parse(line)
+                if (ev.type === 'item.completed' && ev.item?.type === 'command_execution') {
+                  let cmd = ev.item.command || ''
+                  if (cmd.startsWith('/bin/zsh -lc ')) {
+                    cmd = cmd.slice(13)
+                    if ((cmd.startsWith("'") && cmd.endsWith("'")) || (cmd.startsWith('"') && cmd.endsWith('"')))
+                      cmd = cmd.slice(1, -1)
+                  }
+                  commands.push({
+                    command: cmd,
+                    exit_code: ev.item.exit_code,
+                    output_preview: (ev.item.aggregated_output || '').slice(0, 500),
+                  })
+                } else if (ev.type === 'item.completed' && ev.item?.type === 'agent_message') {
+                  const text = (ev.item.text || '').slice(0, 300)
+                  if (text) commands.push({ comment: text })
+                }
+              } catch {}
+            }
+          }
+          writeJSON(res, 200, { commands, job_id: jobDir.split('/').pop() })
+        } catch (e) {
+          writeJSON(res, 200, { commands: [], error: e.message })
+        }
+        return
+      }
+
       if (req.method === 'GET' && url.pathname === '/api/work/items') {
         const payload = await runCagent(['work', 'list', '--limit', '500'])
         writeJSON(res, 200, payload)

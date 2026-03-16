@@ -916,6 +916,49 @@ document.getElementById("btn-diff")?.addEventListener("click", async () => {
   }
 });
 
+// ── Bash Log Button ─────────────────────────────────────────
+
+document.getElementById("btn-bash")?.addEventListener("click", async () => {
+  const panel = document.getElementById("detail-panel");
+  const canvasWrap = document.getElementById("canvas-wrap");
+  panel.classList.add("open");
+  canvasWrap.classList.add("has-detail");
+  resize();
+
+  document.getElementById("detail-kind").textContent = "EXECUTION";
+  document.getElementById("detail-title").textContent = "Bash Command Log";
+  document.getElementById("detail-meta").innerHTML = "";
+  document.getElementById("detail-body").innerHTML = '<div style="color:#555;padding:20px 0">loading...</div>';
+
+  focusId = null;
+  focusTarget = [0, 0];
+  renderSidebar();
+
+  try {
+    const res = await fetch("/api/bash-log?job=latest", { signal: AbortSignal.timeout(5000) });
+    if (res.ok) {
+      const { commands, job_id } = await res.json();
+      document.getElementById("detail-meta").innerHTML = `<span style="color:#555">${job_id || "?"}</span><span style="color:#555;margin-left:8px">${commands.length} entries</span>`;
+      let html = '<div style="font-family:\'SF Mono\',monospace;font-size:12px;line-height:1.5;">';
+      for (const entry of commands) {
+        if (entry.comment) {
+          html += `<div style="color:#555;padding:4px 0;font-style:italic"># ${escapeHtml(entry.comment)}</div>`;
+        } else {
+          const mark = entry.exit_code === 0 ? '<span style="color:#50b888">✓</span>' : '<span style="color:#d06060">✗</span>';
+          html += `<div style="padding:2px 0">${mark} <span style="color:#c4a060">$</span> <span style="color:#c8c0b8">${escapeHtml(entry.command)}</span></div>`;
+          if (entry.output_preview) {
+            html += `<div style="color:#555;padding:0 0 4px 20px;font-size:11px;white-space:pre-wrap;max-height:100px;overflow:hidden">${escapeHtml(entry.output_preview)}</div>`;
+          }
+        }
+      }
+      html += '</div>';
+      document.getElementById("detail-body").innerHTML = html || '<div style="color:#555">No commands recorded.</div>';
+    }
+  } catch (e) {
+    document.getElementById("detail-body").innerHTML = '<div style="color:#d06060">Failed to load bash log.</div>';
+  }
+});
+
 // ── Filters ─────────────────────────────────────────────────
 
 document.querySelectorAll(".filter-btn").forEach(btn => {
