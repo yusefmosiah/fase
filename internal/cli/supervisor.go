@@ -367,6 +367,9 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 		_ = svc.Close()
 		emit(report)
 
+		// Write supervisor state for `cagent status` and mind-graph
+		writeSupState(cwd, cycle, inFlight, report)
+
 		if opts.dryRun {
 			return nil
 		}
@@ -447,6 +450,56 @@ func pickAdapter(item core.WorkItemRecord, defaultAdapter string) string {
 		return item.PreferredAdapters[0]
 	}
 	return defaultAdapter
+}
+
+type supervisorState struct {
+	PID       int                      `json:"pid"`
+	Cycle     int                      `json:"cycle"`
+	Timestamp string                   `json:"timestamp"`
+	Uptime    string                   `json:"uptime,omitempty"`
+	InFlight  []inFlightState          `json:"in_flight"`
+	Ready     int                      `json:"ready"`
+	Report    supervisorCycleReport    `json:"last_report"`
+}
+
+type inFlightState struct {
+	WorkID  string `json:"work_id"`
+	JobID   string `json:"job_id"`
+	Adapter string `json:"adapter"`
+	Elapsed string `json:"elapsed"`
+}
+
+var supervisorStart = time.Now()
+
+func writeSupState(cwd string, cycle int, inFlight map[string]*inFlightJob, report supervisorCycleReport) {
+	stateDir := filepath.Join(cwd, ".cagent")
+	_ = os.MkdirAll(stateDir, 0o755)
+
+	flights := make([]inFlightState, 0, len(inFlight))
+	for _, f := range inFlight {
+		flights = append(flights, inFlightState{
+			WorkID:  f.workID,
+			JobID:   f.jobID,
+			Adapter: f.adapter,
+			Elapsed: time.Since(f.started).Truncate(time.Second).String(),
+		})
+	}
+
+	state := supervisorState{
+		PID:       os.Getpid(),
+		Cycle:     cycle,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Uptime:    time.Since(supervisorStart).Truncate(time.Second).String(),
+		InFlight:  flights,
+		Ready:     report.Ready,
+		Report:    report,
+	}
+
+	data, err := json.MarshalIndent(state, "", "  ")
+	if err != nil {
+		return
+	}
+	_ = os.WriteFile(filepath.Join(stateDir, "supervisor.json"), data, 0o644)
 }
 
 func sleepOrStop(ctx context.Context, d time.Duration, sigCh chan os.Signal, stopping *bool) {

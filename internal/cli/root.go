@@ -280,6 +280,7 @@ func NewRootCommand() *cobra.Command {
 		newInboxCommand(opts),
 		newReconcileCommand(opts),
 		newSupervisorCommand(opts),
+		newDashboardCommand(opts),
 		newVersionCommand(),
 	)
 
@@ -2115,6 +2116,95 @@ func newReconcileCommand(root *rootOptions) *cobra.Command {
 			for _, id := range ids {
 				cmd.Printf("  %s\n", id)
 			}
+			return nil
+		},
+	}
+}
+
+func newDashboardCommand(root *rootOptions) *cobra.Command {
+	return &cobra.Command{
+		Use:     "dashboard",
+		Aliases: []string{"dash"},
+		Short:   "Show live supervisor and work graph status",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+
+			// Read supervisor state
+			supPath := svc.Paths.StateDir + "/supervisor.json"
+			supData, _ := os.ReadFile(supPath)
+
+			// Get work stats
+			allWork, err := svc.ListWork(context.Background(), service.WorkListRequest{Limit: 500})
+			if err != nil {
+				return mapServiceError(err)
+			}
+
+			states := map[string]int{}
+			for _, w := range allWork {
+				states[string(w.ExecutionState)]++
+			}
+
+			if root.jsonOutput {
+				result := map[string]any{
+					"work_states": states,
+					"total_items": len(allWork),
+				}
+				if len(supData) > 0 {
+					var sup map[string]any
+					if json.Unmarshal(supData, &sup) == nil {
+						result["supervisor"] = sup
+					}
+				}
+				return writeJSON(cmd.OutOrStdout(), result)
+			}
+
+			// Human-readable output
+			if len(supData) > 0 {
+				var sup struct {
+					PID     int    `json:"pid"`
+					Cycle   int    `json:"cycle"`
+					Uptime  string `json:"uptime"`
+					Ready   int    `json:"ready"`
+					InFlight []struct {
+						WorkID  string `json:"work_id"`
+						JobID   string `json:"job_id"`
+						Adapter string `json:"adapter"`
+						Elapsed string `json:"elapsed"`
+					} `json:"in_flight"`
+				}
+				if json.Unmarshal(supData, &sup) == nil {
+					fmt.Fprintf(cmd.OutOrStdout(), "SUPERVISOR: pid %d, cycle %d, uptime %s\n", sup.PID, sup.Cycle, sup.Uptime)
+					if len(sup.InFlight) > 0 {
+						fmt.Fprintln(cmd.OutOrStdout(), "IN-FLIGHT:")
+						for _, f := range sup.InFlight {
+							// Find title from work list
+							title := f.WorkID
+							for _, w := range allWork {
+								if w.WorkID == f.WorkID {
+									title = w.Title
+									break
+								}
+							}
+							fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s, %s)\n", title, f.Adapter, f.Elapsed)
+						}
+					}
+				}
+			} else {
+				fmt.Fprintln(cmd.OutOrStdout(), "SUPERVISOR: not running")
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "WORK: %d total", len(allWork))
+			for _, s := range []string{"ready", "claimed", "running", "blocked", "done", "completed", "failed"} {
+				if c, ok := states[s]; ok && c > 0 {
+					fmt.Fprintf(cmd.OutOrStdout(), ", %d %s", c, s)
+				}
+			}
+			fmt.Fprintln(cmd.OutOrStdout())
+
 			return nil
 		},
 	}
