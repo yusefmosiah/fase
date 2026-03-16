@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -2177,20 +2178,33 @@ func newDashboardCommand(root *rootOptions) *cobra.Command {
 					} `json:"in_flight"`
 				}
 				if json.Unmarshal(supData, &sup) == nil {
-					fmt.Fprintf(cmd.OutOrStdout(), "SUPERVISOR: pid %d, cycle %d, uptime %s\n", sup.PID, sup.Cycle, sup.Uptime)
-					if len(sup.InFlight) > 0 {
-						fmt.Fprintln(cmd.OutOrStdout(), "IN-FLIGHT:")
-						for _, f := range sup.InFlight {
-							// Find title from work list
-							title := f.WorkID
-							for _, w := range allWork {
-								if w.WorkID == f.WorkID {
-									title = w.Title
-									break
-								}
-							}
-							fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s, %s)\n", title, f.Adapter, f.Elapsed)
+					// Check if the PID is actually alive
+					alive := false
+					if sup.PID > 0 {
+						// Check /proc on Linux, kill -0 on macOS
+						if _, err := os.Stat(fmt.Sprintf("/proc/%d", sup.PID)); err == nil {
+							alive = true
+						} else if proc, err := os.FindProcess(sup.PID); err == nil {
+							alive = proc.Signal(syscall.Signal(0)) == nil
 						}
+					}
+					if alive {
+						fmt.Fprintf(cmd.OutOrStdout(), "SUPERVISOR: pid %d, cycle %d, uptime %s\n", sup.PID, sup.Cycle, sup.Uptime)
+						if len(sup.InFlight) > 0 {
+							fmt.Fprintln(cmd.OutOrStdout(), "IN-FLIGHT:")
+							for _, f := range sup.InFlight {
+								title := f.WorkID
+								for _, w := range allWork {
+									if w.WorkID == f.WorkID {
+										title = w.Title
+										break
+									}
+								}
+								fmt.Fprintf(cmd.OutOrStdout(), "  %s (%s, %s)\n", title, f.Adapter, f.Elapsed)
+							}
+						}
+					} else {
+						fmt.Fprintln(cmd.OutOrStdout(), "SUPERVISOR: not running (stale state)")
 					}
 				}
 			} else {
