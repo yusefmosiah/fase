@@ -271,12 +271,12 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 					Status: status,
 				})
 				delete(inFlight, workID)
-			} else if time.Since(flight.started) > 30*time.Minute {
-				// Job timeout — force fail if running too long
+			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
+				// No new events for 10 minutes — job is stuck
 				_, updateErr := svc.UpdateWork(ctx, service.WorkUpdateRequest{
 					WorkID:         workID,
 					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        fmt.Sprintf("supervisor: job %s timed out after %s", flight.jobID, time.Since(flight.started).Truncate(time.Second)),
+					Message:        fmt.Sprintf("supervisor: job %s stalled (no output for 10m, started %s ago)", flight.jobID, time.Since(flight.started).Truncate(time.Second)),
 					CreatedBy:      "supervisor",
 				})
 				if updateErr != nil && !jsonOutput {
@@ -515,6 +515,32 @@ func isTerminal(state string) bool {
 		return true
 	}
 	return false
+}
+
+// isJobStalled checks if a job has produced no new output for the given duration.
+// It looks at the modification time of the newest JSONL file in the job's raw stdout dir.
+func isJobStalled(jobRawDir string, threshold time.Duration) bool {
+	entries, err := os.ReadDir(jobRawDir)
+	if err != nil {
+		return false // can't determine, assume not stalled
+	}
+	var newest time.Time
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		info, err := e.Info()
+		if err != nil {
+			continue
+		}
+		if info.ModTime().After(newest) {
+			newest = info.ModTime()
+		}
+	}
+	if newest.IsZero() {
+		return false // no files yet, job might just be starting
+	}
+	return time.Since(newest) > threshold
 }
 
 func pickAdapter(item core.WorkItemRecord, defaultAdapter string) string {

@@ -528,11 +528,12 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 					handleJobCompletion(ctx, svc, selfBin, root.configPath, cwd, workID, flight, defaultAdapter)
 				}
 				delete(inFlight, workID)
-			} else if time.Since(flight.started) > 30*time.Minute {
+			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
+				// No new events for 10 minutes — job is stuck
 				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 					WorkID:         workID,
 					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        fmt.Sprintf("supervisor: job %s timed out", flight.jobID),
+					Message:        fmt.Sprintf("supervisor: job %s stalled (no output for 10m)", flight.jobID),
 					CreatedBy:      "supervisor",
 				})
 				delete(inFlight, workID)
