@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -15,6 +16,8 @@ type WorkVerifyResult struct {
 	Work         core.WorkItemRecord           `json:"work"`
 	Commit       WorkVerifyCommitResult        `json:"commit,omitempty"`
 	Attestations []WorkVerifyAttestationResult `json:"attestations,omitempty"`
+	Agents       []WorkVerifyAgentResult       `json:"agents,omitempty"`
+	CATrust      *WorkVerifyCATrustResult      `json:"ca_trust,omitempty"`
 	Verdict      string                        `json:"verdict"`
 	Issues       []string                      `json:"issues,omitempty"`
 	VerifiedAt   time.Time                     `json:"verified_at"`
@@ -36,6 +39,22 @@ type WorkVerifyAttestationResult struct {
 	SignatureStatus string `json:"signature_status"`
 	SignerStatus    string `json:"signer_status"`
 	MetadataStatus  string `json:"metadata_status,omitempty"`
+}
+
+type WorkVerifyAgentResult struct {
+	JobID          string `json:"job_id"`
+	Adapter        string `json:"adapter,omitempty"`
+	TokenStatus    string `json:"token_status"`
+	SignatureValid bool   `json:"signature_valid,omitempty"`
+	Role           string `json:"role,omitempty"`
+	Expiry         string `json:"expiry,omitempty"`
+	Reason         string `json:"reason,omitempty"`
+}
+
+type WorkVerifyCATrustResult struct {
+	TrustRoot string `json:"trust_root"`
+	Status    string `json:"status"`
+	Reason    string `json:"reason,omitempty"`
 }
 
 func (s *Service) VerifyWork(ctx context.Context, workID string) (*WorkVerifyResult, error) {
@@ -62,12 +81,77 @@ func (s *Service) VerifyWork(ctx context.Context, workID string) (*WorkVerifyRes
 		VerifiedAt: time.Now().UTC(),
 	}
 
+	ca, caErr := core.EnsureCA(s.Paths.StateDir)
+	if caErr != nil {
+		report.CATrust = &WorkVerifyCATrustResult{
+			Status: "unavailable",
+			Reason: caErr.Error(),
+		}
+		report.Issues = append(report.Issues, "CA trust root unavailable: "+caErr.Error())
+	} else {
+		pubFingerprint := fmt.Sprintf("ed25519:%x", ca.PublicKey[:8])
+		report.CATrust = &WorkVerifyCATrustResult{
+			TrustRoot: pubFingerprint,
+			Status:    "loaded",
+		}
+	}
+
 	if work.HeadCommitOID != "" {
 		repoPath := verifyRepoPath(jobs)
 		report.Commit = verifyCommit(ctx, repoPath, work.HeadCommitOID)
 		if report.Commit.Status != "valid" {
 			report.Issues = append(report.Issues, fmt.Sprintf("commit %s: %s", work.HeadCommitOID, report.Commit.Status))
 		}
+	}
+
+	for _, job := range jobs {
+		agent := WorkVerifyAgentResult{
+			JobID:   job.JobID,
+			Adapter: job.Adapter,
+		}
+		tokenPath := os.Getenv(core.EnvAgentToken)
+		if tokenPath == "" && job.JobID != "" {
+			agent.TokenStatus = "legacy"
+			agent.Reason = "no token found (pre-Phase-1 job)"
+			report.Agents = append(report.Agents, agent)
+			continue
+		}
+		if ca == nil {
+			agent.TokenStatus = "unverified"
+			agent.Reason = "CA unavailable"
+			report.Agents = append(report.Agents, agent)
+			continue
+		}
+		token, tokenErr := loadVerifyToken(tokenPath)
+		if tokenErr != nil {
+			agent.TokenStatus = "unavailable"
+			agent.Reason = tokenErr.Error()
+			report.Agents = append(report.Agents, agent)
+			continue
+		}
+		if token == nil {
+			agent.TokenStatus = "missing"
+			agent.Reason = "CAGENT_AGENT_TOKEN not set"
+			report.Agents = append(report.Agents, agent)
+			continue
+		}
+		result := core.VerifyToken(token, ca.PublicKey)
+		if result.Valid {
+			agent.TokenStatus = "verified"
+			agent.SignatureValid = true
+			agent.Role = result.Role
+			agent.Expiry = result.ExpAt
+			if token.Expired() {
+				agent.TokenStatus = "expired"
+				agent.SignatureValid = false
+				report.Issues = append(report.Issues, fmt.Sprintf("job %s: token expired at %s", job.JobID, result.ExpAt))
+			}
+		} else {
+			agent.TokenStatus = "invalid"
+			agent.Reason = result.Reason
+			report.Issues = append(report.Issues, fmt.Sprintf("job %s: token signature invalid: %s", job.JobID, result.Reason))
+		}
+		report.Agents = append(report.Agents, agent)
 	}
 
 	sawSignatureData := false
@@ -110,6 +194,21 @@ func (s *Service) VerifyWork(ctx context.Context, workID string) (*WorkVerifyRes
 	}
 
 	return report, nil
+}
+
+func loadVerifyToken(path string) (*core.CapabilityToken, error) {
+	if strings.TrimSpace(path) == "" {
+		return nil, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read token file: %w", err)
+	}
+	var cred core.AgentCredential
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return nil, fmt.Errorf("parse token file: %w", err)
+	}
+	return &cred.Token, nil
 }
 
 func verifyRepoPath(jobs []core.JobRecord) string {

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -21,6 +22,8 @@ const (
 	CapWorkEdgeAdd = "work:edge-add"
 	CapWorkApprove = "work:approve"
 	CapWorkReject  = "work:reject"
+
+	EnvAgentToken = "CAGENT_AGENT_TOKEN"
 )
 
 // CapabilityEnforcementMode controls whether violations block or only warn.
@@ -299,6 +302,100 @@ func WriteTokenFile(stateDir string, tf *TokenFile) (string, error) {
 		return "", fmt.Errorf("close token file: %w", err)
 	}
 	return f.Name(), nil
+}
+
+// ─── Token verification ────────────────────────────────────────────────────────
+
+// VerifyTokenResult describes the outcome of token signature verification.
+type VerifyTokenResult struct {
+	Valid    bool   `json:"valid"`
+	Reason   string `json:"reason,omitempty"`
+	Role     string `json:"role,omitempty"`
+	JobID    string `json:"job_id,omitempty"`
+	WorkID   string `json:"work_id,omitempty"`
+	ExpAt    string `json:"expires_at,omitempty"`
+	CapCount int    `json:"capability_count"`
+}
+
+// VerifyToken checks that the token's Ed25519 signature was produced by the
+// given CA public key. It does NOT check expiry — callers should check
+// token.Expired() separately if needed.
+func VerifyToken(token *CapabilityToken, caPub ed25519.PublicKey) VerifyTokenResult {
+	if token == nil {
+		return VerifyTokenResult{Reason: "nil token"}
+	}
+	if caPub == nil {
+		return VerifyTokenResult{Reason: "nil CA public key"}
+	}
+
+	signable := token.Signable()
+	payload, err := json.Marshal(signable)
+	if err != nil {
+		return VerifyTokenResult{Reason: "marshal signable: " + err.Error()}
+	}
+
+	sigBytes, err := base64.StdEncoding.DecodeString(token.Signature)
+	if err != nil {
+		return VerifyTokenResult{Reason: "decode signature: " + err.Error()}
+	}
+
+	if !ed25519.Verify(caPub, payload, sigBytes) {
+		return VerifyTokenResult{
+			Reason:   "signature mismatch",
+			Role:     token.Subject.Role,
+			JobID:    token.Subject.JobID,
+			WorkID:   token.Subject.WorkID,
+			ExpAt:    token.ExpiresAt,
+			CapCount: len(token.Capabilities),
+		}
+	}
+
+	return VerifyTokenResult{
+		Valid:    true,
+		Role:     token.Subject.Role,
+		JobID:    token.Subject.JobID,
+		WorkID:   token.Subject.WorkID,
+		ExpAt:    token.ExpiresAt,
+		CapCount: len(token.Capabilities),
+	}
+}
+
+// CanonicalJSON serialises v to a deterministic JSON byte slice suitable for
+// cryptographic signing. It uses json.Marshal (which sorts struct fields) and
+// strips trailing whitespace. For struct types this is stable; for map types
+// the caller MUST convert to a sorted representation first — Go randomises
+// map iteration order, so json.Marshal on maps is non-deterministic.
+func CanonicalJSON(v any) ([]byte, error) {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return nil, err
+	}
+	return bytes.TrimSpace(data), nil
+}
+
+// SignJSON signs a canonical JSON serialisation of v using privKey.
+// Returns the base64-encoded Ed25519 signature.
+func SignJSON(v any, privKey ed25519.PrivateKey) (string, error) {
+	payload, err := CanonicalJSON(v)
+	if err != nil {
+		return "", fmt.Errorf("canonical json: %w", err)
+	}
+	sig := ed25519.Sign(privKey, payload)
+	return base64.StdEncoding.EncodeToString(sig), nil
+}
+
+// VerifyJSONSignature checks that sig (base64 Ed25519) is a valid signature
+// over the canonical JSON of v, produced by pubKey.
+func VerifyJSONSignature(v any, sig string, pubKey ed25519.PublicKey) bool {
+	payload, err := CanonicalJSON(v)
+	if err != nil {
+		return false
+	}
+	sigBytes, err := base64.StdEncoding.DecodeString(sig)
+	if err != nil {
+		return false
+	}
+	return ed25519.Verify(pubKey, payload, sigBytes)
 }
 
 // SweepStaleTokenFiles removes token files in stateDir/tokens/ older than maxAge.

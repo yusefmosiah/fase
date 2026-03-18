@@ -331,6 +331,9 @@ func newBootstrapCommand(root *rootOptions) *cobra.Command {
 		Use:   "create",
 		Short: "Create a root work item from discovered code/docs entrypoints",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkCreate); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -912,6 +915,9 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Use:   "create",
 		Short: "Create a work item",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkCreate); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1181,6 +1187,9 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Append a structured work update and mutate current work state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkUpdate); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1316,6 +1325,9 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Append a note to a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkNoteAdd); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1366,6 +1378,9 @@ If no work-id is given, auto-creates a work item from the doc content.
 This guarantees every doc has a corresponding work item.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkCreate); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1442,6 +1457,9 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Create a discovery proposal from a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkCreate); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1466,6 +1484,9 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Record an attestation for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkAttest); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1518,6 +1539,11 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Verify the recorded work graph and artifact chain for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			if dryRun {
+				report := previewCapabilities()
+				return writeJSON(cmd.OutOrStdout(), report)
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1530,6 +1556,8 @@ This guarantees every doc has a corresponding work item.`,
 			return renderVerification(cmd, root.jsonOutput, result)
 		},
 	}
+
+	verifyCmd.Flags().Bool("dry-run", false, "show capability token preview without verifying a work item")
 
 	lockCmd := &cobra.Command{
 		Use:   "lock <work-id>",
@@ -1572,6 +1600,9 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Approve a work item after required attestations pass",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkApprove); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1591,6 +1622,9 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Reject a work item during approval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkReject); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1833,6 +1867,9 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Add a blocking edge (from blocks to)",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := checkCapability(core.CapWorkEdgeAdd); err != nil {
+				return err
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err

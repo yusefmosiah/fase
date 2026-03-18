@@ -29,6 +29,7 @@ type supervisorLoop struct {
 	dryRun             bool
 	budget             *dailyUsage    // nil = no budget limits
 	limits             map[string]int // adapter/model -> max runs/day
+	ca                 *supervisorCA  // nil = no capability tokens issued
 
 	// Optional event hooks (nil = no-op).
 	onJobStarted   func(workID, jobID, adapter string) // called after successful dispatch
@@ -147,6 +148,7 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 			JobID:  c.flight.jobID,
 			Status: c.state,
 		})
+		removeCredentialFile(c.flight.tokenPath)
 		if l.onJobCompleted != nil {
 			l.onJobCompleted(c.workID, c.flight.jobID, c.state)
 		}
@@ -221,8 +223,22 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 		}
 
 		briefingJSON, _ := json.Marshal(briefing)
-		jobID, spawnErr := spawnRun(l.selfBin, l.configPath, adapter, model, l.cwd, string(briefingJSON))
+
+		var extraEnv []string
+		var tokenPath string
+		if l.ca != nil {
+			tokenPath = l.ca.issueAndWriteCredential(
+				filepath.Join(l.cwd, ".cagent"), "",
+				claimed.WorkID, "worker", adapter, model, 0,
+			)
+			if tokenPath != "" {
+				extraEnv = []string{core.EnvAgentToken + "=" + tokenPath}
+			}
+		}
+
+		jobID, spawnErr := spawnRun(l.selfBin, l.configPath, adapter, model, l.cwd, string(briefingJSON), extraEnv)
 		if spawnErr != nil {
+			removeCredentialFile(tokenPath)
 			_, _ = svc.ReleaseWork(ctx, service.WorkReleaseRequest{WorkID: claimed.WorkID, Claimant: "supervisor"})
 			continue
 		}
@@ -239,6 +255,7 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 			model:     model,
 			started:   time.Now(),
 			leaseNext: time.Now().Add(l.leaseRenewInterval),
+			tokenPath: tokenPath,
 		}
 		l.mu.Unlock()
 
@@ -270,6 +287,7 @@ func (l *supervisorLoop) cancelInFlight(ctx context.Context, svc *service.Servic
 			Message:        fmt.Sprintf("supervisor: job %s cancelled during shutdown", flight.jobID),
 			CreatedBy:      "supervisor",
 		})
+		removeCredentialFile(flight.tokenPath)
 	}
 }
 

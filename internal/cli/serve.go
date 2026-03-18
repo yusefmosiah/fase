@@ -1434,6 +1434,15 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		selfBin = "cagent"
 	}
 
+	stateDir := filepath.Join(cwd, ".cagent")
+	ca, caErr := loadOrCreateCA(stateDir)
+	if caErr != nil {
+		fmt.Fprintf(os.Stderr, "supervisor: capability CA init failed (tokens disabled): %v\n", caErr)
+	}
+	if ca != nil {
+		sweepStaleTokenFiles(stateDir, 2*time.Hour)
+	}
+
 	// Load config for budget-aware rotation and apply to the package-level pool.
 	cfg, _ := core.LoadConfig(root.configPath)
 	if len(cfg.Rotation.Entries) > 0 {
@@ -1441,6 +1450,7 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 	}
 
 	loop := newSupervisorLoop(maxConcurrent, cwd, selfBin, root.configPath)
+	loop.ca = ca
 	if loopOut != nil {
 		*loopOut = loop
 	}

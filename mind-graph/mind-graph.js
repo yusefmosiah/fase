@@ -1671,8 +1671,7 @@ async function pollSupervisor() {
   } catch (e) { /* optional */ }
 }
 
-setInterval(pollSupervisor, 5000);
-pollSupervisor();
+pollSupervisor(); // initial fetch; subsequent updates via WebSocket
 
 // ── Diff Button ─────────────────────────────────────────────
 
@@ -1782,6 +1781,7 @@ function connectWebSocket() {
       const msg = JSON.parse(ev.data);
       if (msg.type) {
         refresh();
+        pollSupervisor();
       }
     } catch (e) { /* ignore malformed frames */ }
   };

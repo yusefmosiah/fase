@@ -138,6 +138,7 @@ type inFlightJob struct {
 	leaseNext    time.Time // when to renew the lease
 	worktreePath string    // absolute path to git worktree (empty if not using worktrees)
 	branchName   string    // git branch name for this job's worktree
+	tokenPath    string    // path to the issued capability token file
 }
 
 type supervisorCycleReport struct {
@@ -310,12 +311,21 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	stateDir := filepath.Join(cwd, ".cagent")
 	budget := newDailyUsage(stateDir)
 
+	ca, caErr := loadOrCreateCA(stateDir)
+	if caErr != nil {
+		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: capability CA init failed (tokens disabled): %v\n", caErr)
+	}
+	if ca != nil {
+		sweepStaleTokenFiles(stateDir, 2*time.Hour)
+	}
+
 	jsonOutput := root.jsonOutput
 
 	loop := newSupervisorLoop(opts.maxConcurrent, cwd, selfBin, root.configPath)
 	loop.dryRun = opts.dryRun
 	loop.budget = budget
 	loop.limits = buildLimitsMap(cfg)
+	loop.ca = ca
 
 	emit := func(report supervisorCycleReport) {
 		if jsonOutput {
@@ -427,7 +437,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 // We still set Setpgid on the `cagent run` command itself so it doesn't receive
 // signals meant for the supervisor's terminal session (e.g., Ctrl+C) before we
 // get a chance to do orderly cleanup.
-func spawnRun(bin, configPath, adapter, model, cwd, prompt string) (string, error) {
+func spawnRun(bin, configPath, adapter, model, cwd, prompt string, extraEnv []string) (string, error) {
 	args := []string{"run", "--json", "--adapter", adapter, "--cwd", cwd, "--prompt", prompt}
 	if model != "" {
 		args = append(args, "--model", model)
@@ -440,6 +450,9 @@ func spawnRun(bin, configPath, adapter, model, cwd, prompt string) (string, erro
 	runCmd.Dir = cwd // ensure cagent resolves .cagent/ from the target repo
 	runCmd.Stderr = nil
 	runCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	if len(extraEnv) > 0 {
+		runCmd.Env = append(os.Environ(), extraEnv...)
+	}
 	out, err := runCmd.Output()
 	if err != nil {
 		return "", fmt.Errorf("cagent run failed: %w", err)

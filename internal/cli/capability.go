@@ -11,9 +11,6 @@ import (
 )
 
 const (
-	// EnvAgentToken is the environment variable containing the path to the agent credential file.
-	EnvAgentToken = "CAGENT_AGENT_TOKEN"
-
 	// EnvCapabilityEnforcement controls audit vs enforce mode.
 	// Values: "audit" (default) or "enforce".
 	EnvCapabilityEnforcement = "CAGENT_CAPABILITY_ENFORCEMENT"
@@ -45,7 +42,7 @@ func allCapabilities() []string {
 // Returns (nil, nil) if the env var is not set (no token configured).
 // Returns (nil, err) if the env var is set but the file is unreadable or malformed.
 func loadAgentToken() (*core.CapabilityToken, error) {
-	path := strings.TrimSpace(os.Getenv(EnvAgentToken))
+	path := strings.TrimSpace(os.Getenv(core.EnvAgentToken))
 	if path == "" {
 		return nil, nil
 	}
@@ -106,7 +103,7 @@ func checkCapability(capability string) error {
 		// No token present. In audit mode this is fine (agent may pre-date Phase 0).
 		// In enforce mode it is an error.
 		if capabilityEnforcementMode() == core.CapabilityEnforcementEnforce {
-			return fmt.Errorf("capability enforcement active: no token found (%s not set)", EnvAgentToken)
+			return fmt.Errorf("capability enforcement active: no token found (%s not set)", core.EnvAgentToken)
 		}
 		// Audit: do not log a violation for missing tokens — that would spam every
 		// interactive operator command. Violations are only logged when a token IS

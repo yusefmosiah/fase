@@ -13,7 +13,7 @@ import (
 
 func TestRequireCapabilitiesDefaultsToAudit(t *testing.T) {
 	t.Setenv(EnvCapabilityEnforcement, "")
-	t.Setenv(EnvAgentToken, "")
+	t.Setenv(core.EnvAgentToken, "")
 
 	if err := requireCapabilities(core.CapWorkUpdate); err != nil {
 		t.Fatalf("requireCapabilities returned error in audit mode: %v", err)
@@ -22,7 +22,7 @@ func TestRequireCapabilitiesDefaultsToAudit(t *testing.T) {
 
 func TestRequireCapabilitiesEnforceModeFailsWithoutToken(t *testing.T) {
 	t.Setenv(EnvCapabilityEnforcement, string(core.CapabilityEnforcementEnforce))
-	t.Setenv(EnvAgentToken, "")
+	t.Setenv(core.EnvAgentToken, "")
 
 	if err := requireCapabilities(core.CapWorkUpdate); err == nil {
 		t.Fatal("requireCapabilities returned nil in enforce mode without a token")
@@ -38,7 +38,7 @@ func TestPreviewCapabilitiesWithWorkerToken(t *testing.T) {
 		Model:   "gpt-5.4-mini",
 	}, []string{core.CapWorkUpdate, core.CapWorkNoteAdd})
 
-	t.Setenv(EnvAgentToken, tokenPath)
+	t.Setenv(core.EnvAgentToken, tokenPath)
 	t.Setenv(EnvCapabilityEnforcement, string(core.CapabilityEnforcementAudit))
 
 	report := previewCapabilities()
@@ -63,7 +63,7 @@ func TestPreviewCapabilitiesWithWorkerToken(t *testing.T) {
 }
 
 func TestPreviewCapabilitiesMissingToken(t *testing.T) {
-	t.Setenv(EnvAgentToken, "")
+	t.Setenv(core.EnvAgentToken, "")
 	t.Setenv(EnvCapabilityEnforcement, string(core.CapabilityEnforcementAudit))
 
 	report := previewCapabilities()
