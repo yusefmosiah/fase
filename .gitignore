@@ -32,3 +32,10 @@ work_seed/
 .cagent/cagent-private.db
 .cagent/cagent-private.db-shm
 .cagent/cagent-private.db-wal
+.cagent/ca.key
+.cagent/ca.pub
+.cagent/tokens/
+.cagent/agent-credential-*
+.cagent/cagent.db.corrupt
+.cagent/cagent.db.new
+.cagent/usage.json

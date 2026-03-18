@@ -1282,30 +1282,30 @@ func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, err
 	}, nil
 }
 
-func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (WorkHydrateResult, error) {
-	if req.Debrief {
-		return nil, fmt.Errorf("%w: debrief hydration is not implemented yet", ErrUnsupported)
-	}
-	mode := strings.TrimSpace(req.Mode)
+// CompileWorkerBriefing deterministically compiles a worker briefing from
+// runtime state. This is the adapter-independent hydration contract — all
+// adapters consume the same compiled briefing.
+func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string) (WorkHydrateResult, error) {
+	mode = strings.TrimSpace(mode)
 	if mode == "" {
 		mode = "standard"
 	}
 	if mode != "thin" && mode != "standard" && mode != "deep" {
 		return nil, fmt.Errorf("%w: hydrate mode must be thin, standard, or deep", ErrInvalidInput)
 	}
-	result, err := s.Work(ctx, req.WorkID)
+	result, err := s.Work(ctx, workID)
 	if err != nil {
 		return nil, err
 	}
 
-	parent, _ := s.firstRelatedWork(ctx, req.WorkID, "parent_of", false)
-	blockingInbound, _ := s.relatedWork(ctx, req.WorkID, "blocks", false, 25)
-	blockingOutbound, _ := s.relatedWork(ctx, req.WorkID, "blocks", true, 25)
-	children, _ := s.relatedWork(ctx, req.WorkID, "parent_of", true, 25)
-	verifierNodes, _ := s.relatedWork(ctx, req.WorkID, "verifier", false, 25)
-	discoveredNodes, _ := s.relatedWork(ctx, req.WorkID, "discovered_from", false, 25)
-	supersedes, _ := s.relatedWork(ctx, req.WorkID, "supersedes", true, 25)
-	supersededBy, _ := s.relatedWork(ctx, req.WorkID, "supersedes", false, 25)
+	parent, _ := s.firstRelatedWork(ctx, workID, "parent_of", false)
+	blockingInbound, _ := s.relatedWork(ctx, workID, "blocks", false, 25)
+	blockingOutbound, _ := s.relatedWork(ctx, workID, "blocks", true, 25)
+	children, _ := s.relatedWork(ctx, workID, "parent_of", true, 25)
+	verifierNodes, _ := s.relatedWork(ctx, workID, "verifier", false, 25)
+	discoveredNodes, _ := s.relatedWork(ctx, workID, "discovered_from", false, 25)
+	supersedes, _ := s.relatedWork(ctx, workID, "supersedes", true, 25)
+	supersededBy, _ := s.relatedWork(ctx, workID, "supersedes", false, 25)
 
 	updateLimit, noteLimit, attestationLimit, artifactLimit, jobLimit := hydrationLimits(mode)
 	updates := result.Updates
@@ -1352,7 +1352,7 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 		"config_path":     s.ConfigPath,
 		"state_dir":       s.Paths.StateDir,
 	}
-	if claimant := firstNonEmpty(req.Claimant, result.Work.ClaimedBy); claimant != "" {
+	if claimant := firstNonEmpty(result.Work.ClaimedBy); claimant != "" {
 		runtimeSection["claimant"] = claimant
 	}
 
@@ -1408,8 +1408,8 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 			"verifier_nodes":    workRefs(verifierNodes),
 			"discovered_nodes":  workRefs(discoveredNodes),
 			"supersession": map[string]any{
-				"supersedes":    workRefs(supersedes),
-				"superseded_by": workRefs(supersededBy),
+				"supersedes":      workRefs(supersedes),
+				"supersededed_by": workRefs(supersededBy),
 			},
 		},
 		"evidence": map[string]any{
@@ -1448,6 +1448,22 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 			"recommended_next_actions": nextActions,
 		},
 	}, nil
+}
+
+func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (WorkHydrateResult, error) {
+	if req.Debrief {
+		return nil, fmt.Errorf("%w: debrief hydration is not implemented yet", ErrUnsupported)
+	}
+	briefing, err := s.CompileWorkerBriefing(ctx, req.WorkID, req.Mode)
+	if err != nil {
+		return nil, err
+	}
+	if claimant := firstNonEmpty(req.Claimant); claimant != "" {
+		if runtimeSection, ok := briefing["runtime"].(map[string]any); ok {
+			runtimeSection["claimant"] = claimant
+		}
+	}
+	return briefing, nil
 }
 
 // ReconcileExpiredLeases releases work items whose lease has expired.
@@ -4347,6 +4363,60 @@ func (s *Service) validateParentEdge(ctx context.Context, parentID, childID stri
 		current = edges[0].FromWorkID
 	}
 	return nil
+}
+
+// RootWorkID walks parent edges from the given work item to find the root.
+// Returns the workID of the root (the work item with no parent), or the
+// input workID if it has no parent edge.
+func (s *Service) RootWorkID(ctx context.Context, workID string) (string, error) {
+	current := workID
+	seen := map[string]bool{current: true}
+	for {
+		edges, err := s.store.ListWorkEdges(ctx, 2, "parent_of", "", current)
+		if err != nil {
+			return workID, err
+		}
+		if len(edges) == 0 {
+			return current, nil
+		}
+		parentID := edges[0].FromWorkID
+		if seen[parentID] {
+			return current, nil
+		}
+		seen[parentID] = true
+		current = parentID
+	}
+}
+
+// ActiveRootWorkIDs returns the set of root work IDs that have at least one
+// active (claimed or in_progress) work item in their subtree.
+func (s *Service) ActiveRootWorkIDs(ctx context.Context) (map[string]bool, error) {
+	items, err := s.store.ListWorkItems(ctx, 10000, "", "", "", false)
+	if err != nil {
+		return nil, err
+	}
+	activeRoots := map[string]bool{}
+	for _, item := range items {
+		if item.ExecutionState != core.WorkExecutionStateClaimed && item.ExecutionState != core.WorkExecutionStateInProgress {
+			continue
+		}
+		rootID, rootErr := s.RootWorkID(ctx, item.WorkID)
+		if rootErr != nil {
+			continue
+		}
+		activeRoots[rootID] = true
+	}
+	return activeRoots, nil
+}
+
+// CountActiveRoots returns the number of distinct root work items that have
+// active work in their subtree. Used for concurrency cap enforcement.
+func (s *Service) CountActiveRoots(ctx context.Context) (int, error) {
+	activeRoots, err := s.ActiveRootWorkIDs(ctx)
+	if err != nil {
+		return 0, err
+	}
+	return len(activeRoots), nil
 }
 
 func hydrationLimits(mode string) (updates, notes, attestations, artifacts, jobs int) {
