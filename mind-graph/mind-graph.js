@@ -831,15 +831,26 @@ document.getElementById("sidebar-toggle")?.addEventListener("click", () => {
 
 // ── Diff Rendering ──────────────────────────────────────────
 
-function appendDiffToPanel(diff) {
-  if (!diff.trim()) return;
-  const body = document.getElementById("detail-body");
-  if (!body) return;
+function parseDiffFiles(raw) {
+  const files = [];
+  let current = null;
+  for (const line of raw.split('\n')) {
+    if (line.startsWith('diff --git ')) {
+      if (current) files.push(current);
+      const m = line.match(/^diff --git a\/.+ b\/(.+)$/);
+      current = { filename: m ? m[1] : line, added: 0, removed: 0, lines: [line] };
+    } else if (current) {
+      current.lines.push(line);
+      if (line.startsWith('+') && !line.startsWith('+++')) current.added++;
+      else if (line.startsWith('-') && !line.startsWith('---')) current.removed++;
+    }
+  }
+  if (current) files.push(current);
+  return files;
+}
 
-  // Syntax-highlight the diff
-  const lines = diff.split('\n');
-  let html = '<div class="detail-section"><div class="detail-section-label">LIVE DIFF (uncommitted)</div>';
-  html += '<pre style="font-size:11px;line-height:1.4;overflow-x:auto;background:rgba(0,0,0,0.3);padding:12px;border-radius:6px;border:1px solid #1a1a1e;">';
+function renderDiffFileLines(lines) {
+  let html = '<pre style="font-size:11px;line-height:1.5;overflow-x:auto;background:rgba(0,0,0,0.3);padding:10px 12px;border-radius:0 0 6px 6px;border:1px solid #1a1a1e;border-top:none;margin:0;">';
   for (const line of lines) {
     if (line.startsWith('+++') || line.startsWith('---')) {
       html += `<span style="color:#888">${escapeHtml(line)}</span>\n`;
@@ -855,8 +866,90 @@ function appendDiffToPanel(diff) {
       html += `<span style="color:#555">${escapeHtml(line)}</span>\n`;
     }
   }
-  html += '</pre></div>';
-  body.insertAdjacentHTML('beforeend', html);
+  html += '</pre>';
+  return html;
+}
+
+function appendDiffToPanel(diff) {
+  if (!diff.trim()) return;
+  const body = document.getElementById("detail-body");
+  if (!body) return;
+
+  const files = parseDiffFiles(diff);
+  if (files.length === 0) return;
+
+  const section = document.createElement('div');
+  section.className = 'detail-section';
+
+  const label = document.createElement('div');
+  label.className = 'detail-section-label';
+  label.textContent = `LIVE DIFF (uncommitted) — ${files.length} file${files.length !== 1 ? 's' : ''}`;
+  section.appendChild(label);
+
+  const ul = document.createElement('ul');
+  ul.style.cssText = 'list-style:none;padding:0;margin:0;';
+
+  files.forEach((file) => {
+    const li = document.createElement('li');
+    li.style.marginBottom = '4px';
+
+    const btn = document.createElement('button');
+    btn.style.cssText = 'width:100%;display:flex;align-items:center;gap:8px;background:rgba(255,255,255,0.03);border:1px solid #1a1a1e;border-radius:6px;padding:6px 10px;color:#c8c0b8;font-family:inherit;font-size:12px;cursor:pointer;text-align:left;';
+
+    const chev = document.createElement('span');
+    chev.textContent = '▶';
+    chev.style.cssText = 'color:#555;font-size:10px;flex-shrink:0;transition:transform 0.15s;';
+
+    const name = document.createElement('span');
+    name.textContent = file.filename;
+    name.style.cssText = 'flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+    const adds = document.createElement('span');
+    adds.textContent = `+${file.added}`;
+    adds.style.cssText = 'color:#50b888;flex-shrink:0;font-size:11px;';
+
+    const dels = document.createElement('span');
+    dels.textContent = `−${file.removed}`;
+    dels.style.cssText = 'color:#d06060;flex-shrink:0;font-size:11px;margin-left:6px;';
+
+    btn.append(chev, name, adds, dels);
+
+    let pre = null;
+    btn.addEventListener('click', () => {
+      if (!pre) {
+        pre = document.createElement('pre');
+        pre.style.cssText = 'font-size:11px;line-height:1.5;overflow-x:auto;background:rgba(0,0,0,0.3);padding:10px 12px;border-radius:0 0 6px 6px;border:1px solid #1a1a1e;border-top:none;margin:0;';
+        btn.style.borderRadius = '6px 6px 0 0';
+        for (const line of file.lines) {
+          const span = document.createElement('span');
+          span.textContent = line + '\n';
+          if (line.startsWith('+++') || line.startsWith('---')) span.style.color = '#888';
+          else if (line.startsWith('+')) span.style.color = '#50b888';
+          else if (line.startsWith('-')) span.style.color = '#d06060';
+          else if (line.startsWith('@@')) span.style.color = '#c4a060';
+          else if (line.startsWith('diff ')) { span.style.color = '#7aa2f7'; span.style.fontWeight = '500'; }
+          else span.style.color = '#555';
+          pre.appendChild(span);
+        }
+        li.appendChild(pre);
+        chev.style.transform = 'rotate(90deg)';
+      } else if (pre.style.display === 'none') {
+        pre.style.display = 'block';
+        btn.style.borderRadius = '6px 6px 0 0';
+        chev.style.transform = 'rotate(90deg)';
+      } else {
+        pre.style.display = 'none';
+        btn.style.borderRadius = '6px';
+        chev.style.transform = '';
+      }
+    });
+
+    li.appendChild(btn);
+    ul.appendChild(li);
+  });
+
+  section.appendChild(ul);
+  body.appendChild(section);
 }
 
 // ── Diff + Supervisor Polling ────────────────────────────────
