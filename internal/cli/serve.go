@@ -1514,9 +1514,14 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		// Reconcile
 		_, _ = svc.ReconcileOnStartup(ctx)
 
-		// Check in-flight
+		// Check in-flight: collect completed/failed jobs, then handle outside the lock
 		mu.Lock()
-		spawnedCompletionJob := false
+		type completedJob struct {
+			workID string
+			flight *inFlightJob
+			state  string
+		}
+		var completed []completedJob
 		for workID, flight := range inFlight {
 			statusResult, err := svc.Status(ctx, flight.jobID)
 			if err != nil {
@@ -1525,29 +1530,10 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 			jobState := string(statusResult.Job.State)
 
 			if isTerminal(jobState) {
-				if jobState == "failed" || jobState == "cancelled" {
-					_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-						WorkID:         workID,
-						ExecutionState: core.WorkExecutionStateFailed,
-						Message:        fmt.Sprintf("supervisor: job %s %s", flight.jobID, jobState),
-						CreatedBy:      "supervisor",
-					})
-					hub.broadcast("work_updated", map[string]string{"work_id": workID, "job_id": flight.jobID})
-				} else {
-					hub.broadcast("job_completed", map[string]string{"work_id": workID, "job_id": flight.jobID})
-					if handleJobCompletion(ctx, svc, hub, selfBin, root.configPath, cwd, workID, flight, defaultAdapter) {
-						spawnedCompletionJob = true
-					}
-				}
+				completed = append(completed, completedJob{workID, flight, jobState})
 				delete(inFlight, workID)
 			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
-				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-					WorkID:         workID,
-					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        fmt.Sprintf("supervisor: job %s stalled (no output for 10m)", flight.jobID),
-					CreatedBy:      "supervisor",
-				})
-				hub.broadcast("work_updated", map[string]string{"work_id": workID, "job_id": flight.jobID})
+				completed = append(completed, completedJob{workID, flight, "stalled"})
 				delete(inFlight, workID)
 			} else if time.Now().After(flight.leaseNext) {
 				_, _ = svc.RenewWorkLease(ctx, service.WorkRenewLeaseRequest{
@@ -1561,8 +1547,31 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		inFlightCount := len(inFlight)
 		mu.Unlock()
 
-		// Dispatch
-		availableSlots := supervisorAvailableSlots(inFlightCount, maxConcurrent, spawnedCompletionJob)
+		// Handle completions outside the lock (attestation is synchronous and slow)
+		attestationRunning := false
+		for _, c := range completed {
+			if c.state == "failed" || c.state == "cancelled" || c.state == "stalled" {
+				msg := fmt.Sprintf("supervisor: job %s %s", c.flight.jobID, c.state)
+				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
+					WorkID:         c.workID,
+					ExecutionState: core.WorkExecutionStateFailed,
+					Message:        msg,
+					CreatedBy:      "supervisor",
+				})
+				hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
+			} else {
+				hub.broadcast("job_completed", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
+				if handleJobCompletion(ctx, svc, hub, selfBin, root.configPath, cwd, c.workID, c.flight, defaultAdapter) {
+					attestationRunning = true
+				}
+			}
+		}
+
+		// Dispatch — but NOT if attestation just ran (it may have changed files)
+		availableSlots := maxConcurrent - inFlightCount
+		if attestationRunning {
+			availableSlots = 0
+		}
 		if availableSlots > 0 {
 			readyItems, _ := svc.ReadyWork(ctx, availableSlots*2, false)
 			for i, item := range readyItems {

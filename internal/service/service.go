@@ -1425,20 +1425,14 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 			"write_commands": []string{
 				"cagent work update <work-id>",
 				"cagent work note-add <work-id>",
-				"cagent work proposal create",
-			},
-			"forbidden_commands": []string{
-				"cagent work complete",
-				"cagent work fail",
-				"cagent work attest",
 			},
 			"rules": []string{
-				"Do the work, add updates and notes as you go, then EXIT. Do not mark work complete or attest your own work.",
-				"An independent attestation agent will verify your work after you exit. You must NOT call cagent work complete, cagent work fail, or cagent work attest.",
+				"Do the work, add updates and notes as you go, then EXIT.",
+				"An independent attestation agent will verify and attest your work after you exit.",
 				"Record notes for findings, risks, and open questions.",
-				"Run verification (tests, builds) and report results as notes, but do not transition work item state.",
-				"Create child work directly only for unexpected work, fanout work, or sequential context isolation with a bounded result and a clear verifier or attestation target.",
-				"If a possible child cannot be verified cheaply or clearly, create a proposal instead of creating the child directly.",
+				"Run verification (tests, builds) and report results as notes.",
+				"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
+				"Do NOT call cagent work complete, cagent work fail, or cagent work attest.",
 			},
 		},
 		"hydration": map[string]any{
@@ -2956,6 +2950,17 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 	if err != nil {
 		return nil, err
 	}
+
+	// Release the work item claim so it doesn't get stuck in "claimed" state
+	if current.WorkID != "" {
+		_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+			WorkID:         current.WorkID,
+			ExecutionState: core.WorkExecutionStateFailed,
+			Message:        fmt.Sprintf("cancelled: job %s", jobID),
+			CreatedBy:      "cancel",
+		})
+	}
+
 	if current.State.Terminal() {
 		return &current, nil
 	}
