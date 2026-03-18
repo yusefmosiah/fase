@@ -19,6 +19,8 @@ mind-graph/eslint.config.js
 work_seed/
 # cagent local state — track DB, ignore artifacts
 .cagent/raw/
+.cagent/serve.json
+.cagent/supervisor.json
 .cagent/jobs/
 .cagent/transfers/
 .cagent/debriefs/
