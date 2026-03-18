@@ -245,6 +245,8 @@ type WorkCreateRequest struct {
 	ParentWorkID         string
 	LockState            core.WorkLockState
 	Priority             int
+	ConfigurationClass   string
+	BudgetClass          string
 	RequiredCapabilities []string
 	RequiredModelTraits  []string
 	PreferredAdapters    []string
@@ -1178,19 +1180,21 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		ApprovalState:        core.WorkApprovalStateNone,
 		LockState:            lockState,
 		Priority:             req.Priority,
+		ConfigurationClass:   strings.TrimSpace(req.ConfigurationClass),
+		BudgetClass:          strings.TrimSpace(req.BudgetClass),
 		RequiredCapabilities: cloneSlice(req.RequiredCapabilities),
 		RequiredModelTraits:  cloneSlice(req.RequiredModelTraits),
 		PreferredAdapters:    cloneSlice(req.PreferredAdapters),
 		ForbiddenAdapters:    cloneSlice(req.ForbiddenAdapters),
 		PreferredModels:      cloneSlice(req.PreferredModels),
 		AvoidModels:          cloneSlice(req.AvoidModels),
-		RequiredAttestations: cloneRequiredAttestations(req.RequiredAttestations),
 		Acceptance:           cloneMap(req.Acceptance),
 		Metadata:             cloneMap(req.Metadata),
 		HeadCommitOID:        strings.TrimSpace(req.HeadCommitOID),
 		CreatedAt:            now,
 		UpdatedAt:            now,
 	}
+	work.RequiredAttestations = defaultRequiredAttestations(work, req.RequiredAttestations, s.Config)
 	if err := s.store.CreateWorkItem(ctx, work); err != nil {
 		return nil, err
 	}
@@ -1953,33 +1957,57 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 		return nil, nil, err
 	}
 
-	// Attestation is transactional: recording the attestation also transitions
-	// the work item's execution state. This is the attestation contract —
-	// you can't attest without also committing a state change.
-	switch req.Result {
-	case "passed":
-		// When a work item has required attestation slots, only transition to done
-		// once ALL blocking slots have a passing attestation. Until then, leave the
-		// execution state unchanged so the supervisor can dispatch remaining slots.
-		shouldSetDone := true
-		if len(work.RequiredAttestations) > 0 {
-			allAttestations, fetchErr := s.store.ListAttestationRecords(ctx, "work", req.WorkID, 200)
-			if fetchErr == nil {
-				shouldSetDone = requiredAttestationsResolved(work, allAttestations)
+	children, childErr := s.store.ListWorkChildren(ctx, work.WorkID, 200)
+	hasAttestationChildren := childErr == nil
+	if hasAttestationChildren {
+		hasAttestationChildren = false
+		for _, child := range children {
+			if child.Kind == "attest" {
+				hasAttestationChildren = true
+				break
 			}
 		}
-		if shouldSetDone {
-			work.ExecutionState = core.WorkExecutionStateDone
-			work.ClaimedBy = ""
-			work.ClaimedUntil = nil
-			if shouldSetPendingApproval(work) {
-				work.ApprovalState = core.WorkApprovalStatePending
+	}
+
+	// Attestation is transactional: recording the attestation also transitions
+	// the work item's execution state. If this work item owns attestation child
+	// work items, we keep the parent in awaiting_attestation until those children
+	// complete; otherwise we preserve the legacy direct-attestation behavior.
+	switch req.Result {
+	case "passed":
+		if !hasAttestationChildren {
+			shouldSetDone := true
+			if len(work.RequiredAttestations) > 0 {
+				allAttestations, fetchErr := s.store.ListAttestationRecords(ctx, "work", req.WorkID, 200)
+				if fetchErr == nil {
+					shouldSetDone = requiredAttestationsResolved(work, allAttestations)
+				}
+			}
+			if shouldSetDone {
+				work.ExecutionState = core.WorkExecutionStateDone
+				work.ClaimedBy = ""
+				work.ClaimedUntil = nil
+				if shouldSetPendingApproval(work) {
+					work.ApprovalState = core.WorkApprovalStatePending
+				}
+			}
+		} else if work.ExecutionState == core.WorkExecutionStateInProgress {
+			work.ExecutionState = core.WorkExecutionStateAwaitingAttestation
+		}
+		if hasAttestationChildren {
+			if err := s.refreshAttestationParentState(ctx, work.WorkID); err != nil {
+				return nil, nil, err
 			}
 		}
 	case "failed":
 		work.ExecutionState = core.WorkExecutionStateFailed
 		work.ClaimedBy = ""
 		work.ClaimedUntil = nil
+		if hasAttestationChildren {
+			if err := s.refreshAttestationParentState(ctx, work.WorkID); err != nil {
+				return nil, nil, err
+			}
+		}
 	}
 	work.UpdatedAt = now
 	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
@@ -2344,17 +2372,20 @@ func (s *Service) createWorkFromPatch(ctx context.Context, proposal core.WorkPro
 		return nil, fmt.Errorf("%w: proposal patch requires title and objective", ErrInvalidInput)
 	}
 	item := core.WorkItemRecord{
-		WorkID:         core.GenerateID("work"),
-		Title:          title,
-		Objective:      objective,
-		Kind:           kind,
-		ExecutionState: core.WorkExecutionStateReady,
-		ApprovalState:  core.WorkApprovalStateNone,
-		LockState:      core.WorkLockStateUnlocked,
-		Metadata:       map[string]any{"proposal_id": proposal.ProposalID},
-		CreatedAt:      now,
-		UpdatedAt:      now,
+		WorkID:             core.GenerateID("work"),
+		Title:              title,
+		Objective:          objective,
+		Kind:               kind,
+		ExecutionState:     core.WorkExecutionStateReady,
+		ApprovalState:      core.WorkApprovalStateNone,
+		LockState:          core.WorkLockStateUnlocked,
+		ConfigurationClass: summaryString(proposal.ProposedPatch, "configuration_class"),
+		BudgetClass:        summaryString(proposal.ProposedPatch, "budget_class"),
+		Metadata:           map[string]any{"proposal_id": proposal.ProposalID},
+		CreatedAt:          now,
+		UpdatedAt:          now,
 	}
+	item.RequiredAttestations = defaultRequiredAttestations(item, nil, s.Config)
 	if err := s.store.CreateWorkItem(ctx, item); err != nil {
 		return nil, err
 	}
@@ -3807,6 +3838,318 @@ func cloneRequiredAttestations(src []core.RequiredAttestation) []core.RequiredAt
 		}
 	}
 	return dst
+}
+
+func defaultRequiredAttestations(work core.WorkItemRecord, explicit []core.RequiredAttestation, _ core.Config) []core.RequiredAttestation {
+	if len(explicit) > 0 {
+		return cloneRequiredAttestations(explicit)
+	}
+	if strings.EqualFold(work.Kind, "attest") {
+		return []core.RequiredAttestation{}
+	}
+	return []core.RequiredAttestation{
+		{
+			VerifierKind: "attestation",
+			Method:       "automated_review",
+			Blocking:     true,
+		},
+	}
+}
+
+func (s *Service) spawnAttestationChildren(ctx context.Context, parent core.WorkItemRecord, job core.JobRecord) error {
+	if strings.EqualFold(parent.Kind, "attest") {
+		return nil
+	}
+
+	slots := defaultRequiredAttestations(parent, parent.RequiredAttestations, s.Config)
+	if len(slots) == 0 {
+		return nil
+	}
+
+	workDetail, err := s.Work(ctx, parent.WorkID)
+	if err != nil {
+		return err
+	}
+
+	nonce := ""
+	if parent.Metadata != nil {
+		if existing, ok := parent.Metadata["attestation_nonce"].(string); ok {
+			nonce = strings.TrimSpace(existing)
+		}
+	}
+	if nonce == "" {
+		nonce = core.GenerateID("nonce")
+	}
+
+	now := time.Now().UTC()
+	if parent.Metadata == nil {
+		parent.Metadata = map[string]any{}
+	}
+	parent.Metadata["attestation_nonce"] = nonce
+	if parent.AttestationFrozenAt == nil {
+		parent.AttestationFrozenAt = &now
+	}
+	parent.ExecutionState = core.WorkExecutionStateAwaitingAttestation
+	parent.ClaimedBy = ""
+	parent.ClaimedUntil = nil
+	parent.UpdatedAt = now
+	if err := s.store.UpdateWorkItem(ctx, parent); err != nil {
+		return err
+	}
+
+	existing := make(map[int]struct{}, len(workDetail.Children))
+	for _, child := range workDetail.Children {
+		if !strings.EqualFold(child.Kind, "attest") {
+			continue
+		}
+		childNonce := ""
+		if child.Metadata != nil {
+			childNonce, _ = child.Metadata["attestation_nonce"].(string)
+		}
+		if strings.TrimSpace(childNonce) != nonce {
+			continue
+		}
+		if slotIdx, ok := metadataInt(child.Metadata, "slot_index"); ok {
+			existing[slotIdx] = struct{}{}
+		}
+	}
+
+	workerFindings := attestationWorkerFindings(workDetail)
+	workerModel := summaryString(job.Summary, "model")
+
+	for slotIdx, slot := range slots {
+		if _, ok := existing[slotIdx]; ok {
+			continue
+		}
+
+		childAdapter, childModel := s.attestationChildRuntime(parent, job.Adapter, slotIdx)
+		child := core.WorkItemRecord{
+			WorkID:               core.GenerateID("work"),
+			Title:                attestationChildTitle(parent, slotIdx, slot),
+			Objective:            attestationChildObjective(parent, job, slotIdx, slot, nonce, workerFindings),
+			Kind:                 "attest",
+			ExecutionState:       core.WorkExecutionStateReady,
+			ApprovalState:        core.WorkApprovalStateNone,
+			LockState:            core.WorkLockStateUnlocked,
+			Priority:             parent.Priority,
+			ConfigurationClass:   parent.ConfigurationClass,
+			BudgetClass:          parent.BudgetClass,
+			PreferredAdapters:    childAdapter,
+			PreferredModels:      nonEmptySlice(childModel),
+			RequiredAttestations: []core.RequiredAttestation{},
+			Metadata: map[string]any{
+				"parent_work_id":    parent.WorkID,
+				"slot_index":        slotIdx,
+				"attestation_nonce": nonce,
+				"worker_job_id":     job.JobID,
+				"worker_adapter":    job.Adapter,
+				"worker_model":      workerModel,
+				"blocking":          slot.Blocking,
+			},
+			CreatedAt: now,
+			UpdatedAt: now,
+		}
+		created, createErr := s.CreateWork(ctx, WorkCreateRequest{
+			Title:                child.Title,
+			Objective:            child.Objective,
+			Kind:                 child.Kind,
+			LockState:            child.LockState,
+			Priority:             child.Priority,
+			ConfigurationClass:   child.ConfigurationClass,
+			BudgetClass:          child.BudgetClass,
+			PreferredAdapters:    child.PreferredAdapters,
+			PreferredModels:      child.PreferredModels,
+			RequiredAttestations: child.RequiredAttestations,
+			Metadata:             child.Metadata,
+		})
+		if createErr != nil {
+			_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+				WorkID:         parent.WorkID,
+				ExecutionState: core.WorkExecutionStateFailed,
+				Message:        fmt.Sprintf("attestation child creation failed for slot %d: %v", slotIdx, createErr),
+				CreatedBy:      "service",
+			})
+			return createErr
+		}
+		if err := s.attachParentEdge(ctx, parent.WorkID, created.WorkID, "service", now, map[string]any{
+			"edge_kind":  "attestation",
+			"slot_index": slotIdx,
+		}, false); err != nil {
+			_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+				WorkID:         parent.WorkID,
+				ExecutionState: core.WorkExecutionStateFailed,
+				Message:        fmt.Sprintf("attestation edge creation failed for slot %d: %v", slotIdx, err),
+				CreatedBy:      "service",
+			})
+			return err
+		}
+		if err := s.store.CreateWorkEdge(ctx, core.WorkEdgeRecord{
+			EdgeID:     core.GenerateID("wedge"),
+			FromWorkID: parent.WorkID,
+			ToWorkID:   created.WorkID,
+			EdgeType:   "depends_on",
+			CreatedBy:  "service",
+			CreatedAt:  now,
+			Metadata: map[string]any{
+				"slot_index":        slotIdx,
+				"attestation_nonce": nonce,
+			},
+		}); err != nil {
+			_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+				WorkID:         parent.WorkID,
+				ExecutionState: core.WorkExecutionStateFailed,
+				Message:        fmt.Sprintf("attestation dependency creation failed for slot %d: %v", slotIdx, err),
+				CreatedBy:      "service",
+			})
+			return err
+		}
+	}
+
+	_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         parent.WorkID,
+		ExecutionState: core.WorkExecutionStateAwaitingAttestation,
+		Message:        fmt.Sprintf("spawned %d attestation child work item(s)", len(slots)),
+		CreatedBy:      "service",
+		Metadata: map[string]any{
+			"attestation_nonce": nonce,
+		},
+	})
+
+	return nil
+}
+
+func (s *Service) attestationChildRuntime(parent core.WorkItemRecord, workerAdapter string, slotIndex int) ([]string, string) {
+	adapters := attestationPreferredAdapters(s.Config, parent, slotIndex)
+	if len(adapters) > 0 {
+		return adapters[:1], ""
+	}
+	if adapter := alternateAdapter(workerAdapter, s.Config); adapter != "" {
+		return []string{adapter}, ""
+	}
+	return []string{}, ""
+}
+
+func alternateAdapter(workerAdapter string, cfg core.Config) string {
+	workerAdapter = strings.TrimSpace(workerAdapter)
+	for _, candidate := range []string{"claude", "codex", "factory", "gemini", "opencode", "pi"} {
+		if candidate == workerAdapter {
+			continue
+		}
+		if adapterCfg, ok := cfg.Adapters.ByName(candidate); ok && adapterCfg.Enabled {
+			return candidate
+		}
+	}
+	return ""
+}
+
+func attestationPreferredAdapters(cfg core.Config, work core.WorkItemRecord, slotIndex int) []string {
+	if len(cfg.Rotation.Entries) == 0 {
+		return nil
+	}
+	matches := make([]string, 0, len(cfg.Rotation.Entries))
+	for _, entry := range cfg.Rotation.Entries {
+		if entryMatchesWorkRole(entry, work) {
+			matches = append(matches, entry.Adapter)
+		}
+	}
+	if len(matches) == 0 {
+		return nil
+	}
+	return []string{matches[slotIndex%len(matches)]}
+}
+
+func entryMatchesWorkRole(entry core.RotationEntry, work core.WorkItemRecord) bool {
+	if len(entry.Roles) == 0 {
+		return true
+	}
+	kind := strings.ToLower(strings.TrimSpace(work.Kind))
+	class := strings.ToLower(strings.TrimSpace(work.ConfigurationClass))
+	for _, role := range entry.Roles {
+		role = strings.ToLower(strings.TrimSpace(role))
+		if role == "*" || role == kind || (class != "" && role == class) {
+			return true
+		}
+	}
+	return false
+}
+
+func attestationWorkerFindings(workDetail *WorkShowResult) string {
+	if workDetail == nil {
+		return "(worker reported no verification findings)"
+	}
+	var findings strings.Builder
+	for _, note := range workDetail.Notes {
+		if note.NoteType == "finding" || note.NoteType == "verification" {
+			findings.WriteString(fmt.Sprintf("- [%s] %s\n", note.NoteType, note.Body))
+		}
+	}
+	if findings.Len() == 0 {
+		return "(worker reported no verification findings)"
+	}
+	return findings.String()
+}
+
+func attestationChildTitle(parent core.WorkItemRecord, slotIndex int, slot core.RequiredAttestation) string {
+	verifier := strings.TrimSpace(slot.VerifierKind)
+	if verifier == "" {
+		verifier = "attestation"
+	}
+	method := strings.TrimSpace(slot.Method)
+	if method == "" {
+		method = "review"
+	}
+	return fmt.Sprintf("Attest slot %d: %s/%s for %s", slotIndex, verifier, method, parent.Title)
+}
+
+func attestationChildObjective(parent core.WorkItemRecord, job core.JobRecord, slotIndex int, slot core.RequiredAttestation, nonce, workerFindings string) string {
+	workerModel := summaryString(job.Summary, "model")
+	return fmt.Sprintf(`You are an attestation agent reviewing work item %s.
+
+## Work item
+Title: %s
+Objective: %s
+Worker adapter: %s
+Worker model: %s
+Worker job: %s
+Slot: %d (%s/%s)
+
+## Worker's verification findings
+%s
+
+## Attestation procedure
+1. Inspect the parent work item and its diff.
+2. Decide whether the work matches the objective and evidence.
+3. Record exactly one attestation on the parent:
+   cagent work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
+
+Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
+}
+
+func metadataInt(metadata map[string]any, key string) (int, bool) {
+	if metadata == nil {
+		return 0, false
+	}
+	value, ok := metadata[key]
+	if !ok {
+		return 0, false
+	}
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func nonEmptySlice(value string) []string {
+	if strings.TrimSpace(value) == "" {
+		return []string{}
+	}
+	return []string{value}
 }
 
 func shouldSetPendingApproval(work core.WorkItemRecord) bool {
@@ -5293,13 +5636,23 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		workState = core.WorkExecutionStateClaimed
 	case core.JobStateStarting, core.JobStateRunning, core.JobStateWaitingInput:
 		workState = core.WorkExecutionStateInProgress
+		if work.Kind != "attest" && work.AttestationFrozenAt == nil {
+			frozenAt := now
+			work.AttestationFrozenAt = &frozenAt
+		}
 	case core.JobStateCompleted:
-		workState = core.WorkExecutionStateDone
-		work.ExecutionState = workState
-		work.ClaimedBy = ""
-		work.ClaimedUntil = nil
-		if shouldSetPendingApproval(work) {
-			work.ApprovalState = core.WorkApprovalStatePending
+		if work.Kind == "attest" {
+			workState = core.WorkExecutionStateDone
+			work.ExecutionState = workState
+			work.ClaimedBy = ""
+			work.ClaimedUntil = nil
+			if shouldSetPendingApproval(work) {
+				work.ApprovalState = core.WorkApprovalStatePending
+			}
+		} else {
+			workState = core.WorkExecutionStateAwaitingAttestation
+			work.ClaimedBy = ""
+			work.ClaimedUntil = nil
 		}
 	case core.JobStateFailed:
 		workState = core.WorkExecutionStateFailed
@@ -5317,6 +5670,12 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		workState = work.ExecutionState
 	}
 	work.ExecutionState = workState
+	if workState == core.WorkExecutionStateAwaitingAttestation {
+		if work.AttestationFrozenAt == nil {
+			frozenAt := now
+			work.AttestationFrozenAt = &frozenAt
+		}
+	}
 	if payload != nil {
 		message = summaryString(payload, "message")
 	}
@@ -5377,7 +5736,99 @@ func (s *Service) finishJob(ctx context.Context, job *core.JobRecord, state core
 	if err := s.store.UpdateJob(ctx, *job); err != nil {
 		return err
 	}
-	return s.syncWorkStateFromJob(ctx, *job, job.Summary)
+	if err := s.syncWorkStateFromJob(ctx, *job, job.Summary); err != nil {
+		return err
+	}
+	work, err := s.store.GetWorkItem(ctx, job.WorkID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+	if strings.EqualFold(work.Kind, "attest") {
+		if err := s.refreshParentAfterAttestationChild(ctx, work); err != nil {
+			return err
+		}
+	}
+	if state == core.JobStateCompleted && work.Kind != "attest" {
+		if err := s.spawnAttestationChildren(ctx, work, *job); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Service) refreshParentAfterAttestationChild(ctx context.Context, child core.WorkItemRecord) error {
+	parentID := ""
+	if child.Metadata != nil {
+		parentID, _ = child.Metadata["parent_work_id"].(string)
+	}
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil
+	}
+	return s.refreshAttestationParentState(ctx, parentID)
+}
+
+func (s *Service) refreshAttestationParentState(ctx context.Context, parentID string) error {
+	parentID = strings.TrimSpace(parentID)
+	if parentID == "" {
+		return nil
+	}
+
+	parent, err := s.store.GetWorkItem(ctx, parentID)
+	if err != nil {
+		if errors.Is(err, store.ErrNotFound) {
+			return nil
+		}
+		return err
+	}
+
+	children, err := s.store.ListWorkChildren(ctx, parentID, 200)
+	if err != nil {
+		return err
+	}
+	attestationChildren := make([]core.WorkItemRecord, 0, len(children))
+	for _, candidate := range children {
+		if strings.EqualFold(candidate.Kind, "attest") {
+			attestationChildren = append(attestationChildren, candidate)
+		}
+	}
+	if len(attestationChildren) == 0 {
+		return nil
+	}
+
+	for _, attChild := range attestationChildren {
+		switch attChild.ExecutionState {
+		case core.WorkExecutionStateFailed, core.WorkExecutionStateCancelled:
+			parent.ExecutionState = core.WorkExecutionStateFailed
+			parent.ClaimedBy = ""
+			parent.ClaimedUntil = nil
+			parent.UpdatedAt = time.Now().UTC()
+			return s.store.UpdateWorkItem(ctx, parent)
+		case core.WorkExecutionStateDone:
+		default:
+			return nil
+		}
+	}
+
+	attestations, err := s.store.ListAttestationRecords(ctx, "work", parentID, 200)
+	if err != nil {
+		return err
+	}
+	if !requiredAttestationsResolved(parent, attestations) {
+		return nil
+	}
+
+	parent.ExecutionState = core.WorkExecutionStateDone
+	parent.ClaimedBy = ""
+	parent.ClaimedUntil = nil
+	parent.UpdatedAt = time.Now().UTC()
+	if shouldSetPendingApproval(parent) {
+		parent.ApprovalState = core.WorkApprovalStatePending
+	}
+	return s.store.UpdateWorkItem(ctx, parent)
 }
 
 func (s *Service) emitEvent(

@@ -287,14 +287,15 @@ type HistoryMatch struct {
 type WorkExecutionState string
 
 const (
-	WorkExecutionStateReady      WorkExecutionState = "ready"
-	WorkExecutionStateClaimed    WorkExecutionState = "claimed"
-	WorkExecutionStateInProgress WorkExecutionState = "in_progress"
-	WorkExecutionStateBlocked    WorkExecutionState = "blocked"
-	WorkExecutionStateDone       WorkExecutionState = "done"
-	WorkExecutionStateFailed     WorkExecutionState = "failed"
-	WorkExecutionStateCancelled  WorkExecutionState = "cancelled"
-	WorkExecutionStateArchived   WorkExecutionState = "archived"
+	WorkExecutionStateReady               WorkExecutionState = "ready"
+	WorkExecutionStateClaimed             WorkExecutionState = "claimed"
+	WorkExecutionStateInProgress          WorkExecutionState = "in_progress"
+	WorkExecutionStateAwaitingAttestation WorkExecutionState = "awaiting_attestation"
+	WorkExecutionStateBlocked             WorkExecutionState = "blocked"
+	WorkExecutionStateDone                WorkExecutionState = "done"
+	WorkExecutionStateFailed              WorkExecutionState = "failed"
+	WorkExecutionStateCancelled           WorkExecutionState = "cancelled"
+	WorkExecutionStateArchived            WorkExecutionState = "archived"
 )
 
 func (s WorkExecutionState) Terminal() bool {
@@ -339,6 +340,8 @@ type WorkItemRecord struct {
 	LockState            WorkLockState         `json:"lock_state"`
 	Phase                string                `json:"phase,omitempty"`
 	Priority             int                   `json:"priority,omitempty"`
+	ConfigurationClass   string                `json:"configuration_class,omitempty"`
+	BudgetClass          string                `json:"budget_class,omitempty"`
 	RequiredCapabilities []string              `json:"required_capabilities,omitempty"`
 	RequiredModelTraits  []string              `json:"required_model_traits,omitempty"`
 	PreferredAdapters    []string              `json:"preferred_adapters,omitempty"`
@@ -349,6 +352,7 @@ type WorkItemRecord struct {
 	Acceptance           map[string]any        `json:"acceptance,omitempty"`
 	Metadata             map[string]any        `json:"metadata,omitempty"`
 	HeadCommitOID        string                `json:"head_commit_oid,omitempty"`
+	AttestationFrozenAt  *time.Time            `json:"attestation_frozen_at,omitempty"`
 	CurrentJobID         string                `json:"current_job_id,omitempty"`
 	CurrentSessionID     string                `json:"current_session_id,omitempty"`
 	ClaimedBy            string                `json:"claimed_by,omitempty"`

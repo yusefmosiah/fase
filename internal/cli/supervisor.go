@@ -133,7 +133,7 @@ type inFlightJob struct {
 	workID       string
 	jobID        string // real cagent job_id from `run --json` output
 	adapter      string
-	model        string    // model used for this job (for attestation offset)
+	model        string // model used for this job (for attestation offset)
 	started      time.Time
 	leaseNext    time.Time // when to renew the lease
 	worktreePath string    // absolute path to git worktree (empty if not using worktrees)
@@ -368,20 +368,8 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 
 			if isTerminal(jobState) {
 				status := "done"
-				newState := core.WorkExecutionStateDone
 				if jobState == "failed" || jobState == "cancelled" {
 					status = jobState
-					newState = core.WorkExecutionStateFailed
-				}
-
-				_, updateErr := svc.UpdateWork(ctx, service.WorkUpdateRequest{
-					WorkID:         workID,
-					ExecutionState: newState,
-					Message:        fmt.Sprintf("supervisor: job %s %s", flight.jobID, status),
-					CreatedBy:      "supervisor",
-				})
-				if updateErr != nil && !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to update work %s: %v\n", workID, updateErr)
 				}
 
 				completed = append(completed, completedEntry{

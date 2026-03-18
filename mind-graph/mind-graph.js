@@ -396,6 +396,7 @@ const COL = {ready:"#c4a060",claimed:"#50b888",in_progress:"#4db884",blocked:"#d
 
 let W = [], byId = {}, BLOCKS = [], nodes = {};
 let focusPoint = [0, 0], focusTarget = [0, 0], focusId = null, hoverId = null;
+const nodeBBoxes = {}; // work_id → { x1, y1, x2, y2 } screen-space bounding box
 let activeFilter = "all"; // "all", "ready", "active", "blocked", "done", "failed"
 let appMode = "graph"; // "graph" | "runs"
 let runItems = [], runById = {}, currentRunId = null;
@@ -912,6 +913,8 @@ function draw() {
       ctx.font = (cf > 0.2 ? "500 " : "400 ") + Math.round(sz) + "px 'SF Pro Display', 'Helvetica Neue', system-ui, sans-serif";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(w.t, sx, sy);
+      { const tw = ctx.measureText(w.t).width; const pad = Math.max(6, sz * 0.3);
+        nodeBBoxes[w.id] = { x1: sx - tw/2 - pad, y1: sy - sz/2 - pad, x2: sx + tw/2 + pad, y2: sy + sz/2 + pad }; }
 
       if (w.att && w.att[0] > 0) {
         const [req, sat] = w.att, bw = Math.max(20, sz * 2.5);
@@ -941,13 +944,18 @@ function draw() {
       ctx.font = "400 " + Math.round(sz) + "px 'SF Mono', monospace";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
       ctx.fillText(w.t.split(" ")[0], sx, sy);
+      { const tw = ctx.measureText(w.t.split(" ")[0]).width; const pad = Math.max(6, sz * 0.3);
+        nodeBBoxes[w.id] = { x1: sx - tw/2 - pad, y1: sy - sz/2 - pad, x2: sx + tw/2 + pad, y2: sy + sz/2 + pad }; }
 
     } else if (sz >= 4) {
       ctx.globalAlpha = alpha * 0.7; ctx.fillStyle = col;
       ctx.beginPath(); ctx.arc(sx, sy, 2, 0, Math.PI*2); ctx.fill();
       ctx.font = "400 " + Math.round(sz) + "px monospace";
       ctx.textAlign = "center"; ctx.textBaseline = "middle";
-      ctx.fillText(w.t.split(" ").map(s => s[0]).join(""), sx, sy + 5);
+      const abbr = w.t.split(" ").map(s => s[0]).join("");
+      ctx.fillText(abbr, sx, sy + 5);
+      { const tw = ctx.measureText(abbr).width; const pad = Math.max(8, sz);
+        nodeBBoxes[w.id] = { x1: sx - tw/2 - pad, y1: sy - pad, x2: sx + tw/2 + pad, y2: sy + sz + pad }; }
 
     } else {
       ctx.globalAlpha = Math.max(0.2, alpha * 0.6);
@@ -988,11 +996,13 @@ function draw() {
 function hitTest(mx, my) {
   let best = null, bd = Infinity;
   W.forEach(w => {
+    const bb = nodeBBoxes[w.id];
+    if (!bb) return;
+    if (mx < bb.x1 || mx > bb.x2 || my < bb.y1 || my > bb.y2) return;
+    // Use distance to center for tie-breaking among overlapping labels
     const [sx, sy] = diskToScreen(nodes[w.id].pos);
-    const sz = textSizeForNode(w);
-    if (sz < 5) return;
     const d = Math.sqrt((mx-sx)**2 + (my-sy)**2);
-    if (d < Math.max(sz*2, 15) && d < bd) { bd = d; best = w.id; }
+    if (d < bd) { bd = d; best = w.id; }
   });
   return best;
 }
@@ -1755,6 +1765,38 @@ document.querySelectorAll(".filter-btn").forEach(btn => {
   });
 });
 
+// ── WebSocket Live Updates ───────────────────────────────────
+
+let ws = null;
+let wsRetryDelay = 1000;
+const WS_MAX_RETRY = 30000;
+
+function connectWebSocket() {
+  const proto = location.protocol === "https:" ? "wss:" : "ws:";
+  const url = `${proto}//${location.host}/ws`;
+  ws = new WebSocket(url);
+  wsRetryDelay = 1000;
+
+  ws.onmessage = (ev) => {
+    try {
+      const msg = JSON.parse(ev.data);
+      if (msg.type) {
+        refresh();
+      }
+    } catch (e) { /* ignore malformed frames */ }
+  };
+
+  ws.onclose = () => {
+    ws = null;
+    setTimeout(() => {
+      wsRetryDelay = Math.min(wsRetryDelay * 1.5, WS_MAX_RETRY);
+      connectWebSocket();
+    }, wsRetryDelay);
+  };
+
+  ws.onerror = () => { ws.close(); };
+}
+
 // ── UI + Init ───────────────────────────────────────────────
 
 function updateUI() {
@@ -1845,7 +1887,7 @@ async function boot() {
   updateUI();
   renderSidebar();
   draw();
-  setInterval(refresh, 15000);
+  connectWebSocket();
 
   // View mode toggle
   document.getElementById("btn-dag-view")?.addEventListener("click", () => {

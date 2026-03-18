@@ -67,6 +67,8 @@ type workCreateOptions struct {
 	requiredAttestations string
 	acceptance           string
 	headCommitOID        string
+	configurationClass   string
+	budgetClass          string
 }
 
 type workListOptions struct {
@@ -940,6 +942,8 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				RequiredAttestations: requiredAttestations,
 				Acceptance:           acceptance,
 				HeadCommitOID:        createOpts.headCommitOID,
+				ConfigurationClass:   createOpts.configurationClass,
+				BudgetClass:          createOpts.budgetClass,
 			})
 			if err != nil {
 				return mapServiceError(err)
@@ -962,6 +966,8 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	createCmd.Flags().StringVar(&createOpts.requiredAttestations, "required-attestations", "", "JSON array of required attestation policy slots")
 	createCmd.Flags().StringVar(&createOpts.acceptance, "acceptance", "", "JSON object for acceptance criteria")
 	createCmd.Flags().StringVar(&createOpts.headCommitOID, "head-commit", "", "Git commit oid currently associated with the work")
+	createCmd.Flags().StringVar(&createOpts.configurationClass, "configuration-class", "", "configuration class for attestation and dispatch defaults")
+	createCmd.Flags().StringVar(&createOpts.budgetClass, "budget-class", "", "budget class for policy and reporting defaults")
 	_ = createCmd.MarkFlagRequired("title")
 	_ = createCmd.MarkFlagRequired("objective")
 

@@ -298,6 +298,13 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 		runHousekeeping(ctx, svc, cwd, hub)
 	}()
 
+	// Always run change watcher — detects work/job/attestation changes and pushes via WebSocket
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		runChangeWatcher(ctx, svc, hub)
+	}()
+
 	// Only auto-dispatch when --auto is set
 	if auto {
 		wg.Add(1)
@@ -357,12 +364,8 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 // - Detect stalled jobs (no output for 10 minutes)
 // - Dispatch verification for completed jobs (from cagent dispatch)
 func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub) {
-	selfBin, _ := os.Executable()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
-
-	// Track which work items we've already dispatched verification for
-	verified := make(map[string]bool)
 
 	for {
 		select {
@@ -406,28 +409,88 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					hub.broadcast("work_updated", map[string]string{"work_id": workID})
 					continue
 				}
+			}
+		}
+	}
+}
 
-				// If job completed and work is still in_progress, dispatch attestation
-				if isTerminal(jobState) && !verified[workID] {
-					workResult, err := svc.Work(ctx, workID)
-					if err != nil {
-						continue
-					}
-					if workResult.Work.ExecutionState == core.WorkExecutionStateInProgress ||
-						workResult.Work.ExecutionState == core.WorkExecutionStateClaimed {
-						verified[workID] = true
-						flight := &inFlightJob{
-							workID:  workID,
-							jobID:   jobID,
-							adapter: statusResult.Job.Adapter,
-						}
-						// Get config path from the binary's default
-						configPath := ""
-						hub.broadcast("job_completed", map[string]string{"work_id": workID, "job_id": jobID})
-						go handleJobCompletion(ctx, svc, hub, selfBin, configPath, cwd, workID, flight, "codex")
+type workSnapshot struct {
+	updatedAt      time.Time
+	executionState string
+	jobCount       int
+	attCount       int
+}
+
+func runChangeWatcher(ctx context.Context, svc *service.Service, hub *wsHub) {
+	ticker := time.NewTicker(3 * time.Second)
+	defer ticker.Stop()
+
+	prev := make(map[string]workSnapshot)
+
+	snapshot := func() {
+		items, err := svc.ListWork(ctx, service.WorkListRequest{Limit: 500, IncludeArchived: false})
+		if err != nil {
+			return
+		}
+		for _, item := range items {
+			cur := workSnapshot{
+				updatedAt:      item.UpdatedAt,
+				executionState: string(item.ExecutionState),
+				jobCount:       -1,
+				attCount:       -1,
+			}
+
+			if old, ok := prev[item.WorkID]; !ok {
+				prev[item.WorkID] = cur
+				continue
+			} else if old != cur {
+				event := map[string]string{
+					"work_id": item.WorkID,
+					"state":   cur.executionState,
+					"updated": cur.updatedAt.UTC().Format(time.RFC3339),
+				}
+				hub.broadcast("work_updated", event)
+
+				if cur.executionState != old.executionState {
+					switch cur.executionState {
+					case "claimed", "in_progress", "starting":
+						hub.broadcast("job_started", event)
+					case "done", "completed":
+						hub.broadcast("job_completed", event)
 					}
 				}
+
+				if cur.attCount > old.attCount && old.attCount >= 0 {
+					hub.broadcast("attestation_added", map[string]string{
+						"work_id": item.WorkID,
+					})
+				}
+
+				prev[item.WorkID] = cur
 			}
+		}
+
+		for id := range prev {
+			found := false
+			for _, item := range items {
+				if item.WorkID == id {
+					found = true
+					break
+				}
+			}
+			if !found {
+				delete(prev, id)
+			}
+		}
+	}
+
+	snapshot()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			snapshot()
 		}
 	}
 }
@@ -1330,212 +1393,6 @@ func truncateText(text string, limit int) string {
 	return text[:limit]
 }
 
-// handleJobCompletion dispatches attestation run(s) after a worker completes.
-// The attestor(s) independently review: did files change? do changes match the
-// objective? did the worker report verification results? does it build?
-// Each attestor marks the work item done (pass) or failed (retry with context).
-//
-// Three-layer model:
-//   - Verification: workers verify their own work during their run (tests, build checks)
-//     and report findings as notes on the work item.
-//   - Attestation: an independent agent reviews after the worker exits. Checks the diff,
-//     reads worker findings, runs its own checks, and gates the state transition.
-//   - Retry: if attestation fails, the failure reason feeds into the next worker's briefing.
-//
-// When the work item has RequiredAttestations, each blocking slot is dispatched
-// sequentially using a different model (round-robin offset per slot index).
-// The work item only transitions to done once ALL blocking slots pass.
-// Work items without RequiredAttestations receive the default single attestation.
-func handleJobCompletion(ctx context.Context, svc *service.Service, hub *wsHub, selfBin, configPath, cwd, workID string, flight *inFlightJob, defaultAdapter string) bool {
-	workResult, err := svc.Work(ctx, workID)
-	if err != nil {
-		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateFailed,
-			Message:        fmt.Sprintf("attestation: could not fetch work state: %v", err),
-			CreatedBy:      "attestation",
-		})
-		return false
-	}
-
-	work := workResult.Work
-
-	// Generate attestation nonce — this didn't exist while the worker was running,
-	// so the worker cannot have used it. All attestors for this completion receive it.
-	nonce := core.GenerateID("nonce")
-	if work.Metadata == nil {
-		work.Metadata = map[string]any{}
-	}
-	work.Metadata["attestation_nonce"] = nonce
-	_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-		WorkID:    workID,
-		Metadata:  work.Metadata,
-		CreatedBy: "attestation",
-	})
-
-	// Collect worker's verification findings (notes) for the attestor(s)
-	var workerFindings string
-	for _, note := range workResult.Notes {
-		if note.NoteType == "finding" || note.NoteType == "verification" {
-			workerFindings += fmt.Sprintf("- [%s] %s\n", note.NoteType, note.Body)
-		}
-	}
-	if workerFindings == "" {
-		workerFindings = "(worker reported no verification findings)"
-	}
-
-	workerIdx := rotationIndexForAdapter(flight.adapter)
-
-	// For work items with no RequiredAttestations, dispatch the default single attestation
-	// using offset +1 from the worker's adapter.
-	if len(work.RequiredAttestations) == 0 {
-		attestAdapter, attestModel := attestAdapterModel(flight.adapter)
-		return dispatchAttestorAndWait(ctx, svc, hub, selfBin, configPath, cwd, workID, work, flight, workerFindings, nonce, attestAdapter, attestModel, 0)
-	}
-
-	// Multi-attestation: loop until all blocking slots are satisfied.
-	// Each slot dispatches a different model (round-robin offset by slot index).
-	// We dispatch slots sequentially: wait for each attestor to complete before
-	// dispatching the next, so each attestor sees the prior attestation records.
-	dispatched := false
-	const maxRounds = 20 // safety cap against unexpected looping
-	for round := 0; round < maxRounds; round++ {
-		latestResult, fetchErr := svc.Work(ctx, workID)
-		if fetchErr != nil {
-			break
-		}
-		unsatisfied := service.UnsatisfiedAttestationSlotIndices(latestResult.Work, latestResult.Attestations)
-		if len(unsatisfied) == 0 {
-			break // all blocking slots have passing attestations
-		}
-		// Work failed mid-attestation (e.g. a prior attestor recorded failed).
-		if latestResult.Work.ExecutionState == core.WorkExecutionStateFailed {
-			break
-		}
-
-		slotIdx := unsatisfied[0]
-		// Rotate: worker uses slot W, attestors use W+1, W+2, … (wrapping).
-		var attestIdx int
-		if workerIdx >= 0 {
-			attestIdx = (workerIdx + 1 + slotIdx) % len(workRotation)
-		} else {
-			attestIdx = (slotIdx + 1) % len(workRotation)
-		}
-		entry := workRotation[attestIdx]
-
-		if !dispatchAttestorAndWait(ctx, svc, hub, selfBin, configPath, cwd, workID, latestResult.Work, flight, workerFindings, nonce, entry.adapter, entry.model, slotIdx) {
-			return false
-		}
-		dispatched = true
-	}
-	return dispatched
-}
-
-// dispatchAttestorAndWait spawns an attestation job for a single slot, waits for
-// the job to reach a terminal state, and returns true if it dispatched successfully.
-// On dispatch failure it marks the work item failed and returns false.
-func dispatchAttestorAndWait(ctx context.Context, svc *service.Service, hub *wsHub, selfBin, configPath, cwd, workID string, work core.WorkItemRecord, flight *inFlightJob, workerFindings, nonce, attestAdapter, attestModel string, slotIdx int) bool {
-	attestPrompt := fmt.Sprintf(`You are an attestation agent. A worker just finished work item %s.
-Your job is to independently verify the work was done correctly.
-
-## Work item
-Title: %s
-Objective: %s
-Worker adapter: %s
-Worker job: %s
-
-## Worker's verification findings
-%s
-
-## Attestation procedure
-1. Run: git diff --stat
-2. If NO files changed (only .cagent/cagent.db or nothing):
-   The worker failed silently. Attest failure:
-   cagent work attest %s --nonce %s --result failed --summary "no code changes produced by worker" --verifier-kind attestation --method automated_review
-   Stop.
-
-3. If files changed, review the diff:
-   - Run: git diff
-   - Do the changes address the objective?
-   - Check build: run the appropriate build command (go build ./... or similar)
-   - Check for obvious errors or regressions
-
-4. If the work is correct and complete:
-   cagent work attest %s --nonce %s --result passed --summary "N files changed, builds clean, changes match objective" --verifier-kind attestation --method automated_review
-   Stop.
-
-5. If the work is incorrect or incomplete:
-   cagent work attest %s --nonce %s --result failed --summary "<specific reason>" --verifier-kind attestation --method automated_review
-   Stop.
-
-IMPORTANT: You MUST run exactly one cagent work attest command. This is the attestation contract —
-the attest command atomically records your finding AND transitions the work item state.
-Do not use any other command to transition state. Only cagent work attest with the nonce provided above.
-Be thorough but concise.`,
-		workID, work.Title, work.Objective, flight.adapter, flight.jobID,
-		workerFindings,
-		workID, nonce, workID, nonce, workID, nonce)
-
-	args := []string{"run", "--json", "--adapter", attestAdapter, "--cwd", cwd,
-		"--model", attestModel, "--work", workID, "--prompt", attestPrompt}
-	if configPath != "" {
-		args = append(args, "--config", configPath)
-	}
-
-	runCmd := exec.Command(selfBin, args...)
-	runCmd.Dir = cwd
-	runCmd.Stderr = nil
-	runCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	out, spawnErr := runCmd.Output()
-
-	if spawnErr != nil {
-		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateFailed,
-			Message:        fmt.Sprintf("attestation: slot %d dispatch failed: %v", slotIdx, spawnErr),
-			CreatedBy:      "attestation",
-		})
-		return false
-	}
-
-	// Extract attestation job ID for tracking
-	var result struct {
-		Job struct {
-			JobID string `json:"job_id"`
-		} `json:"job"`
-	}
-	attestJobID := "(unknown)"
-	if json.Unmarshal(out, &result) == nil && result.Job.JobID != "" {
-		attestJobID = result.Job.JobID
-	}
-
-	// Notify connected clients that attestation has been dispatched
-	hub.broadcast("attestation_added", map[string]string{"work_id": workID, "job_id": attestJobID})
-
-	// Don't mark done — the attestor will do it via cagent work attest
-	_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-		WorkID:    workID,
-		Message:   fmt.Sprintf("attestation: slot %d dispatched %s via %s/%s", slotIdx, attestJobID, attestAdapter, attestModel),
-		CreatedBy: "attestation",
-	})
-
-	// Wait for the attestation job to reach a terminal state so we can dispatch
-	// the next slot (if any) only after this attestor has recorded its result.
-	if attestJobID != "(unknown)" {
-		if _, waitErr := svc.WaitStatus(ctx, attestJobID, 5*time.Second, 30*time.Minute); waitErr != nil {
-			_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-				WorkID:         workID,
-				ExecutionState: core.WorkExecutionStateFailed,
-				Message:        fmt.Sprintf("attestation: slot %d wait failed: %v", slotIdx, waitErr),
-				CreatedBy:      "attestation",
-			})
-			return false
-		}
-	}
-
-	return true
-}
-
 // runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
 // Only active when --auto is set.
 func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, defaultAdapter string, hub *wsHub) {
@@ -1615,31 +1472,18 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		inFlightCount := len(inFlight)
 		mu.Unlock()
 
-		// Handle completions outside the lock (attestation is synchronous and slow)
-		attestationRunning := false
 		for _, c := range completed {
 			if c.state == "failed" || c.state == "cancelled" || c.state == "stalled" {
 				msg := fmt.Sprintf("supervisor: job %s %s", c.flight.jobID, c.state)
-				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-					WorkID:         c.workID,
-					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        msg,
-					CreatedBy:      "supervisor",
-				})
-				hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
-			} else {
-				hub.broadcast("job_completed", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
-				if handleJobCompletion(ctx, svc, hub, selfBin, root.configPath, cwd, c.workID, c.flight, defaultAdapter) {
-					attestationRunning = true
-				}
+				hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID, "state": c.state, "message": msg})
+				continue
 			}
+			hub.broadcast("job_completed", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
+			hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID, "state": "completed"})
 		}
 
-		// Dispatch — but NOT if attestation just ran (it may have changed files)
+		// Dispatch new work using any available capacity.
 		availableSlots := maxConcurrent - inFlightCount
-		if attestationRunning {
-			availableSlots = 0
-		}
 		if availableSlots > 0 {
 			readyItems, _ := svc.ReadyWork(ctx, availableSlots*2, false)
 			for i, item := range readyItems {

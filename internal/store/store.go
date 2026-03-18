@@ -456,11 +456,11 @@ func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		ctx,
 		`INSERT INTO work_items (
 			work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-			priority, required_capabilities_json, required_model_traits_json,
+			priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 			preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
-			required_attestations_json, acceptance_json, metadata_json, head_commit_oid,
+			required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 			current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.WorkID,
 		rec.Title,
 		rec.Objective,
@@ -470,6 +470,8 @@ func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		rec.LockState,
 		nullIfEmpty(rec.Phase),
 		rec.Priority,
+		nullIfEmpty(rec.ConfigurationClass),
+		nullIfEmpty(rec.BudgetClass),
 		string(required),
 		string(requiredModelTraits),
 		string(preferred),
@@ -480,6 +482,7 @@ func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		string(acceptance),
 		string(metadata),
 		nullIfEmpty(rec.HeadCommitOID),
+		formatTimePtr(rec.AttestationFrozenAt),
 		nullIfEmpty(rec.CurrentJobID),
 		nullIfEmpty(rec.CurrentSessionID),
 		nullIfEmpty(rec.ClaimedBy),
@@ -543,6 +546,8 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		        lock_state = ?,
 		        phase = ?,
 		        priority = ?,
+		        configuration_class = ?,
+		        budget_class = ?,
 		        required_capabilities_json = ?,
 		        required_model_traits_json = ?,
 		        preferred_adapters_json = ?,
@@ -553,6 +558,7 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		        acceptance_json = ?,
 		        metadata_json = ?,
 		        head_commit_oid = ?,
+		        attestation_frozen_at = ?,
 		        current_job_id = ?,
 		        current_session_id = ?,
 		        claimed_by = ?,
@@ -567,6 +573,8 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		rec.LockState,
 		nullIfEmpty(rec.Phase),
 		rec.Priority,
+		nullIfEmpty(rec.ConfigurationClass),
+		nullIfEmpty(rec.BudgetClass),
 		string(required),
 		string(requiredModelTraits),
 		string(preferred),
@@ -577,6 +585,7 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		string(acceptance),
 		string(metadata),
 		nullIfEmpty(rec.HeadCommitOID),
+		formatTimePtr(rec.AttestationFrozenAt),
 		nullIfEmpty(rec.CurrentJobID),
 		nullIfEmpty(rec.CurrentSessionID),
 		nullIfEmpty(rec.ClaimedBy),
@@ -602,9 +611,9 @@ func (s *Store) GetWorkItem(ctx context.Context, workID string) (core.WorkItemRe
 	row := s.db.QueryRowContext(
 		ctx,
 		`SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, required_capabilities_json, required_model_traits_json,
+		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
-		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid,
+		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
 		   FROM work_items
 		  WHERE work_id = ?`,
@@ -639,9 +648,9 @@ func (s *Store) ListWorkItems(ctx context.Context, limit int, kind, executionSta
 	}
 
 	query := `SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, required_capabilities_json, required_model_traits_json,
+		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
-		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid,
+		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
 		   FROM work_items`
 	if len(clauses) > 0 {
@@ -680,9 +689,9 @@ func (s *Store) ListReadyWork(ctx context.Context, limit int, includeArchived bo
 		rows, err := s.db.QueryContext(
 			ctx,
 			`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.lock_state, wi.phase,
-			        wi.priority, wi.required_capabilities_json, wi.required_model_traits_json,
+			        wi.priority, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
 			        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json,
-			        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid,
+			        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid, wi.attestation_frozen_at,
 			        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
 			   FROM work_items wi
 			  WHERE `+where+`
@@ -731,7 +740,7 @@ func (s *Store) ListReadyWork(ctx context.Context, limit int, includeArchived bo
 		          FROM work_edges we
 		          JOIN work_items dep ON dep.work_id = we.from_work_id
 		         WHERE we.to_work_id = wi.work_id
-		           AND we.edge_type = 'blocks'
+		           AND we.edge_type IN ('blocks', 'depends_on')
 		           AND dep.execution_state NOT IN ('done', 'cancelled')
 		    )
 		    AND NOT EXISTS (
@@ -936,9 +945,9 @@ func (s *Store) ReleaseExpiredWorkClaims(ctx context.Context) ([]core.WorkItemRe
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, required_capabilities_json, required_model_traits_json,
+		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
-		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid,
+		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
 		   FROM work_items
 		  WHERE execution_state IN ('claimed', 'in_progress')
@@ -1118,9 +1127,9 @@ func (s *Store) ListWorkChildren(ctx context.Context, workID string, limit int) 
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.lock_state, wi.phase,
-		        wi.priority, wi.required_capabilities_json, wi.required_model_traits_json,
+		        wi.priority, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
 		        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json,
-		        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid,
+		        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid, wi.attestation_frozen_at,
 		        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
 		   FROM work_edges we
 		   JOIN work_items wi ON wi.work_id = we.to_work_id
@@ -2451,6 +2460,7 @@ func (s *Store) bootstrap(ctx context.Context) error {
 		`ALTER TABLE work_items ADD COLUMN lock_state TEXT NOT NULL DEFAULT 'unlocked'`,
 		`ALTER TABLE work_items ADD COLUMN required_attestations_json TEXT NOT NULL DEFAULT '[]'`,
 		`ALTER TABLE work_items ADD COLUMN head_commit_oid TEXT`,
+		`ALTER TABLE work_items ADD COLUMN attestation_frozen_at TEXT`,
 		`ALTER TABLE attestation_records ADD COLUMN method TEXT`,
 		`ALTER TABLE attestation_records ADD COLUMN verifier_kind TEXT`,
 		`ALTER TABLE attestation_records ADD COLUMN verifier_identity TEXT`,
@@ -2951,7 +2961,10 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 	var claimedUntil sql.NullString
 	var createdAt string
 	var updatedAt string
+	var attestationFrozenAt sql.NullString
 	var requiredJSON string
+	var configurationClass sql.NullString
+	var budgetClass sql.NullString
 	var requiredModelTraitsJSON string
 	var preferredJSON string
 	var forbiddenJSON string
@@ -2972,6 +2985,8 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 		&lockState,
 		&phase,
 		&rec.Priority,
+		&configurationClass,
+		&budgetClass,
 		&requiredJSON,
 		&requiredModelTraitsJSON,
 		&preferredJSON,
@@ -2982,6 +2997,7 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 		&acceptanceJSON,
 		&metadataJSON,
 		&headCommitOID,
+		&attestationFrozenAt,
 		&currentJobID,
 		&currentSessionID,
 		&claimedBy,
@@ -3000,6 +3016,8 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 		rec.LockState = core.WorkLockStateUnlocked
 	}
 	rec.Phase = phase.String
+	rec.ConfigurationClass = configurationClass.String
+	rec.BudgetClass = budgetClass.String
 	rec.HeadCommitOID = headCommitOID.String
 	rec.CurrentJobID = currentJobID.String
 	rec.CurrentSessionID = currentSessionID.String
@@ -3021,6 +3039,13 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 			return core.WorkItemRecord{}, fmt.Errorf("parse work claimed_until: %w", err)
 		}
 		rec.ClaimedUntil = &parsed
+	}
+	if attestationFrozenAt.Valid {
+		parsed, err := time.Parse(time.RFC3339Nano, attestationFrozenAt.String)
+		if err != nil {
+			return core.WorkItemRecord{}, fmt.Errorf("parse work attestation_frozen_at: %w", err)
+		}
+		rec.AttestationFrozenAt = &parsed
 	}
 
 	if err := json.Unmarshal([]byte(requiredJSON), &rec.RequiredCapabilities); err != nil {
