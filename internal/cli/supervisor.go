@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -205,10 +204,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 
-	var mu sync.Mutex
-	inFlight := make(map[string]*inFlightJob) // keyed by workID
 	stopping := false
-	cycle := 0
 
 	selfBin, err := os.Executable()
 	if err != nil {
@@ -233,11 +229,13 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	// Budget tracker persists daily run counts to <stateDir>/usage.json.
 	stateDir := filepath.Join(cwd, ".cagent")
 	budget := newDailyUsage(stateDir)
-	limits := buildLimitsMap(cfg)
 
 	jsonOutput := root.jsonOutput
-	leaseDuration := 30 * time.Minute
-	leaseRenewInterval := 10 * time.Minute // renew well before expiry
+
+	loop := newSupervisorLoop(opts.maxConcurrent, cwd, selfBin, root.configPath)
+	loop.dryRun = opts.dryRun
+	loop.budget = budget
+	loop.limits = buildLimitsMap(cfg)
 
 	emit := func(report supervisorCycleReport) {
 		if jsonOutput {
@@ -249,7 +247,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 				fmt.Sprintf("in_flight=%d", report.InFlight),
 			}
 			for _, d := range report.Dispatched {
-				if opts.dryRun {
+				if report.DryRun {
 					parts = append(parts, fmt.Sprintf("would-dispatch %s (%s via %s)", d.WorkID, d.Title, d.Adapter))
 				} else {
 					parts = append(parts, fmt.Sprintf("dispatched %s job=%s (%s via %s)", d.WorkID, d.JobID, d.Title, d.Adapter))
@@ -263,8 +261,6 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	}
 
 	for {
-		cycle++
-
 		select {
 		case <-sigCh:
 			stopping = true
@@ -272,8 +268,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 		}
 
 		if stopping {
-			mu.Lock()
-			remaining := len(inFlight)
+			remaining := loop.inFlightLen()
 			// On graceful shutdown, cancel all in-flight jobs rather than
 			// waiting indefinitely. Each `cagent run` spawns a detached
 			// background worker (via service.spawnDetachedWorker with
@@ -287,39 +282,21 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 				}
 				shutdownSvc, svcErr := service.Open(ctx, root.configPath)
 				if svcErr == nil {
-					for workID, flight := range inFlight {
-						if !jsonOutput {
+					if !jsonOutput {
+						for workID, flight := range loop.snapshotInFlight() {
 							_, _ = fmt.Fprintf(cmd.OutOrStdout(), "supervisor: cancelling job %s (work %s)\n", flight.jobID, workID)
 						}
-						if _, cancelErr := shutdownSvc.Cancel(ctx, flight.jobID); cancelErr != nil {
-							if !jsonOutput {
-								_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to cancel job %s: %v\n", flight.jobID, cancelErr)
-							}
-						}
-						// Mark the work item as failed so it can be retried later
-						_, _ = shutdownSvc.UpdateWork(ctx, service.WorkUpdateRequest{
-							WorkID:         workID,
-							ExecutionState: core.WorkExecutionStateFailed,
-							Message:        fmt.Sprintf("supervisor: job %s cancelled during shutdown", flight.jobID),
-							CreatedBy:      "supervisor",
-						})
 					}
+					loop.cancelInFlight(ctx, shutdownSvc)
 					_ = shutdownSvc.Close()
 				} else if !jsonOutput {
 					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to open service for shutdown cleanup: %v\n", svcErr)
 				}
 			}
-			mu.Unlock()
 			if !jsonOutput {
 				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "supervisor: shutdown complete")
 			}
 			return nil
-		}
-
-		report := supervisorCycleReport{
-			Cycle:     cycle,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			DryRun:    opts.dryRun,
 		}
 
 		svc, err := service.Open(ctx, root.configPath)
@@ -331,216 +308,11 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 			continue
 		}
 
-		// 0. Auto-init: if no active work on first cycle, bootstrap
-		if cycle == 1 {
-			allWork, listErr := svc.ListWork(ctx, service.WorkListRequest{Limit: 1, IncludeArchived: true})
-			if listErr == nil && len(allWork) == 0 {
-				if !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "supervisor: empty work graph, bootstrapping %s\n", cwd)
-				}
-				if bootstrapErr := bootstrapRepo(ctx, svc, cwd); bootstrapErr != nil {
-					if !jsonOutput {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: bootstrap failed: %v\n", bootstrapErr)
-					}
-				}
-			}
-		}
-
-		// 1. Reconcile: full reset on startup, lease expiry every cycle.
-		var reconcileErr error
-		if cycle == 1 {
-			_, reconcileErr = svc.ReconcileOnStartup(ctx)
-		} else {
-			_, reconcileErr = svc.ReconcileExpiredLeases(ctx)
-		}
-		if reconcileErr != nil {
-			if !jsonOutput {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: reconcile: %v\n", reconcileErr)
-			}
-		}
-
-		// 2. Check in-flight jobs by querying job status directly (no subprocess)
-		mu.Lock()
-		var completed []completedEntry
-		for workID, flight := range inFlight {
-			statusResult, pollErr := svc.Status(ctx, flight.jobID)
-			if pollErr != nil {
-				if !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to poll job %s: %v\n", flight.jobID, pollErr)
-				}
-				continue
-			}
-			jobState := string(statusResult.Job.State)
-
-			if isTerminal(jobState) {
-				status := "done"
-				if jobState == "failed" || jobState == "cancelled" {
-					status = jobState
-				}
-
-				completed = append(completed, completedEntry{
-					WorkID: workID,
-					JobID:  flight.jobID,
-					Status: status,
-				})
-				delete(inFlight, workID)
-			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
-				// No new events for 10 minutes — job is stuck
-				_, updateErr := svc.UpdateWork(ctx, service.WorkUpdateRequest{
-					WorkID:         workID,
-					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        fmt.Sprintf("supervisor: job %s stalled (no output for 10m, started %s ago)", flight.jobID, time.Since(flight.started).Truncate(time.Second)),
-					CreatedBy:      "supervisor",
-				})
-				if updateErr != nil && !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to timeout work %s: %v\n", workID, updateErr)
-				}
-				completed = append(completed, completedEntry{
-					WorkID: workID,
-					JobID:  flight.jobID,
-					Status: "timeout",
-				})
-				delete(inFlight, workID)
-			} else {
-				// 3. Renew lease if needed
-				if time.Now().After(flight.leaseNext) {
-					_, renewErr := svc.RenewWorkLease(ctx, service.WorkRenewLeaseRequest{
-						WorkID:        workID,
-						Claimant:      "supervisor",
-						LeaseDuration: leaseDuration,
-					})
-					if renewErr != nil && !jsonOutput {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to renew lease for %s: %v\n", workID, renewErr)
-					} else {
-						flight.leaseNext = time.Now().Add(leaseRenewInterval)
-					}
-				}
-			}
-		}
-		inFlightCount := len(inFlight)
-		mu.Unlock()
-		report.Completed = completed
-		report.InFlight = inFlightCount
-
-		// 4. List ready work
-		readyItems, err := svc.ReadyWork(ctx, opts.maxConcurrent*2, false)
-		if err != nil {
-			if !jsonOutput {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to list ready work: %v\n", err)
-			}
-			_ = svc.Close()
-			sleepOrStop(ctx, opts.interval, sigCh, &stopping)
-			continue
-		}
-		report.Ready = len(readyItems)
-
-		// 5. Dispatch new work
-		if !stopping {
-			for _, item := range readyItems {
-				mu.Lock()
-				currentInFlight := len(inFlight)
-				_, alreadyTracked := inFlight[item.WorkID]
-				mu.Unlock()
-
-				if alreadyTracked || currentInFlight >= opts.maxConcurrent {
-					if currentInFlight >= opts.maxConcurrent {
-						break
-					}
-					continue
-				}
-
-				// Look up job history to inform rotation-based adapter selection.
-				var jobHistory []core.JobRecord
-				if workDetail, wErr := svc.Work(ctx, item.WorkID); wErr == nil {
-					jobHistory = workDetail.Jobs
-				}
-				// Apply budget filter: skip adapters that have hit their daily limit.
-				effectivePool := budgetFilter(workRotation, limits, budget)
-				adapter, model := pickAdapterModel(item, jobHistory, effectivePool)
-
-				if opts.dryRun {
-					report.Dispatched = append(report.Dispatched, dispatchEntry{
-						WorkID:  item.WorkID,
-						Title:   item.Title,
-						Adapter: adapter,
-					})
-					continue
-				}
-
-				// Claim
-				claimed, claimErr := svc.ClaimWork(ctx, service.WorkClaimRequest{
-					WorkID:        item.WorkID,
-					Claimant:      "supervisor",
-					LeaseDuration: leaseDuration,
-				})
-				if claimErr != nil {
-					if !jsonOutput {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to claim %s: %v\n", item.WorkID, claimErr)
-					}
-					continue
-				}
-
-				// Hydrate
-				briefing, hydrateErr := svc.HydrateWork(ctx, service.WorkHydrateRequest{
-					WorkID:   claimed.WorkID,
-					Mode:     "standard",
-					Claimant: "supervisor",
-				})
-				if hydrateErr != nil {
-					if !jsonOutput {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to hydrate %s: %v\n", claimed.WorkID, hydrateErr)
-					}
-					_, _ = svc.ReleaseWork(ctx, service.WorkReleaseRequest{
-						WorkID:   claimed.WorkID,
-						Claimant: "supervisor",
-					})
-					continue
-				}
-
-				briefingJSON, _ := json.Marshal(briefing)
-
-				// Spawn `cagent run --json` and capture the job ID from stdout
-				jobID, spawnErr := spawnRun(selfBin, root.configPath, adapter, model, cwd, string(briefingJSON))
-				if spawnErr != nil {
-					if !jsonOutput {
-						_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to spawn job for %s: %v\n", claimed.WorkID, spawnErr)
-					}
-					_, _ = svc.ReleaseWork(ctx, service.WorkReleaseRequest{
-						WorkID:   claimed.WorkID,
-						Claimant: "supervisor",
-					})
-					continue
-				}
-
-				// Record the dispatch in the daily budget tracker.
-				budget.recordRun(adapter, model)
-
-				mu.Lock()
-				inFlight[claimed.WorkID] = &inFlightJob{
-					workID:    claimed.WorkID,
-					jobID:     jobID,
-					adapter:   adapter,
-					model:     model,
-					started:   time.Now(),
-					leaseNext: time.Now().Add(leaseRenewInterval),
-				}
-				mu.Unlock()
-
-				report.InFlight = currentInFlight + 1
-				report.Dispatched = append(report.Dispatched, dispatchEntry{
-					WorkID:  claimed.WorkID,
-					Title:   claimed.Title,
-					Adapter: adapter,
-					JobID:   jobID,
-				})
-			}
-		}
-
+		report := loop.runOneCycle(ctx, svc)
 		_ = svc.Close()
-		emit(report)
 
-		// Write supervisor state for `cagent status` and mind-graph
-		writeSupState(cwd, cycle, inFlight, report)
+		emit(report)
+		writeSupState(cwd, report.Cycle, loop.snapshotInFlight(), report)
 
 		if opts.dryRun {
 			return nil

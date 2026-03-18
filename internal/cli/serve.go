@@ -203,7 +203,7 @@ Examples:
   cagent serve --host 0.0.0.0           # accessible via Tailscale/LAN
   cagent serve --no-browser             # don't open browser on start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, defaultAdapter, devAssets)
+			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, devAssets)
 		},
 	}
 
@@ -219,7 +219,7 @@ Examples:
 	return cmd
 }
 
-func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, defaultAdapter, devAssets string) error {
+func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, devAssets string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -310,7 +310,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, defaultAdapter, hub)
+			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, hub)
 		}()
 	}
 
@@ -1394,180 +1394,51 @@ func truncateText(text string, limit int) string {
 }
 
 // runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
-// Only active when --auto is set.
-func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, defaultAdapter string, hub *wsHub) {
+// Only active when --auto is set. Delegates to supervisorLoop for the core 5-step algorithm.
+func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, hub *wsHub) {
 	selfBin, err := os.Executable()
 	if err != nil {
 		selfBin = "cagent"
 	}
 
-	var mu sync.Mutex
-	inFlight := make(map[string]*inFlightJob)
-	cycle := 0
-	leaseDuration := 30 * time.Minute
-	leaseRenewInterval := 10 * time.Minute
+	// Load config for budget-aware rotation and apply to the package-level pool.
+	cfg, _ := core.LoadConfig(root.configPath)
+	if len(cfg.Rotation.Entries) > 0 {
+		workRotation = rotationFromConfig(cfg)
+	}
+
+	loop := newSupervisorLoop(maxConcurrent, cwd, selfBin, root.configPath)
+	loop.budget = newDailyUsage(filepath.Join(cwd, ".cagent"))
+	loop.limits = buildLimitsMap(cfg)
+	loop.onJobStarted = func(workID, jobID, adapter string) {
+		hub.broadcast("job_started", map[string]string{"work_id": workID, "job_id": jobID, "adapter": adapter})
+	}
+	loop.onJobCompleted = func(workID, jobID, state string) {
+		if state == "failed" || state == "cancelled" || state == "stalled" {
+			hub.broadcast("work_updated", map[string]string{
+				"work_id": workID, "job_id": jobID, "state": state,
+				"message": fmt.Sprintf("supervisor: job %s %s", jobID, state),
+			})
+		} else {
+			hub.broadcast("job_completed", map[string]string{"work_id": workID, "job_id": jobID})
+			hub.broadcast("work_updated", map[string]string{"work_id": workID, "job_id": jobID, "state": "completed"})
+		}
+	}
 
 	for {
 		select {
 		case <-ctx.Done():
-			// Graceful shutdown: cancel in-flight jobs
-			mu.Lock()
-			for workID, flight := range inFlight {
-				_, _ = svc.Cancel(ctx, flight.jobID)
-				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-					WorkID:         workID,
-					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        "supervisor: cancelled during shutdown",
-					CreatedBy:      "supervisor",
-				})
-			}
-			mu.Unlock()
+			loop.cancelInFlight(ctx, svc)
 			return
 		default:
 		}
 
-		cycle++
-
-		// Auto-init: only bootstrap if the work graph has never been used
-		if cycle == 1 {
-			allWork, _ := svc.ListWork(ctx, service.WorkListRequest{Limit: 1, IncludeArchived: true})
-			if len(allWork) == 0 {
-				_ = bootstrapRepo(ctx, svc, cwd)
-			}
-		}
-
-		// Reconcile: full reset on startup, lease expiry every cycle.
-		if cycle == 1 {
-			_, _ = svc.ReconcileOnStartup(ctx)
-		} else {
-			_, _ = svc.ReconcileExpiredLeases(ctx)
-		}
-
-		// Check in-flight: collect completed/failed jobs, then handle outside the lock
-		mu.Lock()
-		type completedJob struct {
-			workID string
-			flight *inFlightJob
-			state  string
-		}
-		var completed []completedJob
-		for workID, flight := range inFlight {
-			statusResult, err := svc.Status(ctx, flight.jobID)
-			if err != nil {
-				continue
-			}
-			jobState := string(statusResult.Job.State)
-
-			if isTerminal(jobState) {
-				completed = append(completed, completedJob{workID, flight, jobState})
-				delete(inFlight, workID)
-			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
-				completed = append(completed, completedJob{workID, flight, "stalled"})
-				delete(inFlight, workID)
-			} else if time.Now().After(flight.leaseNext) {
-				_, _ = svc.RenewWorkLease(ctx, service.WorkRenewLeaseRequest{
-					WorkID:        workID,
-					Claimant:      "supervisor",
-					LeaseDuration: leaseDuration,
-				})
-				flight.leaseNext = time.Now().Add(leaseRenewInterval)
-			}
-		}
-		inFlightCount := len(inFlight)
-		mu.Unlock()
-
-		for _, c := range completed {
-			if c.state == "failed" || c.state == "cancelled" || c.state == "stalled" {
-				msg := fmt.Sprintf("supervisor: job %s %s", c.flight.jobID, c.state)
-				hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID, "state": c.state, "message": msg})
-				continue
-			}
-			hub.broadcast("job_completed", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID})
-			hub.broadcast("work_updated", map[string]string{"work_id": c.workID, "job_id": c.flight.jobID, "state": "completed"})
-		}
-
-		// Dispatch new work using any available capacity.
-		availableSlots := maxConcurrent - inFlightCount
-		if availableSlots > 0 {
-			readyItems, _ := svc.ReadyWork(ctx, availableSlots*2, false)
-			for i, item := range readyItems {
-				if i >= availableSlots {
-					break
-				}
-				mu.Lock()
-				if len(inFlight) >= maxConcurrent {
-					mu.Unlock()
-					break
-				}
-				if _, tracked := inFlight[item.WorkID]; tracked {
-					mu.Unlock()
-					continue
-				}
-				mu.Unlock()
-
-				// Look up job history to inform rotation-based adapter selection.
-				var jobHistory []core.JobRecord
-				if workDetail, wErr := svc.Work(ctx, item.WorkID); wErr == nil {
-					jobHistory = workDetail.Jobs
-				}
-				adapter, model := pickAdapterModel(item, jobHistory, nil)
-
-				claimed, err := svc.ClaimWork(ctx, service.WorkClaimRequest{
-					WorkID:        item.WorkID,
-					Claimant:      "supervisor",
-					LeaseDuration: leaseDuration,
-				})
-				if err != nil {
-					continue
-				}
-
-				briefing, err := svc.HydrateWork(ctx, service.WorkHydrateRequest{
-					WorkID:   claimed.WorkID,
-					Mode:     "standard",
-					Claimant: "supervisor",
-				})
-				if err != nil {
-					_, _ = svc.ReleaseWork(ctx, service.WorkReleaseRequest{
-						WorkID:   claimed.WorkID,
-						Claimant: "supervisor",
-					})
-					continue
-				}
-
-				briefingJSON, _ := json.Marshal(briefing)
-				jobID, err := spawnRun(selfBin, root.configPath, adapter, model, cwd, string(briefingJSON))
-				if err != nil {
-					_, _ = svc.ReleaseWork(ctx, service.WorkReleaseRequest{
-						WorkID:   claimed.WorkID,
-						Claimant: "supervisor",
-					})
-					continue
-				}
-
-				mu.Lock()
-				inFlight[claimed.WorkID] = &inFlightJob{
-					workID:    claimed.WorkID,
-					jobID:     jobID,
-					adapter:   adapter,
-					model:     model,
-					started:   time.Now(),
-					leaseNext: time.Now().Add(leaseRenewInterval),
-				}
-				mu.Unlock()
-				hub.broadcast("job_started", map[string]string{"work_id": claimed.WorkID, "job_id": jobID, "adapter": adapter})
-			}
-		}
-
-		// Write state file
-		writeSupState(cwd, cycle, inFlight, supervisorCycleReport{
-			Cycle:     cycle,
-			Timestamp: time.Now().UTC().Format(time.RFC3339),
-			InFlight:  len(inFlight),
-			Ready:     0,
-		})
+		report := loop.runOneCycle(ctx, svc)
+		writeSupState(cwd, report.Cycle, loop.snapshotInFlight(), report)
 
 		select {
 		case <-ctx.Done():
+			loop.cancelInFlight(ctx, svc)
 			return
 		case <-time.After(30 * time.Second):
 		}
