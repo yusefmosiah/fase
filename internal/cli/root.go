@@ -965,6 +965,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	createCmd.Flags().StringVar(&createOpts.parent, "parent", "", "optional parent work id")
 	createCmd.Flags().StringVar(&createOpts.lockState, "lock-state", string(core.WorkLockStateUnlocked), "initial lock state")
 	createCmd.Flags().IntVar(&createOpts.priority, "priority", 0, "priority")
+	createCmd.Flags().IntVar(&createOpts.position, "position", 0, "queue position (1 = front, 0 = auto-assign)")
 	createCmd.Flags().StringVar(&createOpts.requiredCapabilities, "required-capabilities", "", "comma-separated required capabilities")
 	createCmd.Flags().StringVar(&createOpts.requiredModelTraits, "required-model-traits", "", "comma-separated required model traits")
 	createCmd.Flags().StringVar(&createOpts.preferredAdapters, "preferred-adapters", "", "comma-separated preferred adapters")
