@@ -61,7 +61,7 @@ func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) 
 		"--print",
 		"--verbose",
 		"--output-format", "stream-json",
-		"--permission-mode", "auto",
+		"--permission-mode", "bypassPermissions",
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
@@ -101,7 +101,7 @@ func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunReq
 		"--print",
 		"--verbose",
 		"--output-format", "stream-json",
-		"--permission-mode", "auto",
+		"--permission-mode", "bypassPermissions",
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
