@@ -1501,6 +1501,28 @@ func (s *Service) ReconcileOnStartup(ctx context.Context) ([]string, error) {
 		}
 	}
 
+	// Release stale claims: on startup, no work should be claimed or in_progress
+	// since no supervisor is tracking anything yet. Reset them to ready.
+	staleStates := []string{
+		string(core.WorkExecutionStateClaimed),
+		string(core.WorkExecutionStateInProgress),
+	}
+	for _, state := range staleStates {
+		stale, listErr := s.store.ListWorkItems(ctx, 200, "", state, "", false)
+		if listErr != nil {
+			continue
+		}
+		for _, item := range stale {
+			_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+				WorkID:         item.WorkID,
+				ExecutionState: core.WorkExecutionStateReady,
+				Message:        fmt.Sprintf("stale %s state released during reconciliation", state),
+				CreatedBy:      "reconciler",
+			})
+			ids = append(ids, item.WorkID)
+		}
+	}
+
 	return ids, nil
 }
 
