@@ -456,11 +456,11 @@ func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		ctx,
 		`INSERT INTO work_items (
 			work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-			priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
+			priority, position, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 			preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
 			required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 			current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.WorkID,
 		rec.Title,
 		rec.Objective,
@@ -470,6 +470,7 @@ func (s *Store) CreateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		rec.LockState,
 		nullIfEmpty(rec.Phase),
 		rec.Priority,
+		rec.Position,
 		nullIfEmpty(rec.ConfigurationClass),
 		nullIfEmpty(rec.BudgetClass),
 		string(required),
@@ -546,6 +547,7 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		        lock_state = ?,
 		        phase = ?,
 		        priority = ?,
+		        position = ?,
 		        configuration_class = ?,
 		        budget_class = ?,
 		        required_capabilities_json = ?,
@@ -573,6 +575,7 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 		rec.LockState,
 		nullIfEmpty(rec.Phase),
 		rec.Priority,
+		rec.Position,
 		nullIfEmpty(rec.ConfigurationClass),
 		nullIfEmpty(rec.BudgetClass),
 		string(required),
@@ -607,11 +610,55 @@ func (s *Store) UpdateWorkItem(ctx context.Context, rec core.WorkItemRecord) err
 	return nil
 }
 
+// NextWorkPosition returns MAX(position)+1 for use when auto-assigning position to a new work item.
+func (s *Store) NextWorkPosition(ctx context.Context) (int, error) {
+	var maxPos sql.NullInt64
+	row := s.db.QueryRowContext(ctx, `SELECT MAX(position) FROM work_items`)
+	if err := row.Scan(&maxPos); err != nil {
+		return 0, fmt.Errorf("query max work position: %w", err)
+	}
+	if !maxPos.Valid {
+		return 1, nil
+	}
+	return int(maxPos.Int64) + 1, nil
+}
+
+// ShiftWorkPositions adds delta to position for all work items whose position is in [fromPos, toPos].
+func (s *Store) ShiftWorkPositions(ctx context.Context, fromPos, toPos, delta int) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE work_items SET position = position + ? WHERE position >= ? AND position <= ?`,
+		delta, fromPos, toPos,
+	)
+	if err != nil {
+		return fmt.Errorf("shift work positions: %w", err)
+	}
+	return nil
+}
+
+// SetWorkPosition sets the position field for a single work item without touching other fields.
+func (s *Store) SetWorkPosition(ctx context.Context, workID string, position int) error {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE work_items SET position = ? WHERE work_id = ?`,
+		position, workID,
+	)
+	if err != nil {
+		return fmt.Errorf("set work position: %w", err)
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("check set work position rows: %w", err)
+	}
+	if rows == 0 {
+		return fmt.Errorf("%w: work %s", ErrNotFound, workID)
+	}
+	return nil
+}
+
 func (s *Store) GetWorkItem(ctx context.Context, workID string) (core.WorkItemRecord, error) {
 	row := s.db.QueryRowContext(
 		ctx,
 		`SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
+		        priority, position, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
 		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
@@ -648,7 +695,7 @@ func (s *Store) ListWorkItems(ctx context.Context, limit int, kind, executionSta
 	}
 
 	query := `SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
+		        priority, position, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
 		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
@@ -689,13 +736,13 @@ func (s *Store) ListReadyWork(ctx context.Context, limit int, includeArchived bo
 		rows, err := s.db.QueryContext(
 			ctx,
 			`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.lock_state, wi.phase,
-			        wi.priority, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
+			        wi.priority, wi.position, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
 			        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json,
 			        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid, wi.attestation_frozen_at,
 			        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
 			   FROM work_items wi
 			  WHERE `+where+`
-			  ORDER BY wi.priority DESC, wi.updated_at DESC
+			  ORDER BY wi.position ASC, wi.priority DESC, wi.updated_at DESC
 			  LIMIT ?`,
 			args...,
 		)
@@ -945,7 +992,7 @@ func (s *Store) ReleaseExpiredWorkClaims(ctx context.Context) ([]core.WorkItemRe
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT work_id, title, objective, kind, execution_state, approval_state, lock_state, phase,
-		        priority, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
+		        priority, position, configuration_class, budget_class, required_capabilities_json, required_model_traits_json,
 		        preferred_adapters_json, forbidden_adapters_json, preferred_models_json, avoid_models_json,
 		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid, attestation_frozen_at,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
@@ -1127,7 +1174,7 @@ func (s *Store) ListWorkChildren(ctx context.Context, workID string, limit int) 
 	rows, err := s.db.QueryContext(
 		ctx,
 		`SELECT wi.work_id, wi.title, wi.objective, wi.kind, wi.execution_state, wi.approval_state, wi.lock_state, wi.phase,
-		        wi.priority, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
+		        wi.priority, wi.position, wi.configuration_class, wi.budget_class, wi.required_capabilities_json, wi.required_model_traits_json,
 		        wi.preferred_adapters_json, wi.forbidden_adapters_json, wi.preferred_models_json, wi.avoid_models_json,
 		        wi.required_attestations_json, wi.acceptance_json, wi.metadata_json, wi.head_commit_oid, wi.attestation_frozen_at,
 		        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
@@ -2495,6 +2542,14 @@ func (s *Store) bootstrap(ctx context.Context) error {
 		`UPDATE work_items SET approval_state = 'pending' WHERE approval_state = 'pending_verification'`,
 		`UPDATE work_updates SET approval_state = 'pending' WHERE approval_state = 'pending_verification'`,
 		`CREATE INDEX IF NOT EXISTS idx_attestation_records_subject_created_at ON attestation_records(subject_kind, subject_id, created_at DESC)`,
+		`ALTER TABLE work_items ADD COLUMN position INTEGER NOT NULL DEFAULT 0`,
+		`UPDATE work_items SET position = (
+			SELECT COUNT(*) + 1
+			  FROM work_items AS wi2
+			 WHERE wi2.priority > work_items.priority
+			    OR (wi2.priority = work_items.priority AND wi2.created_at < work_items.created_at)
+			    OR (wi2.priority = work_items.priority AND wi2.created_at = work_items.created_at AND wi2.rowid < work_items.rowid)
+		) WHERE position = 0`,
 	}
 	for _, stmt := range migrations {
 		if _, err := s.db.ExecContext(ctx, stmt); err != nil && !ignorableSQLiteMigrationErr(err) {
@@ -3001,6 +3056,7 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 		&lockState,
 		&phase,
 		&rec.Priority,
+		&rec.Position,
 		&configurationClass,
 		&budgetClass,
 		&requiredJSON,
@@ -3680,6 +3736,7 @@ CREATE TABLE IF NOT EXISTS work_items (
 	lock_state TEXT NOT NULL DEFAULT 'unlocked',
 	phase TEXT,
 	priority INTEGER NOT NULL DEFAULT 0,
+	position INTEGER NOT NULL DEFAULT 0,
 	configuration_class TEXT,
 	budget_class TEXT,
 	required_capabilities_json TEXT NOT NULL DEFAULT '[]',

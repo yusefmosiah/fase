@@ -58,6 +58,7 @@ type workCreateOptions struct {
 	parent               string
 	lockState            string
 	priority             int
+	position             int
 	requiredCapabilities string
 	requiredModelTraits  string
 	preferredAdapters    string
@@ -939,6 +940,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				ParentWorkID:         createOpts.parent,
 				LockState:            core.WorkLockState(createOpts.lockState),
 				Priority:             createOpts.priority,
+				Position:             createOpts.position,
 				RequiredCapabilities: splitCSV(createOpts.requiredCapabilities),
 				RequiredModelTraits:  splitCSV(createOpts.requiredModelTraits),
 				PreferredAdapters:    splitCSV(createOpts.preferredAdapters),

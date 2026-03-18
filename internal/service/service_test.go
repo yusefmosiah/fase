@@ -1816,3 +1816,258 @@ func waitForTerminalStatus(t *testing.T, svc *Service, jobID string) *StatusResu
 	t.Fatalf("job %s did not reach a terminal state", jobID)
 	return nil
 }
+
+func newTestService(t *testing.T) *Service {
+	t.Helper()
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	svc, err := Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc
+}
+
+func TestAttestationGateBlocksArchive(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "gate test",
+		Objective: "must not archive without attestation",
+		RequiredAttestations: []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	_, err = svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateArchived,
+		Message:        "attempt archive",
+		CreatedBy:      "test",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput when archiving with unresolved attestations, got %v", err)
+	}
+}
+
+func TestAttestationGateBlocksDone(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "gate test done",
+		Objective: "must not set done without attestation",
+		RequiredAttestations: []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	_, err = svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateDone,
+		Message:        "attempt done",
+		CreatedBy:      "test",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput when setting done with unresolved attestations, got %v", err)
+	}
+}
+
+func TestAttestationGateAllowsArchiveAfterAttestation(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "gate allow archive",
+		Objective: "archive after attestation passes",
+		RequiredAttestations: []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	_, _, err = svc.AttestWork(ctx, WorkAttestRequest{
+		WorkID:       work.WorkID,
+		Result:       "passed",
+		Summary:      "looks good",
+		VerifierKind: "attestation",
+		Method:       "automated_review",
+		CreatedBy:    "verifier",
+	})
+	if err != nil {
+		t.Fatalf("AttestWork: %v", err)
+	}
+
+	updated, err := svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateArchived,
+		Message:        "archive after attestation",
+		CreatedBy:      "test",
+	})
+	if err != nil {
+		t.Fatalf("UpdateWork archive after attestation: %v", err)
+	}
+	if updated.ExecutionState != core.WorkExecutionStateArchived {
+		t.Fatalf("expected archived state, got %s", updated.ExecutionState)
+	}
+}
+
+func TestAttestationGateAllowsDoneAfterAttestation(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "gate allow done",
+		Objective: "done after attestation passes",
+		RequiredAttestations: []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	_, _, err = svc.AttestWork(ctx, WorkAttestRequest{
+		WorkID:       work.WorkID,
+		Result:       "passed",
+		Summary:      "looks good",
+		VerifierKind: "attestation",
+		Method:       "automated_review",
+		CreatedBy:    "verifier",
+	})
+	if err != nil {
+		t.Fatalf("AttestWork: %v", err)
+	}
+
+	updated, err := svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateDone,
+		Message:        "done after attestation",
+		CreatedBy:      "test",
+	})
+	if err != nil {
+		t.Fatalf("UpdateWork done after attestation: %v", err)
+	}
+	if updated.ExecutionState != core.WorkExecutionStateDone {
+		t.Fatalf("expected done state, got %s", updated.ExecutionState)
+	}
+}
+
+func TestAttestationGateExemptsFailedAndCancelled(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	for _, state := range []core.WorkExecutionState{
+		core.WorkExecutionStateFailed,
+		core.WorkExecutionStateCancelled,
+	} {
+		work, err := svc.CreateWork(ctx, WorkCreateRequest{
+			Title:     "exempt test",
+			Objective: "can always fail or cancel",
+			RequiredAttestations: []core.RequiredAttestation{
+				{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+			},
+		})
+		if err != nil {
+			t.Fatalf("CreateWork for %s: %v", state, err)
+		}
+
+		updated, err := svc.UpdateWork(ctx, WorkUpdateRequest{
+			WorkID:         work.WorkID,
+			ExecutionState: state,
+			Message:        "transition to " + string(state),
+			CreatedBy:      "test",
+		})
+		if err != nil {
+			t.Fatalf("expected no error transitioning to %s without attestation, got %v", state, err)
+		}
+		if updated.ExecutionState != state {
+			t.Fatalf("expected %s state, got %s", state, updated.ExecutionState)
+		}
+	}
+}
+
+func TestAttestationGateDefaultAttestations(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "default attestation gate",
+		Objective: "defaults to requiring attestation",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+	if len(work.RequiredAttestations) == 0 {
+		t.Fatal("expected default required attestations to be set")
+	}
+
+	_, err = svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateArchived,
+		Message:        "attempt archive",
+		CreatedBy:      "test",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for archive with default unresolved attestations, got %v", err)
+	}
+
+	_, err = svc.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateDone,
+		Message:        "attempt done",
+		CreatedBy:      "test",
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for done with default unresolved attestations, got %v", err)
+	}
+}
+
+func TestAttestationGateNoAttestationsRequired(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "no attestations needed",
+		Objective: "attest-kind work has no requirements",
+		Kind:      "attest",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+	if len(work.RequiredAttestations) != 0 {
+		t.Fatalf("expected no required attestations for attest-kind work, got %d", len(work.RequiredAttestations))
+	}
+
+	for _, state := range []core.WorkExecutionState{
+		core.WorkExecutionStateDone,
+		core.WorkExecutionStateArchived,
+	} {
+		updated, err := svc.UpdateWork(ctx, WorkUpdateRequest{
+			WorkID:         work.WorkID,
+			ExecutionState: state,
+			Message:        "transition to " + string(state),
+			CreatedBy:      "test",
+		})
+		if err != nil {
+			t.Fatalf("expected no error for %s without attestation requirements, got %v", state, err)
+		}
+		if updated.ExecutionState != state {
+			t.Fatalf("expected %s, got %s", state, updated.ExecutionState)
+		}
+	}
+}

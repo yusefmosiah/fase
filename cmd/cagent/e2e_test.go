@@ -920,7 +920,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 	binary := buildCagentBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	workOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Archive me", "--objective", "Validate archived filtering")
+	workOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Archive me", "--objective", "Validate archived filtering", "--kind", "attest")
 	var work cliWorkItem
 	if err := json.Unmarshal([]byte(workOutput), &work); err != nil {
 		t.Fatalf("unmarshal work create: %v\n%s", err, workOutput)

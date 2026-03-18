@@ -245,6 +245,7 @@ type WorkCreateRequest struct {
 	ParentWorkID         string
 	LockState            core.WorkLockState
 	Priority             int
+	Position             int
 	ConfigurationClass   string
 	BudgetClass          string
 	RequiredCapabilities []string
@@ -1200,6 +1201,15 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		UpdatedAt:            now,
 	}
 	work.RequiredAttestations = defaultRequiredAttestations(work, req.RequiredAttestations, s.Config)
+	if req.Position > 0 {
+		work.Position = req.Position
+	} else {
+		pos, err := s.store.NextWorkPosition(ctx)
+		if err != nil {
+			return nil, fmt.Errorf("assign work position: %w", err)
+		}
+		work.Position = pos
+	}
 	if err := s.store.CreateWorkItem(ctx, work); err != nil {
 		return nil, err
 	}
@@ -1212,6 +1222,64 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		}
 	}
 	return &work, nil
+}
+
+// MoveWork repositions a work item to newPosition, shifting other items to keep positions contiguous.
+// newPosition is 1-based (1 = front of queue). If newPosition <= 0 it is treated as 1.
+func (s *Service) MoveWork(ctx context.Context, workID string, newPosition int) (*core.WorkItemRecord, error) {
+	if newPosition <= 0 {
+		newPosition = 1
+	}
+	work, err := s.store.GetWorkItem(ctx, workID)
+	if err != nil {
+		return nil, normalizeStoreError("work", workID, err)
+	}
+	cur := work.Position
+	if cur == newPosition {
+		return &work, nil
+	}
+	if cur > newPosition {
+		// Moving up: shift items in [newPosition, cur-1] down by 1.
+		if err := s.store.ShiftWorkPositions(ctx, newPosition, cur-1, 1); err != nil {
+			return nil, err
+		}
+	} else {
+		// Moving down: shift items in [cur+1, newPosition] up by -1.
+		if err := s.store.ShiftWorkPositions(ctx, cur+1, newPosition, -1); err != nil {
+			return nil, err
+		}
+	}
+	if err := s.store.SetWorkPosition(ctx, workID, newPosition); err != nil {
+		return nil, err
+	}
+	work.Position = newPosition
+	return &work, nil
+}
+
+// InsertWorkBefore moves workID to just before beforeWorkID in the queue.
+func (s *Service) InsertWorkBefore(ctx context.Context, workID, beforeWorkID string) (*core.WorkItemRecord, error) {
+	before, err := s.store.GetWorkItem(ctx, beforeWorkID)
+	if err != nil {
+		return nil, normalizeStoreError("work", beforeWorkID, err)
+	}
+	return s.MoveWork(ctx, workID, before.Position)
+}
+
+// MoveToFront moves a work item to position 1 (front of the dispatch queue).
+func (s *Service) MoveToFront(ctx context.Context, workID string) (*core.WorkItemRecord, error) {
+	return s.MoveWork(ctx, workID, 1)
+}
+
+// ReorderQueue assigns sequential positions 1..N to the given work IDs in order.
+// Any work items not in the list retain their existing positions (shifted to follow the reordered items).
+func (s *Service) ReorderQueue(ctx context.Context, workIDs []string) error {
+	for i, wid := range workIDs {
+		pos := i + 1
+		if err := s.store.SetWorkPosition(ctx, wid, pos); err != nil {
+			return fmt.Errorf("reorder queue at index %d (%s): %w", i, wid, err)
+		}
+	}
+	return nil
 }
 
 func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, error) {
@@ -1753,9 +1821,10 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	}
 	now := time.Now().UTC()
 	if req.ExecutionState != "" {
-		// Guard: cannot transition to done via UpdateWork if attestation is unresolved.
-		// Done must be reached through AttestWork or refreshAttestationParentState.
-		if req.ExecutionState == core.WorkExecutionStateDone {
+		// Guard: cannot transition to done or archived via UpdateWork if
+		// attestation is unresolved. Terminal-success transitions require
+		// satisfied attestations; failed/cancelled are exempt.
+		if req.ExecutionState == core.WorkExecutionStateDone || req.ExecutionState == core.WorkExecutionStateArchived {
 			if err := s.guardDoneTransition(ctx, work); err != nil {
 				return nil, err
 			}
@@ -5937,8 +6006,9 @@ func (s *Service) refreshParentAfterAttestationChild(ctx context.Context, child 
 	return s.refreshAttestationParentState(ctx, parentID)
 }
 
-// guardDoneTransition returns an error if the work item cannot transition to done
-// because it has unresolved attestation requirements or pending attestation children.
+// guardDoneTransition returns an error if the work item cannot transition to a
+// terminal-success state (done, archived) because it has unresolved attestation
+// requirements or pending attestation children.
 func (s *Service) guardDoneTransition(ctx context.Context, work core.WorkItemRecord) error {
 	// Check for attestation children that aren't done
 	children, err := s.store.ListWorkChildren(ctx, work.WorkID, 100)

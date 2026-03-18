@@ -340,6 +340,7 @@ type WorkItemRecord struct {
 	LockState            WorkLockState         `json:"lock_state"`
 	Phase                string                `json:"phase,omitempty"`
 	Priority             int                   `json:"priority,omitempty"`
+	Position             int                   `json:"position,omitempty"`
 	ConfigurationClass   string                `json:"configuration_class,omitempty"`
 	BudgetClass          string                `json:"budget_class,omitempty"`
 	RequiredCapabilities []string              `json:"required_capabilities,omitempty"`
