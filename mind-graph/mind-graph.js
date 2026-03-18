@@ -150,17 +150,17 @@ function focusTransform(a, z) { return mobAdd(mobNeg(a), z); }
 
 // ── Simulation ──────────────────────────────────────────────
 
-const RHO_STATE = { running: 0.45, blocked: 0.85, ready: 1.35, draft: 2.20, done: 3.20 };
-const DAMPING = { running: 1.0, blocked: 1.4, ready: 1.6, draft: 2.0, done: 2.8 };
+const RHO_STATE = { claimed: 0.45, in_progress: 0.45, blocked: 0.85, ready: 1.35, failed: 2.80, cancelled: 2.80, done: 3.20 };
+const DAMPING = { claimed: 1.0, in_progress: 1.0, blocked: 1.4, ready: 1.6, failed: 2.0, cancelled: 2.0, done: 2.8 };
 const K_RHO = 0.8, K_TREE = 1.0, L_TREE = 0.85, K_BLOCK = 1.8, L_BLOCK = 0.35;
 const K_REP = 0.04, K_WALL = 3.0, RHO_WALL = 4.0, SIGMA_WALL = 0.3;
 const DT = 1/60, V_MAX = 0.06;
-const COL = {draft:"#5a6a7a",ready:"#c4a060",running:"#50b888",blocked:"#d06060",done:"#408868",
+const COL = {ready:"#c4a060",claimed:"#50b888",in_progress:"#4db884",blocked:"#d06060",done:"#408868",
              failed:"#803030",cancelled:"#555"};
 
 let W = [], byId = {}, BLOCKS = [], nodes = {};
 let focusPoint = [0, 0], focusTarget = [0, 0], focusId = null, hoverId = null;
-let activeFilter = "all"; // "all", "ready", "running", "blocked", "done", "draft"
+let activeFilter = "all"; // "all", "ready", "active", "blocked", "done", "failed"
 
 function initSimulation(items) {
   W = items;
@@ -321,7 +321,7 @@ function simulate() {
     }
 
     // 7. Activity noise
-    if (w.s === "running") F = add(F, [(Math.random()-0.5)*0.006, (Math.random()-0.5)*0.006]);
+    if (w.s === "claimed" || w.s === "in_progress") F = add(F, [(Math.random()-0.5)*0.006, (Math.random()-0.5)*0.006]);
 
     // Integrate
     const gamma = DAMPING[w.s] || 1.0;
@@ -425,8 +425,9 @@ function textSizeForNode(w) {
 
 function stateMatchesFilter(state, filter) {
   if (filter === "all") return true;
-  if (filter === "done") return state === "done" || state === "completed" || state === "failed";
-  if (filter === "running") return state === "running" || state === "claimed";
+  if (filter === "active") return state === "claimed" || state === "in_progress";
+  if (filter === "done") return state === "done" || state === "completed";
+  if (filter === "failed") return state === "failed" || state === "cancelled";
   return state === filter;
 }
 
@@ -529,7 +530,7 @@ function draw() {
         ctx.fillText(w.k, sx, sy - sz * 0.55 - 6);
       }
 
-      if (w.s === "running" && cf > 0.1) {
+      if ((w.s === "claimed" || w.s === "in_progress") && cf > 0.1) {
         ctx.globalAlpha = cf * 0.06; ctx.fillStyle = col;
         ctx.beginPath();
         ctx.arc(sx, sy, sz * 1.8 + Math.sin(Date.now()/600 + sx) * 3, 0, Math.PI*2);
@@ -795,7 +796,7 @@ function renderSidebar() {
   if (!sidebar) return;
 
   // Group by state for ordering
-  const stateOrder = ["running", "claimed", "blocked", "ready", "draft", "done", "completed", "failed", "cancelled"];
+  const stateOrder = ["claimed", "in_progress", "blocked", "ready", "done", "completed", "failed", "cancelled"];
   const sorted = [...W].sort((a, b) => {
     const sa = stateOrder.indexOf(a.s), sb = stateOrder.indexOf(b.s);
     if (sa !== sb) return sa - sb;
@@ -982,7 +983,8 @@ function updateUI() {
   const counts = {};
   W.forEach(w => { counts[w.s] = (counts[w.s] || 0) + 1; });
   const parts = [];
-  if (counts.running) parts.push(`${counts.running} running`);
+  const activeCount = (counts.claimed || 0) + (counts.in_progress || 0);
+  if (activeCount) parts.push(`${activeCount} active`);
   if (counts.done || counts.completed) parts.push(`${(counts.done||0) + (counts.completed||0)} done`);
   if (counts.blocked) parts.push(`${counts.blocked} blocked`);
   parts.push(`${W.length} total`);
@@ -1003,10 +1005,10 @@ function updateUI() {
   const el = (id) => document.getElementById(id);
   if (el("count-all")) el("count-all").textContent = W.length;
   if (el("count-ready")) el("count-ready").textContent = counts.ready || 0;
-  if (el("count-running")) el("count-running").textContent = counts.running || 0;
+  if (el("count-active")) el("count-active").textContent = (counts.claimed || 0) + (counts.in_progress || 0);
   if (el("count-blocked")) el("count-blocked").textContent = counts.blocked || 0;
   if (el("count-done")) el("count-done").textContent = (counts.done || 0) + (counts.completed || 0);
-  if (el("count-draft")) el("count-draft").textContent = counts.draft || 0;
+  if (el("count-failed")) el("count-failed").textContent = (counts.failed || 0) + (counts.cancelled || 0);
 }
 
 async function refresh() {

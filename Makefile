@@ -3,8 +3,8 @@
 build:
 	go build -o build/cagent ./cmd/cagent
 
-install: build
-	cp build/cagent $(HOME)/.local/bin/cagent
+install:
+	go build -o $(HOME)/.local/bin/cagent ./cmd/cagent
 
 test:
 	go test ./internal/...
