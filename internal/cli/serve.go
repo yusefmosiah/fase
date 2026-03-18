@@ -188,9 +188,14 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 // runHousekeeping runs periodic maintenance without dispatching work:
 // - Reconcile expired leases (orphaned claims)
 // - Detect stalled jobs (no output for 10 minutes)
+// - Dispatch verification for completed jobs (from cagent dispatch)
 func runHousekeeping(ctx context.Context, svc *service.Service, cwd string) {
+	selfBin, _ := os.Executable()
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
+	// Track which work items we've already dispatched verification for
+	verified := make(map[string]bool)
 
 	for {
 		select {
@@ -200,7 +205,7 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string) {
 			// Reconcile expired leases
 			_, _ = svc.ReconcileOnStartup(ctx)
 
-			// Check for stalled jobs by scanning raw output directories
+			// Check for stalled jobs and completed jobs needing verification
 			rawDir := filepath.Join(cwd, ".cagent", "raw", "stdout")
 			entries, err := os.ReadDir(rawDir)
 			if err != nil {
@@ -210,21 +215,47 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string) {
 				if !strings.HasPrefix(entry.Name(), "job_") {
 					continue
 				}
-				jobDir := filepath.Join(rawDir, entry.Name())
-				if isJobStalled(jobDir, 10*time.Minute) {
-					// Check if this job is still marked as running
-					jobID := entry.Name()
-					statusResult, err := svc.Status(ctx, jobID)
+				jobID := entry.Name()
+				jobDir := filepath.Join(rawDir, jobID)
+
+				statusResult, err := svc.Status(ctx, jobID)
+				if err != nil {
+					continue
+				}
+				jobState := string(statusResult.Job.State)
+				workID := statusResult.Job.WorkID
+
+				if workID == "" {
+					continue
+				}
+
+				if isJobStalled(jobDir, 10*time.Minute) && !isTerminal(jobState) {
+					_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
+						WorkID:         workID,
+						ExecutionState: core.WorkExecutionStateFailed,
+						Message:        fmt.Sprintf("housekeeping: job %s stalled (no output for 10m)", jobID),
+						CreatedBy:      "housekeeping",
+					})
+					continue
+				}
+
+				// If job completed and work is still in_progress, dispatch attestation
+				if isTerminal(jobState) && !verified[workID] {
+					workResult, err := svc.Work(ctx, workID)
 					if err != nil {
 						continue
 					}
-					if !isTerminal(string(statusResult.Job.State)) {
-						_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-							WorkID:         statusResult.Job.WorkID,
-							ExecutionState: core.WorkExecutionStateFailed,
-							Message:        fmt.Sprintf("housekeeping: job %s stalled (no output for 10m)", jobID),
-							CreatedBy:      "housekeeping",
-						})
+					if workResult.Work.ExecutionState == core.WorkExecutionStateInProgress ||
+						workResult.Work.ExecutionState == core.WorkExecutionStateClaimed {
+						verified[workID] = true
+						flight := &inFlightJob{
+							workID:  workID,
+							jobID:   jobID,
+							adapter: "dispatch",
+						}
+						// Get config path from the binary's default
+						configPath := ""
+						go handleJobCompletion(ctx, svc, selfBin, configPath, cwd, workID, flight, "codex")
 					}
 				}
 			}
@@ -393,124 +424,124 @@ func writeJSONHTTP(w http.ResponseWriter, status int, data any) {
 	_ = json.NewEncoder(w).Encode(data)
 }
 
-// handleJobCompletion decides whether to mark work done or dispatch verification.
+// handleJobCompletion dispatches an attestation run after a worker completes.
+// The attestor independently reviews: did files change? do changes match the
+// objective? did the worker report verification results? does it build?
+// The attestor marks the work item done (pass) or failed (retry with context).
+//
+// Three-layer model:
+//   - Verification: workers verify their own work during their run (tests, build checks)
+//     and report findings as notes on the work item.
+//   - Attestation: an independent agent reviews after the worker exits. Checks the diff,
+//     reads worker findings, runs its own checks, and gates the state transition.
+//   - Retry: if attestation fails, the failure reason feeds into the next worker's briefing.
 func handleJobCompletion(ctx context.Context, svc *service.Service, selfBin, configPath, cwd, workID string, flight *inFlightJob, defaultAdapter string) {
 	workResult, err := svc.Work(ctx, workID)
 	if err != nil {
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateDone,
-			Message:        fmt.Sprintf("supervisor: job %s completed (could not check attestations: %v)", flight.jobID, err),
-			CreatedBy:      "supervisor",
+			ExecutionState: core.WorkExecutionStateFailed,
+			Message:        fmt.Sprintf("attestation: could not fetch work state: %v", err),
+			CreatedBy:      "attestation",
 		})
 		return
 	}
 
 	work := workResult.Work
-	attestations := workResult.Attestations
 
-	if len(work.RequiredAttestations) == 0 {
-		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateDone,
-			Message:        fmt.Sprintf("supervisor: job %s completed (no attestation policy)", flight.jobID),
-			CreatedBy:      "supervisor",
-		})
-		return
+	// Collect worker's verification findings (notes) for the attestor
+	var workerFindings string
+	for _, note := range workResult.Notes {
+		if note.NoteType == "finding" || note.NoteType == "verification" {
+			workerFindings += fmt.Sprintf("- [%s] %s\n", note.NoteType, note.Body)
+		}
+	}
+	if workerFindings == "" {
+		workerFindings = "(worker reported no verification findings)"
 	}
 
-	unsatisfied := findUnsatisfiedAttestations(work.RequiredAttestations, attestations)
-	if len(unsatisfied) == 0 {
-		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateDone,
-			Message:        fmt.Sprintf("supervisor: job %s completed, all %d attestations satisfied", flight.jobID, len(work.RequiredAttestations)),
-			CreatedBy:      "supervisor",
-		})
-		return
+	attestPrompt := fmt.Sprintf(`You are an attestation agent. A worker just finished work item %s.
+Your job is to independently verify the work was done correctly.
+
+## Work item
+Title: %s
+Objective: %s
+Worker adapter: %s
+Worker job: %s
+
+## Worker's verification findings
+%s
+
+## Attestation procedure
+1. Run: git diff --stat
+2. If NO files changed (only .cagent/cagent.db or nothing):
+   The worker failed silently. Record and fail:
+   cagent work note-add %s --type finding --text "attestation: no code changes produced by worker"
+   cagent work fail %s --message "attestation: no code changes produced"
+   Stop.
+
+3. If files changed, review the diff:
+   - Run: git diff
+   - Do the changes address the objective?
+   - Check build: run the appropriate build command (go build ./... or similar)
+   - Check for obvious errors or regressions
+
+4. If the work is correct and complete:
+   cagent work note-add %s --type finding --text "attestation: passed — N files changed, builds clean, changes match objective"
+   cagent work complete %s --message "attestation: passed"
+
+5. If the work is incorrect or incomplete:
+   cagent work note-add %s --type finding --text "attestation: failed — <specific reason with details>"
+   cagent work fail %s --message "attestation: <brief reason>"
+
+Be thorough but concise. The failure message will be injected into the retry briefing.`,
+		workID, work.Title, work.Objective, flight.adapter, flight.jobID,
+		workerFindings,
+		workID, workID, workID, workID, workID, workID)
+
+	// Dispatch attestation via opencode/glm-5-turbo
+	attestAdapter := "opencode"
+	attestModel := "zai-coding-plan/glm-5-turbo"
+
+	args := []string{"run", "--json", "--adapter", attestAdapter, "--cwd", cwd,
+		"--model", attestModel, "--work", workID, "--prompt", attestPrompt}
+	if configPath != "" {
+		args = append(args, "--config", configPath)
 	}
 
-	verifierAdapter := pickVerifierAdapter(flight.adapter, defaultAdapter)
+	runCmd := exec.Command(selfBin, args...)
+	runCmd.Dir = cwd
+	runCmd.Stderr = nil
+	runCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	out, spawnErr := runCmd.Output()
 
-	verifyPrompt := fmt.Sprintf(`You are a verification agent reviewing work on: %s
-
-The implementation agent completed its work. Your job is to verify the results
-and record attestations. Review:
-1. The git diff (run: git diff)
-2. Any test output or artifacts
-3. The work item's objective and acceptance criteria
-
-For each required attestation that is not yet satisfied, either:
-- Record a passing attestation if the work meets the requirement:
-  cagent work attest %s --result passed --summary "..." --verifier-kind <kind> --method third_party_review
-- Record a failing attestation with specific feedback:
-  cagent work attest %s --result failed --summary "..." --verifier-kind <kind> --method third_party_review
-
-Required attestations still needed: %s
-
-Work objective: %s`,
-		work.Title, workID, workID,
-		formatUnsatisfied(unsatisfied),
-		work.Objective)
-
-	_, spawnErr := spawnRun(selfBin, configPath, verifierAdapter, cwd, verifyPrompt)
 	if spawnErr != nil {
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 			WorkID:         workID,
-			ExecutionState: core.WorkExecutionStateDone,
-			Message:        fmt.Sprintf("supervisor: job %s completed, verification dispatch failed: %v", flight.jobID, spawnErr),
-			CreatedBy:      "supervisor",
+			ExecutionState: core.WorkExecutionStateFailed,
+			Message:        fmt.Sprintf("attestation: dispatch failed: %v", spawnErr),
+			CreatedBy:      "attestation",
 		})
 		return
 	}
 
+	// Extract attestation job ID for tracking
+	var result struct {
+		Job struct {
+			JobID string `json:"job_id"`
+		} `json:"job"`
+	}
+	attestJobID := "(unknown)"
+	if json.Unmarshal(out, &result) == nil && result.Job.JobID != "" {
+		attestJobID = result.Job.JobID
+	}
+
+	// Don't mark done — the attestor will do it via cagent work complete/fail
 	_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 		WorkID:    workID,
-		Message:   fmt.Sprintf("supervisor: dispatched verification to %s (%d attestations unsatisfied)", verifierAdapter, len(unsatisfied)),
-		CreatedBy: "supervisor",
+		Message:   fmt.Sprintf("attestation: dispatched %s via %s/%s", attestJobID, attestAdapter, attestModel),
+		CreatedBy: "attestation",
 	})
-}
-
-func findUnsatisfiedAttestations(required []core.RequiredAttestation, actual []core.AttestationRecord) []core.RequiredAttestation {
-	var unsatisfied []core.RequiredAttestation
-	for _, req := range required {
-		if !req.Blocking {
-			continue
-		}
-		satisfied := false
-		for _, att := range actual {
-			if att.VerifierKind == req.VerifierKind && att.Result == "passed" {
-				satisfied = true
-				break
-			}
-		}
-		if !satisfied {
-			unsatisfied = append(unsatisfied, req)
-		}
-	}
-	return unsatisfied
-}
-
-func formatUnsatisfied(reqs []core.RequiredAttestation) string {
-	var parts []string
-	for _, r := range reqs {
-		parts = append(parts, r.VerifierKind)
-	}
-	return strings.Join(parts, ", ")
-}
-
-func pickVerifierAdapter(workerAdapter, defaultAdapter string) string {
-	switch workerAdapter {
-	case "codex":
-		return "claude"
-	case "claude":
-		return "codex"
-	default:
-		if defaultAdapter != workerAdapter {
-			return defaultAdapter
-		}
-		return "claude"
-	}
 }
 
 // runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
