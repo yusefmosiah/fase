@@ -280,9 +280,10 @@ func NewRootCommand() *cobra.Command {
 		newInternalRunJobCommand(opts),
 		newInboxCommand(opts),
 		newReconcileCommand(opts),
-		newSupervisorCommand(opts),
+		// supervisor is now integrated into serve (use --auto)
 		newDashboardCommand(opts),
 		newServeCommand(opts),
+		newDispatchCommand(opts),
 		newVersionCommand(),
 	)
 
@@ -1270,6 +1271,37 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	}
 	failCmd.Flags().StringVar(&updateOpts.message, "message", "", "failure message")
 
+	retryCmd := &cobra.Command{
+		Use:   "retry <work-id>",
+		Short: "Reset a failed/cancelled work item to ready",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			// Verify the item is in a terminal state
+			result, err := svc.Work(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			if !result.Work.ExecutionState.Terminal() {
+				return fmt.Errorf("work %s is %s, not in a terminal state", args[0], result.Work.ExecutionState)
+			}
+			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
+				WorkID:         args[0],
+				ExecutionState: core.WorkExecutionStateReady,
+				Message:        "retried from " + string(result.Work.ExecutionState),
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, work)
+		},
+	}
+
 	notesCmd := &cobra.Command{
 		Use:   "notes <work-id>",
 		Short: "List notes for a work item",
@@ -1777,7 +1809,107 @@ This guarantees every doc has a corresponding work item.`,
 	projectionStatusCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
 
 	projectionCmd.AddCommand(projectionChecklistCmd, projectionStatusCmd)
-	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, completeCmd, blockCmd, failCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, hydrateCmd, proposalCmd, projectionCmd)
+
+	// --- edge subcommands ---
+	edgeCmd := &cobra.Command{
+		Use:   "edge",
+		Short: "Manage edges in the work DAG",
+	}
+
+	var edgeType string
+	edgeAddCmd := &cobra.Command{
+		Use:   "add <from-work-id> <to-work-id>",
+		Short: "Add a blocking edge (from blocks to)",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			edge := core.WorkEdgeRecord{
+				EdgeID:     core.GenerateID("wedge"),
+				FromWorkID: args[0],
+				ToWorkID:   args[1],
+				EdgeType:   edgeType,
+				CreatedBy:  "cli",
+				CreatedAt:  time.Now().UTC(),
+			}
+			if err := svc.CreateEdge(context.Background(), edge); err != nil {
+				return err
+			}
+			if root.jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), edge)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s → %s\n", edge.EdgeID, edge.EdgeType, edge.FromWorkID, edge.ToWorkID)
+			return nil
+		},
+	}
+	edgeAddCmd.Flags().StringVar(&edgeType, "type", "blocks", "edge type (blocks, parent_of, supersedes)")
+
+	edgeRmCmd := &cobra.Command{
+		Use:   "rm <from-work-id> <to-work-id>",
+		Short: "Remove an edge between two work items",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			edges, err := svc.ListEdges(context.Background(), 100, "", args[0], args[1])
+			if err != nil {
+				return err
+			}
+			if len(edges) == 0 {
+				return fmt.Errorf("no edge found from %s to %s", args[0], args[1])
+			}
+			for _, e := range edges {
+				if err := svc.DeleteEdge(context.Background(), e.EdgeID); err != nil {
+					return err
+				}
+				if !root.jsonOutput {
+					fmt.Fprintf(cmd.OutOrStdout(), "removed %s (%s → %s)\n", e.EdgeID, e.FromWorkID, e.ToWorkID)
+				}
+			}
+			return nil
+		},
+	}
+
+	edgeLsCmd := &cobra.Command{
+		Use:   "ls [work-id]",
+		Short: "List edges, optionally filtered by work item",
+		Args:  cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			var from, to string
+			if len(args) == 1 {
+				from = args[0]
+			}
+			edges, err := svc.ListEdges(context.Background(), 200, "", from, to)
+			if err != nil {
+				return err
+			}
+			if root.jsonOutput {
+				return writeJSON(cmd.OutOrStdout(), edges)
+			}
+			for _, e := range edges {
+				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s → %s\n", e.EdgeID, e.EdgeType, e.FromWorkID, e.ToWorkID)
+			}
+			if len(edges) == 0 {
+				fmt.Fprintln(cmd.OutOrStdout(), "(no edges)")
+			}
+			return nil
+		},
+	}
+
+	edgeCmd.AddCommand(edgeAddCmd, edgeRmCmd, edgeLsCmd)
+
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, completeCmd, blockCmd, failCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd)
 	return cmd
 }
 

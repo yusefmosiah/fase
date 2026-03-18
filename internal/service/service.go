@@ -450,6 +450,27 @@ func (s *Service) Close() error {
 	return s.store.Close()
 }
 
+// Edge operations — direct, no proposal ceremony.
+
+func (s *Service) CreateEdge(ctx context.Context, rec core.WorkEdgeRecord) error {
+	// Validate both work items exist
+	if _, err := s.store.GetWorkItem(ctx, rec.FromWorkID); err != nil {
+		return normalizeStoreError("work", rec.FromWorkID, err)
+	}
+	if _, err := s.store.GetWorkItem(ctx, rec.ToWorkID); err != nil {
+		return normalizeStoreError("work", rec.ToWorkID, err)
+	}
+	return s.store.CreateWorkEdge(ctx, rec)
+}
+
+func (s *Service) DeleteEdge(ctx context.Context, edgeID string) error {
+	return s.store.DeleteWorkEdge(ctx, edgeID)
+}
+
+func (s *Service) ListEdges(ctx context.Context, limit int, edgeType, fromWorkID, toWorkID string) ([]core.WorkEdgeRecord, error) {
+	return s.store.ListWorkEdges(ctx, limit, edgeType, fromWorkID, toWorkID)
+}
+
 func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 	cwd, err := filepath.Abs(req.CWD)
 	if err != nil {

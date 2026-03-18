@@ -25,6 +25,8 @@ import (
 
 func newServeCommand(root *rootOptions) *cobra.Command {
 	var port int
+	var host string
+	var auto bool
 	var noUI bool
 	var noBrowser bool
 	var maxConcurrent int
@@ -33,33 +35,40 @@ func newServeCommand(root *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run supervisor + web UI + API in one process",
-		Long: `Starts a unified cagent service that runs the supervisor loop,
-serves the mind-graph web UI, and provides HTTP API endpoints.
-Eliminates DB contention by using a single shared Service instance.
+		Short: "Run the cagent service: web UI, API, and housekeeping",
+		Long: `Starts the cagent service: mind-graph web UI, HTTP API, and background
+housekeeping (lease reconciliation, stall detection).
 
-Equivalent to running supervisor + Vite dev server, but in one process
-with no Node.js dependency.`,
+By default, no work is auto-dispatched. Use --auto to enable autonomous
+claiming and execution of ready work items.
+
+Examples:
+  cagent serve                          # UI + API + housekeeping
+  cagent serve --auto                   # also auto-dispatch ready work
+  cagent serve --host 0.0.0.0           # accessible via Tailscale/LAN
+  cagent serve --no-browser             # don't open browser on start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd, root, port, noUI, noBrowser, maxConcurrent, defaultAdapter, devAssets)
+			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, defaultAdapter, devAssets)
 		},
 	}
 
 	cmd.Flags().IntVar(&port, "port", 4242, "HTTP server port")
-	cmd.Flags().BoolVar(&noUI, "no-ui", false, "run supervisor only, no web UI (alias for supervisor)")
+	cmd.Flags().StringVar(&host, "host", "localhost", "HTTP bind host")
+	cmd.Flags().BoolVar(&auto, "auto", false, "auto-dispatch ready work items")
+	cmd.Flags().BoolVar(&noUI, "no-ui", false, "skip web UI, run housekeeping only")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "don't auto-open browser")
-	cmd.Flags().IntVar(&maxConcurrent, "max-concurrent", 1, "max simultaneous jobs")
-	cmd.Flags().StringVar(&defaultAdapter, "default-adapter", "codex", "fallback adapter")
+	cmd.Flags().IntVar(&maxConcurrent, "max-concurrent", 1, "max simultaneous jobs (with --auto)")
+	cmd.Flags().StringVar(&defaultAdapter, "default-adapter", "codex", "fallback adapter (with --auto)")
 	cmd.Flags().StringVar(&devAssets, "dev-assets", "", "serve UI from filesystem instead of embedded (for development)")
 
 	return cmd
 }
 
-func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser bool, maxConcurrent int, defaultAdapter, devAssets string) error {
+func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, defaultAdapter, devAssets string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// Open service once — shared by supervisor and API handlers
+	// Open service once — shared by all goroutines
 	svc, err := service.Open(ctx, root.configPath)
 	if err != nil {
 		return fmt.Errorf("open service: %w", err)
@@ -69,10 +78,11 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 	cwd, _ := os.Getwd()
 
 	// Find a free port
-	listener, err := net.Listen("tcp", fmt.Sprintf("localhost:%d", port))
+	listenAddr := net.JoinHostPort(host, fmt.Sprint(port))
+	listener, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		// Try next port
-		listener, err = net.Listen("tcp", "localhost:0")
+		listener, err = net.Listen("tcp", net.JoinHostPort(host, "0"))
 		if err != nil {
 			return fmt.Errorf("listen: %w", err)
 		}
@@ -84,6 +94,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 		"pid":  os.Getpid(),
 		"port": actualPort,
 		"cwd":  cwd,
+		"auto": auto,
 	}
 	serveJSON, _ := json.MarshalIndent(serveInfo, "", "  ")
 	servePath := filepath.Join(svc.Paths.StateDir, "serve.json")
@@ -111,16 +122,23 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 
 	server := &http.Server{Handler: mux}
 
-	// Start supervisor as goroutine
 	var wg sync.WaitGroup
-	supervisorDone := make(chan struct{})
 
+	// Always run housekeeping (reconcile leases, detect stalls)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		defer close(supervisorDone)
-		runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, defaultAdapter)
+		runHousekeeping(ctx, svc, cwd)
 	}()
+
+	// Only auto-dispatch when --auto is set
+	if auto {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, defaultAdapter)
+		}()
+	}
 
 	// Start HTTP server
 	wg.Add(1)
@@ -131,8 +149,16 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 		}
 	}()
 
-	url := fmt.Sprintf("http://localhost:%d", actualPort)
-	fmt.Fprintf(cmd.OutOrStdout(), "cagent serve: %s (pid %d)\n", url, os.Getpid())
+	displayHost := host
+	if displayHost == "0.0.0.0" || displayHost == "::" || displayHost == "" {
+		displayHost = "localhost"
+	}
+	url := "http://" + net.JoinHostPort(displayHost, fmt.Sprint(actualPort))
+	mode := "serve"
+	if auto {
+		mode = "serve --auto"
+	}
+	fmt.Fprintf(cmd.OutOrStdout(), "cagent %s: %s (pid %d)\n", mode, url, os.Getpid())
 
 	// Auto-open browser
 	if !noUI && !noBrowser {
@@ -148,7 +174,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 	<-sigCh
 
 	fmt.Fprintln(cmd.OutOrStdout(), "\ncagent serve: shutting down...")
-	cancel() // stops the supervisor goroutine
+	cancel() // stops housekeeping and supervisor goroutines
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer shutdownCancel()
@@ -157,6 +183,53 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, noUI, noBrowser b
 	wg.Wait()
 	fmt.Fprintln(cmd.OutOrStdout(), "cagent serve: stopped")
 	return nil
+}
+
+// runHousekeeping runs periodic maintenance without dispatching work:
+// - Reconcile expired leases (orphaned claims)
+// - Detect stalled jobs (no output for 10 minutes)
+func runHousekeeping(ctx context.Context, svc *service.Service, cwd string) {
+	ticker := time.NewTicker(30 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			// Reconcile expired leases
+			_, _ = svc.ReconcileOnStartup(ctx)
+
+			// Check for stalled jobs by scanning raw output directories
+			rawDir := filepath.Join(cwd, ".cagent", "raw", "stdout")
+			entries, err := os.ReadDir(rawDir)
+			if err != nil {
+				continue
+			}
+			for _, entry := range entries {
+				if !strings.HasPrefix(entry.Name(), "job_") {
+					continue
+				}
+				jobDir := filepath.Join(rawDir, entry.Name())
+				if isJobStalled(jobDir, 10*time.Minute) {
+					// Check if this job is still marked as running
+					jobID := entry.Name()
+					statusResult, err := svc.Status(ctx, jobID)
+					if err != nil {
+						continue
+					}
+					if !isTerminal(string(statusResult.Job.State)) {
+						_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
+							WorkID:         statusResult.Job.WorkID,
+							ExecutionState: core.WorkExecutionStateFailed,
+							Message:        fmt.Sprintf("housekeeping: job %s stalled (no output for 10m)", jobID),
+							CreatedBy:      "housekeeping",
+						})
+					}
+				}
+			}
+		}
+	}
 }
 
 func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string) {
@@ -321,15 +394,7 @@ func writeJSONHTTP(w http.ResponseWriter, status int, data any) {
 }
 
 // handleJobCompletion decides whether to mark work done or dispatch verification.
-// The verification loop:
-//  1. Worker completes → check required attestations
-//  2. If attestations unsatisfied → dispatch verifier (different adapter/model)
-//  3. Verifier reviews: diff, test output, attestation artifacts
-//  4. Verifier attests: passed or failed
-//  5. If failed → re-dispatch worker with feedback (iterate)
-//  6. If passed → mark work done, set approval_state to pending
 func handleJobCompletion(ctx context.Context, svc *service.Service, selfBin, configPath, cwd, workID string, flight *inFlightJob, defaultAdapter string) {
-	// Get work item with its required attestations
 	workResult, err := svc.Work(ctx, workID)
 	if err != nil {
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
@@ -344,7 +409,6 @@ func handleJobCompletion(ctx context.Context, svc *service.Service, selfBin, con
 	work := workResult.Work
 	attestations := workResult.Attestations
 
-	// If no required attestations, mark done immediately (backward compatible)
 	if len(work.RequiredAttestations) == 0 {
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 			WorkID:         workID,
@@ -355,22 +419,17 @@ func handleJobCompletion(ctx context.Context, svc *service.Service, selfBin, con
 		return
 	}
 
-	// Check which attestation slots are unsatisfied
 	unsatisfied := findUnsatisfiedAttestations(work.RequiredAttestations, attestations)
 	if len(unsatisfied) == 0 {
-		// All attestations satisfied — done, pending approval
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 			WorkID:         workID,
 			ExecutionState: core.WorkExecutionStateDone,
 			Message:        fmt.Sprintf("supervisor: job %s completed, all %d attestations satisfied", flight.jobID, len(work.RequiredAttestations)),
 			CreatedBy:      "supervisor",
 		})
-		// TODO: set approval_state to pending when the service supports it in UpdateWork
 		return
 	}
 
-	// Attestations unsatisfied — dispatch verification job
-	// Use a different adapter than the worker for independent review
 	verifierAdapter := pickVerifierAdapter(flight.adapter, defaultAdapter)
 
 	verifyPrompt := fmt.Sprintf(`You are a verification agent reviewing work on: %s
@@ -394,10 +453,8 @@ Work objective: %s`,
 		formatUnsatisfied(unsatisfied),
 		work.Objective)
 
-	// Dispatch verification job
 	_, spawnErr := spawnRun(selfBin, configPath, verifierAdapter, cwd, verifyPrompt)
 	if spawnErr != nil {
-		// Can't dispatch verifier — mark done anyway
 		_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 			WorkID:         workID,
 			ExecutionState: core.WorkExecutionStateDone,
@@ -407,11 +464,9 @@ Work objective: %s`,
 		return
 	}
 
-	// Mark as still in progress — the verification job will update attestations
-	// The next supervisor cycle will re-check this work item
 	_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-		WorkID:  workID,
-		Message: fmt.Sprintf("supervisor: dispatched verification to %s (%d attestations unsatisfied)", verifierAdapter, len(unsatisfied)),
+		WorkID:    workID,
+		Message:   fmt.Sprintf("supervisor: dispatched verification to %s (%d attestations unsatisfied)", verifierAdapter, len(unsatisfied)),
 		CreatedBy: "supervisor",
 	})
 }
@@ -445,8 +500,6 @@ func formatUnsatisfied(reqs []core.RequiredAttestation) string {
 }
 
 func pickVerifierAdapter(workerAdapter, defaultAdapter string) string {
-	// Use a different adapter than the worker for independent review
-	// If worker used codex, verify with claude (and vice versa)
 	switch workerAdapter {
 	case "codex":
 		return "claude"
@@ -460,8 +513,8 @@ func pickVerifierAdapter(workerAdapter, defaultAdapter string) string {
 	}
 }
 
-// runInProcessSupervisor runs the supervisor loop using the shared Service instance.
-// Unlike the subprocess-based supervisor, this doesn't shell out for status checks.
+// runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
+// Only active when --auto is set.
 func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, defaultAdapter string) {
 	selfBin, err := os.Executable()
 	if err != nil {
@@ -484,7 +537,7 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 					WorkID:         workID,
 					ExecutionState: core.WorkExecutionStateFailed,
-					Message:        fmt.Sprintf("supervisor: cancelled during shutdown"),
+					Message:        "supervisor: cancelled during shutdown",
 					CreatedBy:      "supervisor",
 				})
 			}
@@ -524,12 +577,10 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 						CreatedBy:      "supervisor",
 					})
 				} else {
-					// Job completed — check if verification is needed
 					handleJobCompletion(ctx, svc, selfBin, root.configPath, cwd, workID, flight, defaultAdapter)
 				}
 				delete(inFlight, workID)
 			} else if isJobStalled(filepath.Join(cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute) {
-				// No new events for 10 minutes — job is stuck
 				_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 					WorkID:         workID,
 					ExecutionState: core.WorkExecutionStateFailed,
@@ -615,7 +666,7 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 			Cycle:     cycle,
 			Timestamp: time.Now().UTC().Format(time.RFC3339),
 			InFlight:  len(inFlight),
-			Ready:     0, // we'd need to count but this is good enough
+			Ready:     0,
 		})
 
 		select {
