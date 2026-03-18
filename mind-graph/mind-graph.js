@@ -49,6 +49,17 @@ async function loadData() {
   return null; // signals: use mock or show empty state
 }
 
+async function loadEdges() {
+  try {
+    const res = await fetch("/api/work/edges", { signal: AbortSignal.timeout(3000) });
+    if (res.ok) {
+      const data = await res.json();
+      dagEdges = Array.isArray(data) ? data : (data.edges || []);
+      dagLayout = null; // invalidate cached layout
+    }
+  } catch (e) { /* optional */ }
+}
+
 // ── Detail Loading ──────────────────────────────────────────
 
 let detailCache = {}; // work_id → { data, fetchedAt }
@@ -148,6 +159,197 @@ function expMap(x, v) {
 
 function focusTransform(a, z) { return mobAdd(mobNeg(a), z); }
 
+// ── DAG Layout ───────────────────────────────────────────────
+
+function computeDagLayout(items, edges) {
+  if (!items.length) return null;
+  const nodeSet = new Set(items.map(w => w.id));
+  const outAdj = new Map(items.map(w => [w.id, []]));
+  const inAdj  = new Map(items.map(w => [w.id, []]));
+
+  function addEdge(from, to) {
+    if (!nodeSet.has(from) || !nodeSet.has(to) || from === to) return;
+    if (!outAdj.get(from).includes(to)) {
+      outAdj.get(from).push(to);
+      inAdj.get(to).push(from);
+    }
+  }
+
+  // Parent-child relationships
+  items.forEach(w => { if (w.p) addEdge(w.p, w.id); });
+  // Edges from API
+  edges.forEach(e => {
+    if (e.edge_type === "blocks" || e.edge_type === "parent_child" || e.edge_type === "depends_on")
+      addEdge(e.from_work_id, e.to_work_id);
+  });
+
+  // Kahn's BFS: topological sort + longest-path layer assignment
+  const inDeg = new Map(items.map(w => [w.id, inAdj.get(w.id).length]));
+  const layer = new Map(items.map(w => [w.id, 0]));
+  const queue = items.filter(w => inAdj.get(w.id).length === 0).map(w => w.id);
+  let head = 0;
+  while (head < queue.length) {
+    const id = queue[head++];
+    const myLayer = layer.get(id);
+    for (const toId of outAdj.get(id)) {
+      if (myLayer + 1 > layer.get(toId)) layer.set(toId, myLayer + 1);
+      const d = inDeg.get(toId) - 1;
+      inDeg.set(toId, d);
+      if (d <= 0) queue.push(toId);
+    }
+  }
+
+  const maxLayer = Math.max(0, ...layer.values());
+  const layers = Array.from({ length: maxLayer + 1 }, () => []);
+  items.forEach(w => layers[layer.get(w.id) || 0].push(w));
+  layers.forEach(l => l.sort((a, b) => a.t.localeCompare(b.t)));
+
+  const NODE_W = 200, NODE_H = 44, H_GAP = 28, V_GAP = 72;
+  const positions = new Map();
+  layers.forEach((layerItems, li) => {
+    const totalW = layerItems.length * (NODE_W + H_GAP) - H_GAP;
+    layerItems.forEach((w, idx) => {
+      positions.set(w.id, {
+        x: idx * (NODE_W + H_GAP) - totalW / 2,
+        y: li * (NODE_H + V_GAP),
+      });
+    });
+  });
+  return { positions, outAdj, inAdj, layer, layers, NODE_W, NODE_H };
+}
+
+function initDagTransform() {
+  if (!dagLayout || !dagLayout.positions.size) return;
+  const { positions, NODE_W, NODE_H } = dagLayout;
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  positions.forEach(p => {
+    minX = Math.min(minX, p.x);     maxX = Math.max(maxX, p.x + NODE_W);
+    minY = Math.min(minY, p.y);     maxY = Math.max(maxY, p.y + NODE_H);
+  });
+  const PAD = 40;
+  const dagW = maxX - minX, dagH = maxY - minY;
+  const s = Math.min((W_px - PAD * 2) / Math.max(dagW, 1), (H_px - PAD * 2) / Math.max(dagH, 1), 1.4);
+  dagTransform.s = s;
+  dagTransform.x = W_px / 2 - (minX + dagW / 2) * s;
+  dagTransform.y = PAD - minY * s;
+}
+
+function rrPath(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y); ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function dagHitTest(mx, my) {
+  if (!dagLayout) return null;
+  const { positions, NODE_W, NODE_H } = dagLayout;
+  const { x: ox, y: oy, s } = dagTransform;
+  const dx = (mx - ox) / s, dy = (my - oy) / s;
+  for (const w of W) {
+    const pos = positions.get(w.id);
+    if (pos && dx >= pos.x && dx <= pos.x + NODE_W && dy >= pos.y && dy <= pos.y + NODE_H)
+      return w.id;
+  }
+  return null;
+}
+
+function drawDagView() {
+  ctx.clearRect(0, 0, W_px, H_px);
+  if (!W.length) return;
+
+  if (!dagLayout) {
+    dagLayout = computeDagLayout(W, dagEdges);
+    initDagTransform();
+  }
+  if (!dagLayout) return;
+
+  const { positions, outAdj, NODE_W, NODE_H } = dagLayout;
+  const { x: ox, y: oy, s } = dagTransform;
+
+  ctx.save();
+  ctx.translate(ox, oy);
+  ctx.scale(s, s);
+
+  // Draw edges
+  ctx.lineWidth = 1.5;
+  W.forEach(w => {
+    const from = positions.get(w.id);
+    if (!from) return;
+    const sx = from.x + NODE_W / 2, sy = from.y + NODE_H;
+    for (const toId of (outAdj.get(w.id) || [])) {
+      const to = positions.get(toId);
+      if (!to) continue;
+      const dx2 = to.x + NODE_W / 2, dy2 = to.y;
+      const isBlock = dagEdges.some(e => e.from_work_id === w.id && e.to_work_id === toId && e.edge_type === "blocks");
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.bezierCurveTo(sx, sy + (dy2 - sy) * 0.55, dx2, sy + (dy2 - sy) * 0.45, dx2, dy2 - 7);
+      ctx.strokeStyle = isBlock ? "rgba(208,96,96,0.4)" : "rgba(80,80,110,0.4)";
+      ctx.stroke();
+      // Arrowhead
+      ctx.fillStyle = isBlock ? "rgba(208,96,96,0.6)" : "rgba(80,80,110,0.6)";
+      ctx.beginPath();
+      ctx.moveTo(dx2, dy2); ctx.lineTo(dx2 - 5, dy2 - 10); ctx.lineTo(dx2 + 5, dy2 - 10);
+      ctx.closePath(); ctx.fill();
+    }
+  });
+
+  // Draw nodes
+  W.forEach(w => {
+    const pos = positions.get(w.id);
+    if (!pos) return;
+    const { x, y } = pos;
+    const col = DAG_COL[w.s] || "#888";
+    const isSel = w.id === focusId;
+    const isHov = w.id === dagHoverId;
+    const filtOut = !stateMatchesFilter(w.s, activeFilter);
+    ctx.globalAlpha = filtOut ? 0.15 : 1.0;
+
+    // Background
+    rrPath(x, y, NODE_W, NODE_H, 5);
+    ctx.fillStyle = isSel ? "rgba(255,255,255,0.07)" : "rgba(26,26,32,0.92)";
+    ctx.fill();
+    ctx.strokeStyle = isSel ? col : (isHov ? col + "99" : "#252530");
+    ctx.lineWidth = isSel ? 1.5 : 1;
+    ctx.stroke();
+
+    // Left color bar
+    rrPath(x, y, 3, NODE_H, 2);
+    ctx.fillStyle = filtOut ? col + "55" : col + "cc";
+    ctx.fill();
+
+    // Title
+    ctx.fillStyle = isSel ? "#e0d8d0" : (isHov ? "#b0a898" : "#7a7a88");
+    ctx.font = `400 11px 'SF Pro Display', 'Helvetica Neue', sans-serif`;
+    ctx.textAlign = "left"; ctx.textBaseline = "middle";
+    let title = w.t;
+    const maxTW = NODE_W - 16;
+    while (ctx.measureText(title).width > maxTW && title.length > 5)
+      title = title.slice(0, -4) + "…";
+    ctx.fillText(title, x + 10, y + NODE_H * 0.43);
+
+    // Kind + state tags
+    ctx.font = `400 9px 'SF Mono', monospace`;
+    ctx.fillStyle = "#383840";
+    ctx.fillText(w.k.toUpperCase().slice(0, 4), x + 10, y + NODE_H - 8);
+    ctx.textAlign = "right";
+    ctx.fillStyle = col + "88";
+    ctx.fillText(w.s, x + NODE_W - 6, y + NODE_H - 8);
+
+    ctx.globalAlpha = 1.0;
+    ctx.textAlign = "left";
+  });
+
+  ctx.restore();
+}
+
 // ── Simulation ──────────────────────────────────────────────
 
 const RHO_STATE = { claimed: 0.45, in_progress: 0.45, blocked: 0.85, ready: 1.35, failed: 2.80, cancelled: 2.80, done: 3.20 };
@@ -161,6 +363,18 @@ const COL = {ready:"#c4a060",claimed:"#50b888",in_progress:"#4db884",blocked:"#d
 let W = [], byId = {}, BLOCKS = [], nodes = {};
 let focusPoint = [0, 0], focusTarget = [0, 0], focusId = null, hoverId = null;
 let activeFilter = "all"; // "all", "ready", "active", "blocked", "done", "failed"
+
+// ── View Mode ────────────────────────────────────────────────
+let viewMode = "dag"; // "dag" | "hyperbolic"
+
+const DAG_COL = {
+  ready: "#c4a060", in_progress: "#4a90d9", claimed: "#4a90d9",
+  done: "#408868", completed: "#408868",
+  failed: "#d06060", cancelled: "#803030", blocked: "#888",
+};
+let dagEdges = [], dagLayout = null;
+let dagTransform = { x: 0, y: 0, s: 1.0 };
+let dagDrag = null, dagDragMoved = false, dagHoverId = null;
 
 function initSimulation(items) {
   W = items;
@@ -440,6 +654,7 @@ function nodeAlpha(w) {
 }
 
 function draw() {
+  if (viewMode === "dag") { drawDagView(); requestAnimationFrame(draw); return; }
   if (W.length === 0) { requestAnimationFrame(draw); return; }
   simulate();
   updateFocus();
@@ -601,18 +816,59 @@ function hitTest(mx, my) {
 
 cv.addEventListener("mousemove", ev => {
   const rect = cv.getBoundingClientRect();
-  hoverId = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
-  cv.style.cursor = hoverId ? "pointer" : "default";
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  if (viewMode === "dag") {
+    if (dagDrag) {
+      const dx = ev.clientX - dagDrag.sx, dy = ev.clientY - dagDrag.sy;
+      if (Math.abs(dx) + Math.abs(dy) > 3) dagDragMoved = true;
+      dagTransform.x = dagDrag.ox + dx;
+      dagTransform.y = dagDrag.oy + dy;
+    }
+    dagHoverId = dagHitTest(mx, my);
+    cv.style.cursor = dagDrag ? "grabbing" : (dagHoverId ? "pointer" : "grab");
+  } else {
+    hoverId = hitTest(mx, my);
+    cv.style.cursor = hoverId ? "pointer" : "default";
+  }
 });
 
-cv.addEventListener("click", ev => {
+cv.addEventListener("mousedown", ev => {
+  if (viewMode !== "dag") return;
+  dagDrag = { sx: ev.clientX, sy: ev.clientY, ox: dagTransform.x, oy: dagTransform.y };
+  dagDragMoved = false;
+  cv.style.cursor = "grabbing";
+});
+
+cv.addEventListener("mouseup", () => { dagDrag = null; });
+cv.addEventListener("mouseleave", () => { dagDrag = null; });
+
+cv.addEventListener("wheel", ev => {
+  if (viewMode !== "dag") return;
+  ev.preventDefault();
   const rect = cv.getBoundingClientRect();
-  const h = hitTest(ev.clientX - rect.left, ev.clientY - rect.top);
-  if (h) setFocus(focusId === h ? (byId[h].p || null) : h);
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  const factor = ev.deltaY < 0 ? 1.12 : 0.89;
+  const newS = Math.max(0.1, Math.min(5, dagTransform.s * factor));
+  dagTransform.x = mx + (dagTransform.x - mx) * (newS / dagTransform.s);
+  dagTransform.y = my + (dagTransform.y - my) * (newS / dagTransform.s);
+  dagTransform.s = newS;
+}, { passive: false });
+
+cv.addEventListener("click", ev => {
+  if (viewMode === "dag" && dagDragMoved) return;
+  const rect = cv.getBoundingClientRect();
+  const mx = ev.clientX - rect.left, my = ev.clientY - rect.top;
+  if (viewMode === "dag") {
+    const h = dagHitTest(mx, my);
+    if (h) setFocus(focusId === h ? null : h);
+  } else {
+    const h = hitTest(mx, my);
+    if (h) setFocus(focusId === h ? (byId[h].p || null) : h);
+  }
 });
 
 document.addEventListener("keydown", ev => {
-  if (ev.key === "Escape" && focusId) setFocus(byId[focusId]?.p || null);
+  if (ev.key === "Escape" && focusId) setFocus(viewMode === "dag" ? null : (byId[focusId]?.p || null));
 });
 
 document.getElementById("btn-back").addEventListener("click", () => setFocus(null));
@@ -620,8 +876,13 @@ document.getElementById("btn-back").addEventListener("click", () => setFocus(nul
 cv.addEventListener("touchstart", ev => {
   ev.preventDefault();
   const t = ev.touches[0], rect = cv.getBoundingClientRect();
-  const h = hitTest(t.clientX - rect.left, t.clientY - rect.top);
-  if (h) setFocus(focusId === h ? (byId[h].p || null) : h);
+  if (viewMode === "dag") {
+    const h = dagHitTest(t.clientX - rect.left, t.clientY - rect.top);
+    if (h) setFocus(focusId === h ? null : h);
+  } else {
+    const h = hitTest(t.clientX - rect.left, t.clientY - rect.top);
+    if (h) setFocus(focusId === h ? (byId[h].p || null) : h);
+  }
 }, { passive: false });
 
 // ── Detail Panel Rendering ──────────────────────────────────
@@ -1105,8 +1366,9 @@ function updateUI() {
 }
 
 async function refresh() {
-  const items = await loadData();
+  const [items] = await Promise.all([loadData(), loadEdges()]);
   if (!items) return;
+  dagLayout = null; // edges may have changed
   if (W.length === 0) {
     initSimulation(items);
   } else {
@@ -1117,7 +1379,7 @@ async function refresh() {
 }
 
 async function boot() {
-  const items = await loadData();
+  const [items] = await Promise.all([loadData(), loadEdges()]);
   if (items && items.length > 0) {
     initSimulation(items);
   } else {
@@ -1135,6 +1397,21 @@ async function boot() {
   renderSidebar();
   draw();
   setInterval(refresh, 15000);
+
+  // View mode toggle
+  document.getElementById("btn-dag-view")?.addEventListener("click", () => {
+    if (viewMode === "dag") return;
+    viewMode = "dag";
+    document.getElementById("btn-dag-view").classList.add("view-btn-active");
+    document.getElementById("btn-hyp-view").classList.remove("view-btn-active");
+  });
+  document.getElementById("btn-hyp-view")?.addEventListener("click", () => {
+    if (viewMode === "hyperbolic") return;
+    viewMode = "hyperbolic";
+    document.getElementById("btn-hyp-view").classList.add("view-btn-active");
+    document.getElementById("btn-dag-view").classList.remove("view-btn-active");
+    if (W.length > 0 && Object.keys(nodes).length === 0) initSimulation(W);
+  });
 }
 
 boot();

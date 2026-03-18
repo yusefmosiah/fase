@@ -13,6 +13,7 @@
   #top .focus-label { color: #c4a060; }
   #top button { background: none; border: 1px solid #333; color: #888; padding: 2px 10px; border-radius: 10px; cursor: pointer; font-family: inherit; font-size: 11px; }
   #top button:hover { border-color: #666; color: #ccc; }
+  #top button.view-btn-active { border-color: #50b888; color: #50b888; }
   #top .spacer { flex: 1; }
 
   #main { flex: 1; display: flex; overflow: hidden; }
@@ -199,6 +200,8 @@
   <span class="stats" id="stats"></span>
   <span class="focus-label" id="focus-label"></span>
   <span class="spacer"></span>
+  <button id="btn-dag-view" class="view-btn-active">dag</button>
+  <button id="btn-hyp-view">graph</button>
   <button id="btn-diff" style="font-size:11px;color:#50b888">diff</button>
   <button id="btn-bash" style="font-size:11px;color:#c4a060">bash log</button>
   <button id="btn-back" style="display:none">&larr; overview</button>
@@ -225,7 +228,7 @@
   <button class="filter-btn" data-filter="blocked"><span class="dot" style="background:#d06060"></span>blocked <span class="count" id="count-blocked"></span></button>
   <button class="filter-btn" data-filter="done"><span class="dot" style="background:#408868"></span>done <span class="count" id="count-done"></span></button>
   <button class="filter-btn" data-filter="failed"><span class="dot" style="background:#803030"></span>failed <span class="count" id="count-failed"></span></button>
-  <span style="margin-left:auto;color:#444">click to focus &middot; esc to ascend</span>
+  <span style="margin-left:auto;color:#444">dag: click to select &middot; scroll to zoom &middot; drag to pan &middot; graph: click to focus &middot; esc to close</span>
 </div>
 <script type="module" src="/mind-graph.js"></script>
 </body>
