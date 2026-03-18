@@ -817,7 +817,7 @@ func (s *Store) ClaimWorkItem(ctx context.Context, workID, claimant string, leas
 	return s.GetWorkItem(ctx, workID)
 }
 
-func (s *Store) ReleaseWorkItemClaim(ctx context.Context, workID, claimant string) (core.WorkItemRecord, error) {
+func (s *Store) ReleaseWorkItemClaim(ctx context.Context, workID, claimant string, force bool) (core.WorkItemRecord, error) {
 	now := time.Now().UTC()
 	result, err := s.db.ExecContext(
 		ctx,
@@ -826,6 +826,7 @@ func (s *Store) ReleaseWorkItemClaim(ctx context.Context, workID, claimant strin
 		        claimed_until = NULL,
 		        execution_state = CASE
 		            WHEN execution_state = 'claimed' THEN 'ready'
+		            WHEN execution_state = 'in_progress' THEN 'ready'
 		            ELSE execution_state
 		        END,
 		        updated_at = ?
@@ -852,6 +853,33 @@ func (s *Store) ReleaseWorkItemClaim(ctx context.Context, workID, claimant strin
 		current, getErr := s.GetWorkItem(ctx, workID)
 		if getErr != nil {
 			return core.WorkItemRecord{}, getErr
+		}
+		if force {
+			leaseExpired := current.ClaimedUntil != nil && !current.ClaimedUntil.After(now)
+			if leaseExpired || current.ClaimedBy == "" || current.ClaimedBy == claimant {
+				forceResult, forceErr := s.db.ExecContext(
+					ctx,
+					`UPDATE work_items
+					    SET claimed_by = NULL,
+					        claimed_until = NULL,
+					        execution_state = CASE
+					            WHEN execution_state = 'claimed' THEN 'ready'
+					            WHEN execution_state = 'in_progress' THEN 'ready'
+					            ELSE execution_state
+					        END,
+					        updated_at = ?
+					  WHERE work_id = ?`,
+					now.Format(time.RFC3339Nano),
+					workID,
+				)
+				if forceErr != nil {
+					return core.WorkItemRecord{}, fmt.Errorf("force release work item claim: %w", forceErr)
+				}
+				forceRows, _ := forceResult.RowsAffected()
+				if forceRows > 0 {
+					return s.GetWorkItem(ctx, workID)
+				}
+			}
 		}
 		if current.ClaimedBy != "" && current.ClaimedBy != claimant {
 			if current.ClaimedUntil == nil || current.ClaimedUntil.After(now) {
@@ -913,7 +941,7 @@ func (s *Store) ReleaseExpiredWorkClaims(ctx context.Context) ([]core.WorkItemRe
 		        required_attestations_json, acceptance_json, metadata_json, head_commit_oid,
 		        current_job_id, current_session_id, claimed_by, claimed_until, created_at, updated_at
 		   FROM work_items
-		  WHERE execution_state = 'claimed'
+		  WHERE execution_state IN ('claimed', 'in_progress')
 		    AND claimed_until IS NOT NULL
 		    AND claimed_until <= ?`,
 		now,
@@ -944,7 +972,7 @@ func (s *Store) ReleaseExpiredWorkClaims(ctx context.Context) ([]core.WorkItemRe
 			        claimed_until = NULL,
 			        updated_at = ?
 			  WHERE work_id = ?
-			    AND execution_state = 'claimed'
+			    AND execution_state IN ('claimed', 'in_progress')
 			    AND claimed_until <= ?`,
 			now,
 			item.WorkID,
@@ -1402,9 +1430,9 @@ func (s *Store) CreateAttestationRecord(ctx context.Context, rec core.Attestatio
 		`INSERT INTO attestation_records (
 			attestation_id, subject_kind, subject_id, result, summary, artifact_id,
 			job_id, session_id, method, verifier_kind, verifier_identity,
-			confidence, blocking, supersedes_attestation_id, metadata_json,
-			created_by, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			confidence, blocking, supersedes_attestation_id, signer_pubkey, signature,
+			metadata_json, created_by, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		rec.AttestationID,
 		rec.SubjectKind,
 		rec.SubjectID,
@@ -1419,6 +1447,8 @@ func (s *Store) CreateAttestationRecord(ctx context.Context, rec core.Attestatio
 		rec.Confidence,
 		boolToInt(rec.Blocking),
 		nullIfEmpty(rec.SupersedesAttestationID),
+		nullIfEmpty(rec.SignerPubkey),
+		nullIfEmpty(rec.Signature),
 		string(metadata),
 		nullIfEmpty(rec.CreatedBy),
 		rec.CreatedAt.UTC().Format(time.RFC3339Nano),
@@ -1438,8 +1468,8 @@ func (s *Store) ListAttestationRecords(ctx context.Context, subjectKind, subject
 		ctx,
 		`SELECT attestation_id, subject_kind, subject_id, result, summary, artifact_id,
 		        job_id, session_id, method, verifier_kind, verifier_identity,
-		        confidence, blocking, supersedes_attestation_id, metadata_json,
-		        created_by, created_at
+		        confidence, blocking, supersedes_attestation_id, signer_pubkey, signature,
+		        metadata_json, created_by, created_at
 		   FROM attestation_records
 		  WHERE subject_kind = ?
 		    AND subject_id = ?
@@ -2427,6 +2457,8 @@ func (s *Store) bootstrap(ctx context.Context) error {
 		`ALTER TABLE attestation_records ADD COLUMN confidence REAL NOT NULL DEFAULT 0`,
 		`ALTER TABLE attestation_records ADD COLUMN blocking INTEGER NOT NULL DEFAULT 0`,
 		`ALTER TABLE attestation_records ADD COLUMN supersedes_attestation_id TEXT`,
+		`ALTER TABLE attestation_records ADD COLUMN signer_pubkey TEXT`,
+		`ALTER TABLE attestation_records ADD COLUMN signature TEXT`,
 		`INSERT OR IGNORE INTO attestation_records (
 			attestation_id, subject_kind, subject_id, result, summary, artifact_id,
 			job_id, session_id, metadata_json, created_by, created_at
@@ -3251,6 +3283,8 @@ func scanAttestationRecord(scanner interface{ Scan(...any) error }) (core.Attest
 	var confidence sql.NullFloat64
 	var blocking int
 	var supersedesAttestationID sql.NullString
+	var signerPubkey sql.NullString
+	var signature sql.NullString
 	var metadataJSON string
 	var createdBy sql.NullString
 	var createdAt string
@@ -3270,6 +3304,8 @@ func scanAttestationRecord(scanner interface{ Scan(...any) error }) (core.Attest
 		&confidence,
 		&blocking,
 		&supersedesAttestationID,
+		&signerPubkey,
+		&signature,
 		&metadataJSON,
 		&createdBy,
 		&createdAt,
@@ -3290,6 +3326,8 @@ func scanAttestationRecord(scanner interface{ Scan(...any) error }) (core.Attest
 	rec.Confidence = confidence.Float64
 	rec.Blocking = blocking != 0
 	rec.SupersedesAttestationID = supersedesAttestationID.String
+	rec.SignerPubkey = signerPubkey.String
+	rec.Signature = signature.String
 	rec.CreatedBy = createdBy.String
 	parsed, err := time.Parse(time.RFC3339Nano, createdAt)
 	if err != nil {
@@ -3686,6 +3724,8 @@ CREATE TABLE IF NOT EXISTS attestation_records (
 	confidence REAL NOT NULL DEFAULT 0,
 	blocking INTEGER NOT NULL DEFAULT 0,
 	supersedes_attestation_id TEXT,
+	signer_pubkey TEXT,
+	signature TEXT,
 	metadata_json TEXT NOT NULL DEFAULT '{}',
 	created_by TEXT,
 	created_at TEXT NOT NULL

@@ -1662,7 +1662,7 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 				if workDetail, wErr := svc.Work(ctx, item.WorkID); wErr == nil {
 					jobHistory = workDetail.Jobs
 				}
-				adapter, model := pickAdapterModel(item, jobHistory, defaultAdapter)
+				adapter, model := pickAdapterModel(item, jobHistory, nil)
 
 				claimed, err := svc.ClaimWork(ctx, service.WorkClaimRequest{
 					WorkID:        item.WorkID,

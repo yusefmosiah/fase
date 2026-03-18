@@ -434,6 +434,8 @@ type AttestationRecord struct {
 	Confidence              float64        `json:"confidence,omitempty"`
 	Blocking                bool           `json:"blocking,omitempty"`
 	SupersedesAttestationID string         `json:"supersedes_attestation_id,omitempty"`
+	SignerPubkey            string         `json:"signer_pubkey,omitempty"`
+	Signature               string         `json:"signature,omitempty"`
 	Metadata                map[string]any `json:"metadata,omitempty"`
 	CreatedBy               string         `json:"created_by,omitempty"`
 	CreatedAt               time.Time      `json:"created_at"`

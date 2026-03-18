@@ -13,6 +13,7 @@ type Config struct {
 	Defaults DefaultsConfig `toml:"defaults"`
 	Adapters AdaptersConfig `toml:"adapters"`
 	Pricing  PricingConfig  `toml:"pricing"`
+	Rotation RotationConfig `toml:"rotation"`
 }
 
 type StoreConfig struct {
@@ -43,6 +44,20 @@ type AdapterConfig struct {
 
 type PricingConfig struct {
 	Models []ModelPricingOverride `toml:"models"`
+}
+
+// RotationEntry defines a single entry in the configurable model rotation pool.
+type RotationEntry struct {
+	Adapter       string   `toml:"adapter"`
+	Model         string   `toml:"model"`
+	MaxRunsPerDay int      `toml:"max_runs_per_day"` // 0 = unlimited
+	Roles         []string `toml:"roles"`             // empty = all roles; e.g. ["implement","design"]
+}
+
+// RotationConfig holds the ordered list of adapter/model pairs for round-robin dispatch.
+// If empty, the supervisor falls back to its hard-coded defaults.
+type RotationConfig struct {
+	Entries []RotationEntry `toml:"entries"`
 }
 
 type ModelPricingOverride struct {

@@ -106,6 +106,7 @@ type workClaimOptions struct {
 	claimant string
 	lease    time.Duration
 	limit    int
+	force    bool
 }
 
 type workDiscoverOptions struct {
@@ -1133,6 +1134,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				WorkID:    args[0],
 				Claimant:  claimOpts.claimant,
 				CreatedBy: "cli",
+				Force:     claimOpts.force,
 			})
 			if err != nil {
 				return mapServiceError(err)
@@ -1141,6 +1143,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		},
 	}
 	releaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime releasing the claim")
+	releaseCmd.Flags().BoolVar(&claimOpts.force, "force", false, "force release even if claimed by another worker (requires expired lease)")
 
 	renewLeaseCmd := &cobra.Command{
 		Use:   "renew-lease <work-id>",
@@ -1503,6 +1506,24 @@ This guarantees every doc has a corresponding work item.`,
 	attestCmd.Flags().StringVar(&attestOpts.metadata, "metadata", "", "JSON object with attestation metadata")
 	attestCmd.Flags().StringVar(&attestOpts.nonce, "nonce", "", "attestation nonce (generated post-job-completion, required for automated attestation)")
 	_ = attestCmd.MarkFlagRequired("result")
+
+	verifyCmd := &cobra.Command{
+		Use:   "verify <work-id>",
+		Short: "Verify the recorded work graph and artifact chain for a work item",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = svc.Close() }()
+			result, err := svc.VerifyWork(context.Background(), args[0])
+			if err != nil {
+				return mapServiceError(err)
+			}
+			return renderVerification(cmd, root.jsonOutput, result)
+		},
+	}
 
 	lockCmd := &cobra.Command{
 		Use:   "lock <work-id>",
@@ -1893,7 +1914,7 @@ This guarantees every doc has a corresponding work item.`,
 
 	edgeCmd.AddCommand(edgeAddCmd, edgeRmCmd, edgeLsCmd)
 
-	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd)
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, verifyCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd)
 	return cmd
 }
 
@@ -2993,6 +3014,46 @@ func renderAttestation(cmd *cobra.Command, jsonOutput bool, record *core.Attesta
 	if work != nil {
 		if err := writef(cmd.OutOrStdout(), "  approval=%s\n", work.ApprovalState); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func renderVerification(cmd *cobra.Command, jsonOutput bool, result *service.WorkVerifyResult) error {
+	if jsonOutput {
+		return writeJSON(cmd.OutOrStdout(), map[string]any{"verification": result})
+	}
+	if err := writef(cmd.OutOrStdout(), "%s\t%s\n", result.Work.WorkID, strings.ToUpper(result.Verdict)); err != nil {
+		return err
+	}
+	if result.Commit.OID != "" {
+		if err := writef(cmd.OutOrStdout(), "  commit: %s [%s]\n", result.Commit.OID, result.Commit.Status); err != nil {
+			return err
+		}
+		if result.Commit.Detail != "" {
+			if err := writef(cmd.OutOrStdout(), "    %s\n", result.Commit.Detail); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Attestations) > 0 {
+		if err := writef(cmd.OutOrStdout(), "  attestations: %d\n", len(result.Attestations)); err != nil {
+			return err
+		}
+		for _, attestation := range result.Attestations {
+			if err := writef(cmd.OutOrStdout(), "    %s %s sig=%s signer=%s\n", attestation.AttestationID, attestation.Result, attestation.SignatureStatus, attestation.SignerStatus); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Issues) > 0 {
+		if err := writef(cmd.OutOrStdout(), "  issues:\n"); err != nil {
+			return err
+		}
+		for _, issue := range result.Issues {
+			if err := writef(cmd.OutOrStdout(), "    - %s\n", issue); err != nil {
+				return err
+			}
 		}
 	}
 	return nil

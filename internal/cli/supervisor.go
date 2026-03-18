@@ -64,25 +64,43 @@ func modelForAdapter(adapter string) string {
 // Priority: (1) item.PreferredAdapters, (2) rotation offset from job history,
 // (3) global round-robin counter.
 // jobs should be ordered newest-first so jobs[0] is the most recent attempt.
-func pickAdapterModel(item core.WorkItemRecord, jobs []core.JobRecord, defaultAdapter string) (adapter, model string) {
+// rotation is the effective pool to draw from (budget-filtered); nil falls back to workRotation.
+func pickAdapterModel(item core.WorkItemRecord, jobs []core.JobRecord, rotation []rotationEntry) (adapter, model string) {
+	pool := rotation
+	if len(pool) == 0 {
+		pool = workRotation
+	}
 	if len(item.PreferredAdapters) > 0 {
 		a := item.PreferredAdapters[0]
-		return a, modelForAdapter(a)
+		m := modelForAdapter(a)
+		// If the preferred adapter isn't in the pool (budget exhausted), still honour
+		// the explicit preference — work items that pin an adapter know what they want.
+		return a, m
 	}
 	if len(jobs) > 0 {
 		// Find the most recent job that used a known rotation adapter and
 		// advance to the next slot (ensures retries differ from last attempt).
 		for _, job := range jobs {
-			lastIdx := rotationIndexForAdapter(job.Adapter)
+			lastIdx := rotationIndexForEntry(job.Adapter, pool)
 			if lastIdx >= 0 {
-				next := workRotation[(lastIdx+1)%len(workRotation)]
+				next := pool[(lastIdx+1)%len(pool)]
 				return next.adapter, next.model
 			}
 		}
 	}
-	// No usable history: global round-robin.
-	idx := int(atomic.AddInt64(&globalRotationIdx, 1)-1) % len(workRotation)
-	return workRotation[idx].adapter, workRotation[idx].model
+	// No usable history: global round-robin over the effective pool.
+	idx := int(atomic.AddInt64(&globalRotationIdx, 1)-1) % len(pool)
+	return pool[idx].adapter, pool[idx].model
+}
+
+// rotationIndexForEntry returns the index of adapter in the given pool, or -1.
+func rotationIndexForEntry(adapter string, pool []rotationEntry) int {
+	for i, e := range pool {
+		if e.adapter == adapter {
+			return i
+		}
+	}
+	return -1
 }
 
 // attestAdapterModel returns the adapter+model to use for attestation, offset
@@ -201,6 +219,21 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	if cwd == "" || cwd == "." {
 		cwd, _ = os.Getwd()
 	}
+
+	// Load config for budget-aware rotation. Errors are non-fatal; we fall back
+	// to the hard-coded workRotation with no budget limits.
+	cfg, _ := core.LoadConfig(root.configPath)
+
+	// Update the package-level workRotation from config if entries are provided
+	// so that attestation dispatch in serve.go also sees the configured pool.
+	if len(cfg.Rotation.Entries) > 0 {
+		workRotation = rotationFromConfig(cfg)
+	}
+
+	// Budget tracker persists daily run counts to <stateDir>/usage.json.
+	stateDir := filepath.Join(cwd, ".cagent")
+	budget := newDailyUsage(stateDir)
+	limits := buildLimitsMap(cfg)
 
 	jsonOutput := root.jsonOutput
 	leaseDuration := 30 * time.Minute
@@ -427,7 +460,9 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 				if workDetail, wErr := svc.Work(ctx, item.WorkID); wErr == nil {
 					jobHistory = workDetail.Jobs
 				}
-				adapter, model := pickAdapterModel(item, jobHistory, opts.defaultAdapter)
+				// Apply budget filter: skip adapters that have hit their daily limit.
+				effectivePool := budgetFilter(workRotation, limits, budget)
+				adapter, model := pickAdapterModel(item, jobHistory, effectivePool)
 
 				if opts.dryRun {
 					report.Dispatched = append(report.Dispatched, dispatchEntry{
@@ -482,6 +517,9 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 					})
 					continue
 				}
+
+				// Record the dispatch in the daily budget tracker.
+				budget.recordRun(adapter, model)
 
 				mu.Lock()
 				inFlight[claimed.WorkID] = &inFlightJob{

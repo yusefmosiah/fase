@@ -83,7 +83,7 @@ func runDispatch(cmd *cobra.Command, root *rootOptions, workID, adapterOverride,
 
 	// Pick adapter+model using round-robin rotation, offset from job history.
 	// Explicit --adapter and --model flags take priority.
-	pickedAdapter, pickedModel := pickAdapterModel(item.Work, item.Jobs, "codex")
+	pickedAdapter, pickedModel := pickAdapterModel(item.Work, item.Jobs, nil)
 	adapter := adapterOverride
 	if adapter == "" {
 		adapter = pickedAdapter

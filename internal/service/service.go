@@ -352,6 +352,7 @@ type WorkReleaseRequest struct {
 	WorkID    string
 	Claimant  string
 	CreatedBy string
+	Force     bool
 }
 
 type WorkRenewLeaseRequest struct {
@@ -1433,6 +1434,7 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 				"Run verification (tests, builds) and report results as notes.",
 				"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
 				"Do NOT call cagent work complete, cagent work fail, or cagent work attest.",
+				delegationNextAction(result.Work),
 			},
 		},
 		"hydration": map[string]any{
@@ -1579,7 +1581,7 @@ func (s *Service) ReleaseWork(ctx context.Context, req WorkReleaseRequest) (*cor
 	if err != nil {
 		return nil, normalizeStoreError("work", workID, err)
 	}
-	work, err := s.store.ReleaseWorkItemClaim(ctx, workID, claimant)
+	work, err := s.store.ReleaseWorkItemClaim(ctx, workID, claimant, req.Force)
 	if err != nil {
 		return nil, normalizeWorkClaimError(workID, err)
 	}
@@ -2916,6 +2918,31 @@ func (s *Service) rawLogsFromEvents(events []core.EventRecord) ([]RawLogEntry, e
 	return logs, nil
 }
 
+func (s *Service) cancelReleaseWorkClaim(ctx context.Context, jobID, workID string) {
+	if workID == "" {
+		return
+	}
+	work, err := s.store.GetWorkItem(ctx, workID)
+	if err != nil {
+		return
+	}
+	if work.ClaimedBy == "" && work.ClaimedUntil == nil {
+		return
+	}
+	now := time.Now().UTC()
+	leaseExpired := work.ClaimedUntil != nil && !work.ClaimedUntil.After(now)
+	workState := core.WorkExecutionStateFailed
+	if leaseExpired || work.ClaimedBy == "" {
+		workState = core.WorkExecutionStateReady
+	}
+	_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
+		WorkID:         workID,
+		ExecutionState: workState,
+		Message:        fmt.Sprintf("cancelled: job %s", jobID),
+		CreatedBy:      "cancel",
+	})
+}
+
 func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, error) {
 	job, err := s.store.GetJob(ctx, jobID)
 	if err != nil {
@@ -2923,6 +2950,7 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 	}
 
 	if job.State.Terminal() {
+		s.cancelReleaseWorkClaim(ctx, jobID, job.WorkID)
 		return &job, nil
 	}
 
@@ -2952,6 +2980,7 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 		for time.Now().Before(waitUntil) {
 			current, err := s.store.GetJob(ctx, jobID)
 			if err == nil && current.State.Terminal() {
+				s.cancelReleaseWorkClaim(ctx, jobID, current.WorkID)
 				return &current, nil
 			}
 			time.Sleep(100 * time.Millisecond)
@@ -2963,15 +2992,7 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 		return nil, err
 	}
 
-	// Release the work item claim so it doesn't get stuck in "claimed" state
-	if current.WorkID != "" {
-		_, _ = s.UpdateWork(ctx, WorkUpdateRequest{
-			WorkID:         current.WorkID,
-			ExecutionState: core.WorkExecutionStateFailed,
-			Message:        fmt.Sprintf("cancelled: job %s", jobID),
-			CreatedBy:      "cancel",
-		})
-	}
+	s.cancelReleaseWorkClaim(ctx, jobID, current.WorkID)
 
 	if current.State.Terminal() {
 		return &current, nil
@@ -3938,10 +3959,7 @@ func hydrationLimits(mode string) (updates, notes, attestations, artifacts, jobs
 }
 
 func delegationNextAction(work core.WorkItemRecord) string {
-	if len(work.RequiredAttestations) > 0 {
-		return "Create child work only when the needed result is bounded and cheaply attestable; otherwise propose the child instead of creating it directly."
-	}
-	return "Create child work only for unexpected work, fanout, or sequential context isolation when success can be judged from bounded results."
+	return "Create child work directly only for unexpected work, fanout work, or sequential context isolation when success can be judged from bounded results."
 }
 
 func attestationIDs(attestations []core.AttestationRecord) []string {

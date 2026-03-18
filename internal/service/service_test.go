@@ -1708,6 +1708,56 @@ func TestReviewWorkProposalRejectsParentCycleOnReparent(t *testing.T) {
 	}
 }
 
+func TestAttestationSignatureFieldsRoundTrip(t *testing.T) {
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("CAGENT_STATE_DIR", stateDir)
+	t.Setenv("CAGENT_CONFIG_DIR", configDir)
+	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+
+	svc, err := Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	work, err := svc.CreateWork(context.Background(), WorkCreateRequest{
+		Title:     "sign attestation",
+		Objective: "exercise attestation signature persistence",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork returned error: %v", err)
+	}
+
+	record := core.AttestationRecord{
+		AttestationID: core.GenerateID("attest"),
+		SubjectKind:   "work",
+		SubjectID:     work.WorkID,
+		Result:        "passed",
+		Summary:       "signature persistence",
+		SignerPubkey:  "pubkey-b64",
+		Signature:     "signature-b64",
+		CreatedBy:     "test",
+		CreatedAt:     time.Now().UTC(),
+	}
+	if err := svc.store.CreateAttestationRecord(context.Background(), record); err != nil {
+		t.Fatalf("CreateAttestationRecord returned error: %v", err)
+	}
+
+	records, err := svc.store.ListAttestationRecords(context.Background(), "work", work.WorkID, 10)
+	if err != nil {
+		t.Fatalf("ListAttestationRecords returned error: %v", err)
+	}
+	if len(records) != 1 {
+		t.Fatalf("expected 1 attestation record, got %d", len(records))
+	}
+	if records[0].SignerPubkey != record.SignerPubkey || records[0].Signature != record.Signature {
+		t.Fatalf("expected signature fields to round-trip, got %+v", records[0])
+	}
+}
+
 func setTestExecutable(t *testing.T) {
 	t.Helper()
 
