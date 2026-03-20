@@ -6243,6 +6243,15 @@ func (s *Service) emitEvent(
 		return nil, fmt.Errorf("marshal event payload: %w", err)
 	}
 
+	// When raw data will be written as an artifact file, don't duplicate
+	// the payload in the events table — it's the dominant source of db bloat.
+	// The event row keeps metadata (kind, seq, job_id) for ordering; the
+	// actual content lives in the artifact file referenced by raw_ref.
+	dbPayload := encoded
+	if len(rawData) > 0 && rawStream != "" {
+		dbPayload = json.RawMessage(`{}`)
+	}
+
 	event := &core.EventRecord{
 		EventID:         core.GenerateID("evt"),
 		TS:              time.Now().UTC(),
@@ -6252,12 +6261,14 @@ func (s *Service) emitEvent(
 		Kind:            kind,
 		Phase:           phase,
 		NativeSessionID: job.NativeSessionID,
-		Payload:         encoded,
+		Payload:         dbPayload,
 	}
 
 	if err := s.store.AppendEvent(ctx, event); err != nil {
 		return nil, err
 	}
+	// Restore full payload on the in-memory record for callers.
+	event.Payload = encoded
 
 	if len(rawData) > 0 && rawStream != "" {
 		rawRef, err := s.writeRawArtifact(job, rawStream, event.Seq, rawData)

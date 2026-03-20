@@ -38,4 +38,9 @@ work_seed/
 .cagent/agent-credential-*
 .cagent/cagent.db.corrupt
 .cagent/cagent.db.new
+.cagent/cagent-events.db
+.cagent/cagent-events.db-shm
+.cagent/cagent-events.db-wal
+.cagent/allowed_signers
+.cagent/serve.log
 .cagent/usage.json
