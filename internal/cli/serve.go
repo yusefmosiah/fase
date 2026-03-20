@@ -423,83 +423,35 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 	}
 }
 
-type workSnapshot struct {
-	updatedAt      time.Time
-	executionState string
-	jobCount       int
-	attCount       int
-}
-
 func runChangeWatcher(ctx context.Context, svc *service.Service, hub *wsHub) {
-	ticker := time.NewTicker(3 * time.Second)
-	defer ticker.Stop()
+	ch := svc.Events.Subscribe()
+	defer svc.Events.Unsubscribe(ch)
 
-	prev := make(map[string]workSnapshot)
-
-	snapshot := func() {
-		items, err := svc.ListWork(ctx, service.WorkListRequest{Limit: 500, IncludeArchived: false})
-		if err != nil {
-			return
-		}
-		for _, item := range items {
-			cur := workSnapshot{
-				updatedAt:      item.UpdatedAt,
-				executionState: string(item.ExecutionState),
-				jobCount:       -1,
-				attCount:       -1,
-			}
-
-			if old, ok := prev[item.WorkID]; !ok {
-				prev[item.WorkID] = cur
-				continue
-			} else if old != cur {
-				event := map[string]string{
-					"work_id": item.WorkID,
-					"state":   cur.executionState,
-					"updated": cur.updatedAt.UTC().Format(time.RFC3339),
-				}
-				hub.broadcast("work_updated", event)
-
-				if cur.executionState != old.executionState {
-					switch cur.executionState {
-					case "claimed", "in_progress", "starting":
-						hub.broadcast("job_started", event)
-					case "done":
-						hub.broadcast("job_completed", event)
-					}
-				}
-
-				if cur.attCount > old.attCount && old.attCount >= 0 {
-					hub.broadcast("attestation_added", map[string]string{
-						"work_id": item.WorkID,
-					})
-				}
-
-				prev[item.WorkID] = cur
-			}
-		}
-
-		for id := range prev {
-			found := false
-			for _, item := range items {
-				if item.WorkID == id {
-					found = true
-					break
-				}
-			}
-			if !found {
-				delete(prev, id)
-			}
-		}
-	}
-
-	snapshot()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
-			snapshot()
+		case ev := <-ch:
+			event := map[string]string{
+				"work_id": ev.WorkID,
+				"state":   ev.State,
+			}
+			hub.broadcast("work_updated", event)
+
+			if ev.PrevState != "" && ev.PrevState != ev.State {
+				switch ev.State {
+				case "claimed", "in_progress":
+					hub.broadcast("job_started", event)
+				case "done":
+					hub.broadcast("job_completed", event)
+				}
+			}
+
+			if ev.Kind == service.WorkEventAttested {
+				hub.broadcast("attestation_added", map[string]string{
+					"work_id": ev.WorkID,
+				})
+			}
 		}
 	}
 }

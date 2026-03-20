@@ -45,6 +45,7 @@ type Service struct {
 	ConfigPath    string
 	ConfigPresent bool
 	store         *store.Store
+	Events        EventBus
 }
 
 type RunRequest struct {
@@ -1225,6 +1226,12 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 			return nil, err
 		}
 	}
+	s.Events.publish(WorkEvent{
+		Kind:   WorkEventCreated,
+		WorkID: work.WorkID,
+		Title:  work.Title,
+		State:  string(work.ExecutionState),
+	})
 	return &work, nil
 }
 
@@ -1820,6 +1827,11 @@ func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.Wo
 	if leaseDuration <= 0 {
 		leaseDuration = 15 * time.Minute
 	}
+	before, fetchErr := s.store.GetWorkItem(ctx, workID)
+	prevState := ""
+	if fetchErr == nil {
+		prevState = string(before.ExecutionState)
+	}
 	work, err := s.store.ClaimWorkItem(ctx, workID, claimant, time.Now().UTC().Add(leaseDuration))
 	if err != nil {
 		return nil, normalizeWorkClaimError(workID, err)
@@ -1840,6 +1852,13 @@ func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.Wo
 	}); err != nil {
 		return nil, err
 	}
+	s.Events.publish(WorkEvent{
+		Kind:      WorkEventClaimed,
+		WorkID:    work.WorkID,
+		Title:     work.Title,
+		State:     string(work.ExecutionState),
+		PrevState: prevState,
+	})
 	return &work, nil
 }
 
@@ -1910,6 +1929,13 @@ func (s *Service) ReleaseWork(ctx context.Context, req WorkReleaseRequest) (*cor
 			return nil, err
 		}
 	}
+	s.Events.publish(WorkEvent{
+		Kind:      WorkEventReleased,
+		WorkID:    work.WorkID,
+		Title:     work.Title,
+		State:     string(work.ExecutionState),
+		PrevState: string(before.ExecutionState),
+	})
 	return &work, nil
 }
 
@@ -1957,6 +1983,7 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	if err != nil {
 		return nil, normalizeStoreError("work", req.WorkID, err)
 	}
+	prevState := string(work.ExecutionState)
 	now := time.Now().UTC()
 	if req.ExecutionState != "" {
 		if !req.ExecutionState.Valid() {
@@ -2031,6 +2058,13 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	}); err != nil {
 		return nil, err
 	}
+	s.Events.publish(WorkEvent{
+		Kind:      WorkEventUpdated,
+		WorkID:    work.WorkID,
+		Title:     work.Title,
+		State:     string(work.ExecutionState),
+		PrevState: prevState,
+	})
 	return &work, nil
 }
 
@@ -2229,6 +2263,7 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 	if err != nil {
 		return nil, nil, normalizeStoreError("work", req.WorkID, err)
 	}
+	prevState := string(work.ExecutionState)
 	// Nonce validation: if the work item has an attestation nonce,
 	// the caller must provide it. The nonce is generated after the worker
 	// exits, so workers cannot attest their own work.
@@ -2350,6 +2385,13 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 	}); err != nil {
 		return nil, nil, err
 	}
+	s.Events.publish(WorkEvent{
+		Kind:      WorkEventAttested,
+		WorkID:    work.WorkID,
+		Title:     work.Title,
+		State:     string(work.ExecutionState),
+		PrevState: prevState,
+	})
 	return &record, &work, nil
 }
 

@@ -82,7 +82,34 @@ func (s *Server) SendChannelEvent(content string, meta map[string]string) error 
 
 // RunStdio runs the MCP server over stdio transport.
 func (s *Server) RunStdio(ctx context.Context) error {
+	go s.runEventForwarder(ctx)
 	return s.MCP.Run(ctx, &mcp.StdioTransport{})
+}
+
+// runEventForwarder subscribes to the service event bus and forwards
+// work graph events as channel notifications.
+func (s *Server) runEventForwarder(ctx context.Context) {
+	ch := s.svc.Events.Subscribe()
+	defer s.svc.Events.Unsubscribe(ch)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case ev := <-ch:
+			content := fmt.Sprintf("Work item %s (%s): %s [state=%s]", ev.WorkID, ev.Title, ev.Kind, ev.State)
+			meta := map[string]string{
+				"work_id": ev.WorkID,
+				"kind":    string(ev.Kind),
+				"state":   ev.State,
+			}
+			if ev.PrevState != "" && ev.PrevState != ev.State {
+				content = fmt.Sprintf("Work item %s (%s): %s [%s → %s]", ev.WorkID, ev.Title, ev.Kind, ev.PrevState, ev.State)
+				meta["prev_state"] = ev.PrevState
+			}
+			_ = s.SendChannelEvent(content, meta)
+		}
+	}
 }
 
 // --- Tool input types ---
