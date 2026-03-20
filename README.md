@@ -135,18 +135,18 @@ Important gaps versus the spec:
 ## Repository Layout
 
 Main code locations:
-- [cmd/fase/main.go](/Users/wiz/cagent/cmd/fase/main.go)
-- [internal/cli/root.go](/Users/wiz/cagent/internal/cli/root.go)
-- [internal/service/service.go](/Users/wiz/cagent/internal/service/service.go)
-- [internal/store/store.go](/Users/wiz/cagent/internal/store/store.go)
-- [internal/events/translate.go](/Users/wiz/cagent/internal/events/translate.go)
-- [internal/transfer/render.go](/Users/wiz/cagent/internal/transfer/render.go)
-- [internal/adapters](/Users/wiz/cagent/internal/adapters)
+- [cmd/fase/main.go](cmd/fase/main.go)
+- [internal/cli/root.go](internal/cli/root.go)
+- [internal/service/service.go](internal/service/service.go)
+- [internal/store/store.go](internal/store/store.go)
+- [internal/events/translate.go](internal/events/translate.go)
+- [internal/transfer/render.go](internal/transfer/render.go)
+- [internal/adapters](internal/adapters)
 
 Fixtures and adapter test assets:
-- [testdata/fixtures](/Users/wiz/cagent/testdata/fixtures)
-- [testdata/golden](/Users/wiz/cagent/testdata/golden)
-- [testdata/fake_clis](/Users/wiz/cagent/testdata/fake_clis)
+- [testdata/fixtures](testdata/fixtures)
+- [testdata/golden](testdata/golden)
+- [testdata/fake_clis](testdata/fake_clis)
 
 ## Build And Test
 
@@ -211,7 +211,7 @@ Rules:
 - Otherwise estimate cost only when provider, model, and pricing are known.
 - Treat estimated cost as a routing/debugging hint, not a billing ledger.
 
-The staged release matrix for contract, fake, live low-cost, recovery, and recursive orchestration lanes is documented in [docs/release-test-matrix.md](/Users/wiz/cagent/docs/release-test-matrix.md).
+The staged release matrix for contract, fake, live low-cost, recovery, and recursive orchestration lanes is documented in [docs/release-test-matrix.md](docs/release-test-matrix.md).
 
 ## History
 
@@ -235,7 +235,7 @@ Environment overrides:
 - `FASE_STATE_DIR`
 - `FASE_CACHE_DIR`
 
-Current default adapter config is defined in [internal/core/config.go](/Users/wiz/cagent/internal/core/config.go).
+Current default adapter config is defined in [internal/core/config.go](internal/core/config.go).
 
 Example adapter traits for host-agent orchestration:
 

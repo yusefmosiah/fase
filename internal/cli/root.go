@@ -260,7 +260,7 @@ func NewRootCommand() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:           "fase",
-		Aliases:       []string{"cagent"},
+		Aliases:       []string{},
 		Short:         "Run coding-agent CLIs behind one local contract",
 		SilenceUsage:  true,
 		SilenceErrors: true,

@@ -80,7 +80,7 @@ Exit criteria:
 
 Exit criteria:
 - hydration output validates against
-  [schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json)
+  [schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json)
 - repeated runs over unchanged state are stable
 
 ### Slice 4: Approval/Promotion Ledger

@@ -436,9 +436,9 @@ Workers should hydrate from a versioned compiled briefing, not a bespoke launch
 prompt.
 
 The stable contract is defined in
-[docs/fase-worker-briefing-schema.md](/Users/wiz/cagent/docs/fase-worker-briefing-schema.md)
+[docs/fase-worker-briefing-schema.md](docs/fase-worker-briefing-schema.md)
 with the canonical JSON schema in
-[schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+[schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json).
 
 Lease semantics for v1:
 - `work claim` moves `ready -> claimed`

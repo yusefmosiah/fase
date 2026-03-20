@@ -15,7 +15,7 @@ recent evidence, and runtime policy. Adapters may render that briefing into
 natural language or structured input, but the source contract stays the same.
 
 The stable schema lives in
-[schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+[schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json).
 
 ## What Changed
 
@@ -53,7 +53,7 @@ execution adapter.
 ## 2) Contract Shape
 
 The canonical format is JSON conforming to
-[schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
+[schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json).
 
 Top-level sections:
 

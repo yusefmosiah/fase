@@ -3,7 +3,6 @@
 .factory/
 .claude/
 /fase
-/cagent
 *.test
 .dogfood*/
 .dogfood/
@@ -46,29 +45,3 @@ work_seed/
 .fase/allowed_signers
 .fase/serve.log
 .fase/usage.json
-
-# legacy cagent local state — retained for compatibility
-.cagent/raw/
-.cagent/serve.json
-.cagent/supervisor.json
-.cagent/jobs/
-.cagent/transfers/
-.cagent/debriefs/
-.cagent/cagent.db-shm
-.cagent/cagent.db-wal
-.cagent/cagent-private.db
-.cagent/cagent-private.db-shm
-.cagent/cagent-private.db-wal
-.cagent/ca.key
-.cagent/ca.pub
-.cagent/tokens/
-.cagent/keys/
-.cagent/agent-credential-*
-.cagent/cagent.db.corrupt
-.cagent/cagent.db.new
-.cagent/cagent-events.db
-.cagent/cagent-events.db-shm
-.cagent/cagent-events.db-wal
-.cagent/allowed_signers
-.cagent/serve.log
-.cagent/usage.json
