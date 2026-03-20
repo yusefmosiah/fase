@@ -11,7 +11,7 @@ func TestLiveCheapSmokeMatrix(t *testing.T) {
 		t.Skip("set FASE_LIVE_E2E=1 to run live adapter tests")
 	}
 
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := os.Getenv("FASE_LIVE_CONFIG")
 	if configPath == "" {
 		t.Fatal("FASE_LIVE_CONFIG is required for live tests")
@@ -38,14 +38,14 @@ func TestLiveCheapSmokeMatrix(t *testing.T) {
 				t.Skipf("set %s to run %s live lane", tc.modelEnv, tc.adapter)
 			}
 
-			output := runCagent(t, binary, configPath, "--json", "run", "--adapter", tc.adapter, "--model", model, "--cwd", t.TempDir(), "--prompt", tc.prompt)
+			output := runFase(t, binary, configPath, "--json", "run", "--adapter", tc.adapter, "--model", model, "--cwd", t.TempDir(), "--prompt", tc.prompt)
 			var result cliRunResult
 			if err := json.Unmarshal([]byte(output), &result); err != nil {
 				t.Fatalf("unmarshal live run: %v\n%s", err, output)
 			}
 			waitForJobState(t, binary, configPath, result.Job.JobID, map[string]bool{"completed": true})
 
-			statusOutput := runCagent(t, binary, configPath, "--json", "status", result.Job.JobID)
+			statusOutput := runFase(t, binary, configPath, "--json", "status", result.Job.JobID)
 			var status cliStatusResult
 			if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
 				t.Fatalf("unmarshal live status: %v\n%s", err, statusOutput)

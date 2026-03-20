@@ -25,8 +25,7 @@ const (
 	CapWorkReject    = "work:reject"
 	CapWorkForceDone = "work:force-done"
 
-	EnvAgentToken       = "FASE_AGENT_TOKEN"
-	LegacyEnvAgentToken = "CAGENT_AGENT_TOKEN"
+	EnvAgentToken = "FASE_AGENT_TOKEN"
 )
 
 // CapabilityEnforcementMode controls whether violations block or only warn.
@@ -130,8 +129,7 @@ func (t *CapabilityToken) Signable() TokenSignable {
 }
 
 // AgentCredential is the on-disk format written to a temp file pointed to by
-// FASE_AGENT_TOKEN or the legacy CAGENT_AGENT_TOKEN. The agent reads this file
-// on startup.
+// FASE_AGENT_TOKEN. The agent reads this file on startup.
 type AgentCredential struct {
 	Token      CapabilityToken `json:"token"`
 	PrivateKey string          `json:"private_key"` // base64-encoded Ed25519 private key seed

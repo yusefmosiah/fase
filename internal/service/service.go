@@ -4057,18 +4057,14 @@ func (s *Service) detachedWorkerEnv(exePath string) []string {
 	}
 
 	envMap["FASE_EXECUTABLE"] = exePath
-	envMap["CAGENT_EXECUTABLE"] = exePath
 	if s.ConfigPath != "" {
 		envMap["FASE_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
-		envMap["CAGENT_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
 	}
 	if s.Paths.StateDir != "" {
 		envMap["FASE_STATE_DIR"] = s.Paths.StateDir
-		envMap["CAGENT_STATE_DIR"] = s.Paths.StateDir
 	}
 	if s.Paths.CacheDir != "" {
 		envMap["FASE_CACHE_DIR"] = s.Paths.CacheDir
-		envMap["CAGENT_CACHE_DIR"] = s.Paths.CacheDir
 	}
 	if exeDir := filepath.Dir(exePath); exeDir != "" {
 		if pathValue, ok := envMap["PATH"]; ok && pathValue != "" {
@@ -4330,9 +4326,6 @@ func (s *Service) persistDebrief(ctx context.Context, job *core.JobRecord, messa
 
 func detachedExecutablePath() (string, error) {
 	if explicit := os.Getenv("FASE_EXECUTABLE"); explicit != "" {
-		return explicit, nil
-	}
-	if explicit := os.Getenv("CAGENT_EXECUTABLE"); explicit != "" {
 		return explicit, nil
 	}
 	path, err := os.Executable()

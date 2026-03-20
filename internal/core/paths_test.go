@@ -72,48 +72,14 @@ func TestResolvePathsUsesHomeFallbacks(t *testing.T) {
 	}
 }
 
-func TestResolvePathsSupportsLegacyOverrides(t *testing.T) {
-	env := map[string]string{
-		"CAGENT_CONFIG_DIR": "/tmp/cagent-config",
-		"CAGENT_STATE_DIR":  "/tmp/cagent-state",
-		"CAGENT_CACHE_DIR":  "/tmp/cagent-cache",
-	}
-
-	paths, err := ResolvePathsFromEnv("/Users/tester", func(key string) string { return env[key] })
-	if err != nil {
-		t.Fatalf("ResolvePathsFromEnv returned error: %v", err)
-	}
-
-	if paths.ConfigDir != "/tmp/cagent-config" {
-		t.Fatalf("expected legacy config override, got %q", paths.ConfigDir)
-	}
-	if paths.StateDir != "/tmp/cagent-state" {
-		t.Fatalf("expected legacy state override, got %q", paths.StateDir)
-	}
-	if paths.CacheDir != "/tmp/cagent-cache" {
-		t.Fatalf("expected legacy cache override, got %q", paths.CacheDir)
-	}
-}
-
-func TestResolveRepoStateDirFromPrefersFaseAndFallsBackToLegacy(t *testing.T) {
+func TestResolveRepoStateDirFromReturnsFaseDir(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
 	}
 
-	legacy := filepath.Join(root, ".cagent")
-	if err := os.Mkdir(legacy, 0o755); err != nil {
-		t.Fatalf("mkdir legacy state dir: %v", err)
-	}
-	if got := ResolveRepoStateDirFrom(root); got != legacy {
-		t.Fatalf("expected legacy state dir, got %q", got)
-	}
-
-	fase := filepath.Join(root, ".fase")
-	if err := os.Mkdir(fase, 0o755); err != nil {
-		t.Fatalf("mkdir fase state dir: %v", err)
-	}
-	if got := ResolveRepoStateDirFrom(root); got != fase {
-		t.Fatalf("expected fase state dir, got %q", got)
+	expected := filepath.Join(root, ".fase")
+	if got := ResolveRepoStateDirFrom(root); got != expected {
+		t.Fatalf("expected %q, got %q", expected, got)
 	}
 }

@@ -175,7 +175,7 @@ func TestLiveAdapter_ResumeSession(t *testing.T) {
 	t.Logf("original session: %s", threadID)
 
 	if _, err := session1.StartTurn(ctx, []adapterapi.Input{
-		adapterapi.TextInput("Remember the secret word: CAGENT"),
+		adapterapi.TextInput("Remember the secret word: FASE"),
 	}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}

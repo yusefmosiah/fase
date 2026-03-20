@@ -142,15 +142,16 @@ type cliHistoryMatch struct {
 }
 
 type cliWorkItem struct {
-	WorkID           string `json:"work_id"`
-	Title            string `json:"title"`
-	Kind             string `json:"kind"`
-	ExecutionState   string `json:"execution_state"`
-	ApprovalState    string `json:"approval_state"`
-	CurrentJobID     string `json:"current_job_id"`
-	CurrentSessionID string `json:"current_session_id"`
-	ClaimedBy        string `json:"claimed_by"`
-	ClaimedUntil     string `json:"claimed_until"`
+	WorkID           string         `json:"work_id"`
+	Title            string         `json:"title"`
+	Kind             string         `json:"kind"`
+	ExecutionState   string         `json:"execution_state"`
+	ApprovalState    string         `json:"approval_state"`
+	CurrentJobID     string         `json:"current_job_id"`
+	CurrentSessionID string         `json:"current_session_id"`
+	ClaimedBy        string         `json:"claimed_by"`
+	ClaimedUntil     string         `json:"claimed_until"`
+	Metadata         map[string]any `json:"metadata"`
 }
 
 type cliWorkNote struct {
@@ -219,10 +220,10 @@ type cliPromotionPayload struct {
 }
 
 func TestDetachedRunCanBeCancelled(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "hang for cancellation test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "hang for cancellation test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal detached run: %v\n%s", err, runOutput)
@@ -233,7 +234,7 @@ func TestDetachedRunCanBeCancelled(t *testing.T) {
 
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"queued": true, "running": true})
 
-	cancelOutput := runCagent(t, binary, configPath, "--json", "cancel", runResult.Job.JobID)
+	cancelOutput := runFase(t, binary, configPath, "--json", "cancel", runResult.Job.JobID)
 	var cancelled cliJobRecord
 	if err := json.Unmarshal([]byte(cancelOutput), &cancelled); err != nil {
 		t.Fatalf("unmarshal cancel output: %v\n%s", err, cancelOutput)
@@ -246,16 +247,16 @@ func TestDetachedRunCanBeCancelled(t *testing.T) {
 }
 
 func TestFollowLogsAndListFilters(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "slow follow test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "slow follow test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal detached run: %v\n%s", err, runOutput)
 	}
 
-	logOutput := runCagent(t, binary, configPath, "logs", runResult.Job.JobID, "--follow")
+	logOutput := runFase(t, binary, configPath, "logs", runResult.Job.JobID, "--follow")
 	if !strings.Contains(logOutput, "assistant.message") {
 		t.Fatalf("expected assistant.message in follow output:\n%s", logOutput)
 	}
@@ -263,7 +264,7 @@ func TestFollowLogsAndListFilters(t *testing.T) {
 		t.Fatalf("expected job.completed in follow output:\n%s", logOutput)
 	}
 
-	jobsOutput := runCagent(t, binary, configPath, "--json", "list", "--kind", "jobs", "--adapter", "codex", "--state", "completed", "--session", runResult.Session.SessionID)
+	jobsOutput := runFase(t, binary, configPath, "--json", "list", "--kind", "jobs", "--adapter", "codex", "--state", "completed", "--session", runResult.Session.SessionID)
 	var jobs []map[string]any
 	if err := json.Unmarshal([]byte(jobsOutput), &jobs); err != nil {
 		t.Fatalf("unmarshal filtered jobs: %v\n%s", err, jobsOutput)
@@ -272,7 +273,7 @@ func TestFollowLogsAndListFilters(t *testing.T) {
 		t.Fatalf("expected completed job in filtered list")
 	}
 
-	sessionsOutput := runCagent(t, binary, configPath, "--json", "list", "--kind", "sessions", "--adapter", "codex", "--state", "active")
+	sessionsOutput := runFase(t, binary, configPath, "--json", "list", "--kind", "sessions", "--adapter", "codex", "--state", "active")
 	var sessions []cliSessionResult
 	if err := json.Unmarshal([]byte(sessionsOutput), &sessions); err != nil {
 		t.Fatalf("unmarshal filtered sessions: %v\n%s", err, sessionsOutput)
@@ -283,16 +284,16 @@ func TestFollowLogsAndListFilters(t *testing.T) {
 }
 
 func TestStatusWaitReturnsTerminalJob(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "slow wait test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "slow wait test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal detached run: %v\n%s", err, runOutput)
 	}
 
-	statusOutput := runCagent(t, binary, configPath, "--json", "status", "--wait", "--timeout", "10s", runResult.Job.JobID)
+	statusOutput := runFase(t, binary, configPath, "--json", "status", "--wait", "--timeout", "10s", runResult.Job.JobID)
 	var status cliStatusResult
 	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
 		t.Fatalf("unmarshal waited status: %v\n%s", err, statusOutput)
@@ -303,17 +304,17 @@ func TestStatusWaitReturnsTerminalJob(t *testing.T) {
 }
 
 func TestStatusReportsUsageAndEstimatedCost(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--model", "gpt-5-nano", "--cwd", t.TempDir(), "--prompt", "usage reporting test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--model", "gpt-5-nano", "--cwd", t.TempDir(), "--prompt", "usage reporting test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	statusOutput := runCagent(t, binary, configPath, "--json", "status", runResult.Job.JobID)
+	statusOutput := runFase(t, binary, configPath, "--json", "status", runResult.Job.JobID)
 	var status cliStatusResult
 	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
 		t.Fatalf("unmarshal status output: %v\n%s", err, statusOutput)
@@ -333,17 +334,17 @@ func TestStatusReportsUsageAndEstimatedCost(t *testing.T) {
 }
 
 func TestClaudeStatusReportsVendorCost(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeClaudeConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "claude", "--model", "claude-sonnet-4-6", "--cwd", t.TempDir(), "--prompt", "vendor cost reporting test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "claude", "--model", "claude-sonnet-4-6", "--cwd", t.TempDir(), "--prompt", "vendor cost reporting test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	statusOutput := runCagent(t, binary, configPath, "--json", "status", runResult.Job.JobID)
+	statusOutput := runFase(t, binary, configPath, "--json", "status", runResult.Job.JobID)
 	var status cliStatusResult
 	if err := json.Unmarshal([]byte(statusOutput), &status); err != nil {
 		t.Fatalf("unmarshal status output: %v\n%s", err, statusOutput)
@@ -363,27 +364,27 @@ func TestClaudeStatusReportsVendorCost(t *testing.T) {
 }
 
 func TestListRunningJobsReturnsEmptyArray(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	output := runCagent(t, binary, configPath, "--json", "list", "--state", "running")
+	output := runFase(t, binary, configPath, "--json", "list", "--state", "running")
 	if strings.TrimSpace(output) != "[]" {
 		t.Fatalf("expected empty JSON array, got %s", output)
 	}
 }
 
 func TestTransferExportAndRun(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexGeminiConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "build transfer source")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "build transfer source")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal source run: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	exportOutput := runCagent(t, binary, configPath, "--json", "transfer", "export", "--job", runResult.Job.JobID, "--reason", "provider outage", "--mode", "recovery")
+	exportOutput := runFase(t, binary, configPath, "--json", "transfer", "export", "--job", runResult.Job.JobID, "--reason", "provider outage", "--mode", "recovery")
 	var transferResult cliTransferExportResult
 	if err := json.Unmarshal([]byte(exportOutput), &transferResult); err != nil {
 		t.Fatalf("unmarshal transfer export: %v\n%s", err, exportOutput)
@@ -401,7 +402,7 @@ func TestTransferExportAndRun(t *testing.T) {
 		t.Fatalf("expected transfer file at %q: %v", transferResult.Path, err)
 	}
 
-	targetOutput := runCagent(t, binary, configPath, "--json", "transfer", "run", "--transfer", transferResult.Transfer.TransferID, "--adapter", "gemini", "--cwd", t.TempDir())
+	targetOutput := runFase(t, binary, configPath, "--json", "transfer", "run", "--transfer", transferResult.Transfer.TransferID, "--adapter", "gemini", "--cwd", t.TempDir())
 	var targetRun cliRunResult
 	if err := json.Unmarshal([]byte(targetOutput), &targetRun); err != nil {
 		t.Fatalf("unmarshal transfer run: %v\n%s", err, targetOutput)
@@ -410,17 +411,17 @@ func TestTransferExportAndRun(t *testing.T) {
 }
 
 func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "build debrief source")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "build debrief source")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal source run: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	debriefOutput := runCagent(t, binary, configPath, "--json", "debrief", "--session", runResult.Session.SessionID)
+	debriefOutput := runFase(t, binary, configPath, "--json", "debrief", "--session", runResult.Session.SessionID)
 	var debriefResult cliDebriefResult
 	if err := json.Unmarshal([]byte(debriefOutput), &debriefResult); err != nil {
 		t.Fatalf("unmarshal debrief run: %v\n%s", err, debriefOutput)
@@ -438,12 +439,12 @@ func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
 		t.Fatalf("expected markdown debrief headings, got:\n%s", data)
 	}
 
-	logOutput := runCagent(t, binary, configPath, "logs", debriefResult.Job.JobID)
+	logOutput := runFase(t, binary, configPath, "logs", debriefResult.Job.JobID)
 	if !strings.Contains(logOutput, "debrief.exported") {
 		t.Fatalf("expected debrief.exported event in logs:\n%s", logOutput)
 	}
 
-	artifactsOutput := runCagent(t, binary, configPath, "--json", "artifacts", "list", "--job", debriefResult.Job.JobID, "--kind", "debrief")
+	artifactsOutput := runFase(t, binary, configPath, "--json", "artifacts", "list", "--job", debriefResult.Job.JobID, "--kind", "debrief")
 	var artifacts []cliArtifactRecord
 	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
 		t.Fatalf("unmarshal artifacts list: %v\n%s", err, artifactsOutput)
@@ -452,7 +453,7 @@ func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
 		t.Fatalf("expected one debrief artifact, got %+v", artifacts)
 	}
 
-	artifactOutput := runCagent(t, binary, configPath, "--json", "artifacts", "show", artifacts[0].ArtifactID)
+	artifactOutput := runFase(t, binary, configPath, "--json", "artifacts", "show", artifacts[0].ArtifactID)
 	var artifact cliArtifactResult
 	if err := json.Unmarshal([]byte(artifactOutput), &artifact); err != nil {
 		t.Fatalf("unmarshal artifact show: %v\n%s", err, artifactOutput)
@@ -463,17 +464,17 @@ func TestDebriefQueuesAndWritesArtifact(t *testing.T) {
 }
 
 func TestHistorySearchFindsCanonicalMatches(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "banana search workflow")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "banana search workflow")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal run output: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	searchOutput := runCagent(t, binary, configPath, "--json", "history", "search", "--query", "banana", "--adapter", "codex")
+	searchOutput := runFase(t, binary, configPath, "--json", "history", "search", "--query", "banana", "--adapter", "codex")
 	var matches []cliHistoryMatch
 	if err := json.Unmarshal([]byte(searchOutput), &matches); err != nil {
 		t.Fatalf("unmarshal history search output: %v\n%s", err, searchOutput)
@@ -495,11 +496,11 @@ func TestHistorySearchFindsCanonicalMatches(t *testing.T) {
 }
 
 func TestCatalogSyncAndShow(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCatalogConfig(t)
 	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
 
-	syncOutput := runCagent(t, binary, configPath, "--json", "catalog", "sync")
+	syncOutput := runFase(t, binary, configPath, "--json", "catalog", "sync")
 	var synced cliCatalogResult
 	if err := json.Unmarshal([]byte(syncOutput), &synced); err != nil {
 		t.Fatalf("unmarshal catalog sync: %v\n%s", err, syncOutput)
@@ -511,7 +512,7 @@ func TestCatalogSyncAndShow(t *testing.T) {
 		t.Fatal("expected catalog entries")
 	}
 
-	showOutput := runCagent(t, binary, configPath, "--json", "catalog", "show")
+	showOutput := runFase(t, binary, configPath, "--json", "catalog", "show")
 	var shown cliCatalogResult
 	if err := json.Unmarshal([]byte(showOutput), &shown); err != nil {
 		t.Fatalf("unmarshal catalog show: %v\n%s", err, showOutput)
@@ -553,10 +554,10 @@ func TestCatalogSyncAndShow(t *testing.T) {
 }
 
 func TestCatalogProbeClassifiesEntries(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCatalogConfig(t)
 
-	probeOutput := runCagent(t, binary, configPath, "--json", "catalog", "probe", "--adapter", "opencode", "--provider", "openai", "--model", "gpt-5.3-codex-spark", "--timeout", "2s")
+	probeOutput := runFase(t, binary, configPath, "--json", "catalog", "probe", "--adapter", "opencode", "--provider", "openai", "--model", "gpt-5.3-codex-spark", "--timeout", "2s")
 	var probed cliCatalogResult
 	if err := json.Unmarshal([]byte(probeOutput), &probed); err != nil {
 		t.Fatalf("unmarshal catalog probe: %v\n%s", err, probeOutput)
@@ -574,7 +575,7 @@ func TestCatalogProbeClassifiesEntries(t *testing.T) {
 		t.Fatal("missing probed openai/gpt-5.3-codex-spark entry")
 	}
 
-	timeoutOutput := runCagent(t, binary, configPath, "--json", "catalog", "probe", "--adapter", "opencode", "--provider", "zai-coding-plan", "--model", "glm-4.7-flashx", "--timeout", "2s")
+	timeoutOutput := runFase(t, binary, configPath, "--json", "catalog", "probe", "--adapter", "opencode", "--provider", "zai-coding-plan", "--model", "glm-4.7-flashx", "--timeout", "2s")
 	if err := json.Unmarshal([]byte(timeoutOutput), &probed); err != nil {
 		t.Fatalf("unmarshal timeout probe: %v\n%s", err, timeoutOutput)
 	}
@@ -593,10 +594,10 @@ func TestCatalogProbeClassifiesEntries(t *testing.T) {
 }
 
 func TestWorkLifecycleCommands(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	rootOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Root plan", "--objective", "Track work runtime implementation", "--kind", "plan")
+	rootOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Root plan", "--objective", "Track work runtime implementation", "--kind", "plan")
 	var rootWork cliWorkItem
 	if err := json.Unmarshal([]byte(rootOutput), &rootWork); err != nil {
 		t.Fatalf("unmarshal root work: %v\n%s", err, rootOutput)
@@ -605,20 +606,20 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatal("expected root work id")
 	}
 
-	childOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Implement child", "--objective", "Attach run lifecycle to work", "--kind", "implement", "--parent", rootWork.WorkID, "--head-commit", "abc123", "--required-attestations", `[{"verifier_kind":"deterministic","method":"test","blocking":true}]`)
+	childOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Implement child", "--objective", "Attach run lifecycle to work", "--kind", "implement", "--parent", rootWork.WorkID, "--head-commit", "abc123", "--required-attestations", `[{"verifier_kind":"deterministic","method":"test","blocking":true}]`)
 	var childWork cliWorkItem
 	if err := json.Unmarshal([]byte(childOutput), &childWork); err != nil {
 		t.Fatalf("unmarshal child work: %v\n%s", err, childOutput)
 	}
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--work", childWork.WorkID, "--prompt", "work lifecycle test")
+	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--work", childWork.WorkID, "--prompt", "work lifecycle test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal work run: %v\n%s", err, runOutput)
 	}
 	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	showOutput := runCagent(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput := runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
 	var show cliWorkShowResult
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show: %v\n%s", err, showOutput)
@@ -626,11 +627,20 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if show.Work.CurrentJobID != runResult.Job.JobID {
 		t.Fatalf("expected current job %q, got %+v", runResult.Job.JobID, show.Work)
 	}
-	if show.Work.ExecutionState != "done" {
-		t.Fatalf("expected done execution state, got %+v", show.Work)
+	if show.Work.ExecutionState != "awaiting_attestation" {
+		t.Fatalf("expected awaiting_attestation execution state, got %+v", show.Work)
 	}
-	if show.Work.ApprovalState != "pending" {
-		t.Fatalf("expected pending, got %+v", show.Work)
+	if show.Work.ApprovalState != "none" {
+		t.Fatalf("expected none approval state before attestation, got %+v", show.Work)
+	}
+	var attestationChildren []cliWorkItem
+	for i := range show.Children {
+		if show.Children[i].Kind == "attest" {
+			attestationChildren = append(attestationChildren, show.Children[i])
+		}
+	}
+	if len(attestationChildren) == 0 {
+		t.Fatalf("expected spawned attestation child, got %+v", show.Children)
 	}
 	foundJob := false
 	for _, job := range show.Jobs {
@@ -643,7 +653,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected linked job in work show, got %+v", show.Jobs)
 	}
 
-	noteOutput := runCagent(t, binary, configPath, "--json", "work", "note-add", childWork.WorkID, "--type", "verifier_feedback", "--text", "Looks good")
+	noteOutput := runFase(t, binary, configPath, "--json", "work", "note-add", childWork.WorkID, "--type", "verifier_feedback", "--text", "Looks good")
 	var note cliWorkNote
 	if err := json.Unmarshal([]byte(noteOutput), &note); err != nil {
 		t.Fatalf("unmarshal work note: %v\n%s", err, noteOutput)
@@ -652,7 +662,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("unexpected note body: %+v", note)
 	}
 
-	notesOutput := runCagent(t, binary, configPath, "--json", "work", "notes", childWork.WorkID)
+	notesOutput := runFase(t, binary, configPath, "--json", "work", "notes", childWork.WorkID)
 	var notes []cliWorkNote
 	if err := json.Unmarshal([]byte(notesOutput), &notes); err != nil {
 		t.Fatalf("unmarshal work notes: %v\n%s", err, notesOutput)
@@ -661,23 +671,39 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected note in work notes, got %+v", notes)
 	}
 
-	attestOutput := runCagent(t, binary, configPath, "--json", "work", "attest", childWork.WorkID, "--result", "passed", "--summary", "Attestation passed", "--verifier-kind", "deterministic", "--method", "test")
-	var attestation cliAttestationPayload
-	if err := json.Unmarshal([]byte(attestOutput), &attestation); err != nil {
-		t.Fatalf("unmarshal attestation payload: %v\n%s", err, attestOutput)
+	for _, attestationChild := range attestationChildren {
+		nonce, _ := attestationChild.Metadata["attestation_nonce"].(string)
+		if strings.TrimSpace(nonce) == "" {
+			t.Fatalf("expected attestation nonce on child, got %+v", attestationChild)
+		}
+		attestOutput := runFase(t, binary, configPath, "--json", "work", "attest", attestationChild.WorkID, "--nonce", nonce, "--result", "passed", "--summary", "Attestation passed", "--verifier-kind", "deterministic", "--method", "test")
+		var attestation cliAttestationPayload
+		if err := json.Unmarshal([]byte(attestOutput), &attestation); err != nil {
+			t.Fatalf("unmarshal attestation payload: %v\n%s", err, attestOutput)
+		}
+		if attestation.Work.ExecutionState != "done" || attestation.Work.ApprovalState != "none" {
+			t.Fatalf("expected attestation child to complete cleanly, got %+v", attestation.Work)
+		}
 	}
-	if attestation.Work.ApprovalState != "pending" {
-		t.Fatalf("expected pending approval state after attestation, got %+v", attestation.Work)
+	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
+		t.Fatalf("unmarshal work show after attestation: %v\n%s", err, showOutput)
+	}
+	if show.Work.ExecutionState != "done" {
+		t.Fatalf("expected done after child attestations, got %+v", show.Work)
+	}
+	if show.Work.ApprovalState != "pending" {
+		t.Fatalf("expected pending approval state after child attestations, got %+v", show.Work)
 	}
 
-	approveOutput := runCagent(t, binary, configPath, "--json", "work", "approve", childWork.WorkID, "--message", "Ready to land")
+	approveOutput := runFase(t, binary, configPath, "--json", "work", "approve", childWork.WorkID, "--message", "Ready to land")
 	if err := json.Unmarshal([]byte(approveOutput), &childWork); err != nil {
 		t.Fatalf("unmarshal work approval: %v\n%s", err, approveOutput)
 	}
 	if childWork.ApprovalState != "verified" {
 		t.Fatalf("expected verified approval state, got %+v", childWork)
 	}
-	showOutput = runCagent(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show after approval: %v\n%s", err, showOutput)
 	}
@@ -685,7 +711,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected approval ledger entry in work show, got %+v", show.Approvals)
 	}
 
-	promoteOutput := runCagent(t, binary, configPath, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/fase/promoted/staging", "--message", "Ship to staging")
+	promoteOutput := runFase(t, binary, configPath, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/fase/promoted/staging", "--message", "Ship to staging")
 	var promotion cliPromotionPayload
 	if err := json.Unmarshal([]byte(promoteOutput), &promotion); err != nil {
 		t.Fatalf("unmarshal work promotion: %v\n%s", err, promoteOutput)
@@ -693,7 +719,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if promotion.Promotion.Environment != "staging" || promotion.Promotion.TargetRef != "refs/fase/promoted/staging" {
 		t.Fatalf("expected staging promotion payload, got %+v", promotion)
 	}
-	showOutput = runCagent(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show after promotion: %v\n%s", err, showOutput)
 	}
@@ -701,7 +727,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected promotion record in work show, got %+v", show.Promotions)
 	}
 
-	artifactsOutput := runCagent(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	artifactsOutput := runFase(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
 	var artifacts []cliArtifactRecord
 	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
 		t.Fatalf("unmarshal work artifacts: %v\n%s", err, artifactsOutput)
@@ -714,7 +740,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if err := os.WriteFile(notePath, []byte("# Attached note\n\nVerifier context.\n"), 0o644); err != nil {
 		t.Fatalf("write attached note: %v", err)
 	}
-	attachOutput := runCagent(t, binary, configPath, "--json", "artifacts", "attach", "--work", childWork.WorkID, "--path", notePath, "--kind", "spec_markdown")
+	attachOutput := runFase(t, binary, configPath, "--json", "artifacts", "attach", "--work", childWork.WorkID, "--path", notePath, "--kind", "spec_markdown")
 	var attached cliArtifactRecord
 	if err := json.Unmarshal([]byte(attachOutput), &attached); err != nil {
 		t.Fatalf("unmarshal attached artifact: %v\n%s", err, attachOutput)
@@ -723,7 +749,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("unexpected attached artifact payload: %+v", attached)
 	}
 
-	artifactsOutput = runCagent(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	artifactsOutput = runFase(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
 	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
 		t.Fatalf("unmarshal work artifacts after attach: %v\n%s", err, artifactsOutput)
 	}
@@ -738,7 +764,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected attached artifact in work artifact list, got %+v", artifacts)
 	}
 
-	discoverOutput := runCagent(t, binary, configPath, "--json", "work", "discover", childWork.WorkID, "--title", "Verifier follow-up", "--objective", "Add gate work", "--kind", "verify", "--rationale", "Discovered during implementation")
+	discoverOutput := runFase(t, binary, configPath, "--json", "work", "discover", childWork.WorkID, "--title", "Verifier follow-up", "--objective", "Add gate work", "--kind", "verify", "--rationale", "Discovered during implementation")
 	var proposal cliWorkProposalPayload
 	if err := json.Unmarshal([]byte(discoverOutput), &proposal); err != nil {
 		t.Fatalf("unmarshal discover proposal: %v\n%s", err, discoverOutput)
@@ -747,7 +773,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected proposed discovery, got %+v", proposal)
 	}
 
-	acceptOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
+	acceptOutput := runFase(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
 	if err := json.Unmarshal([]byte(acceptOutput), &proposal); err != nil {
 		t.Fatalf("unmarshal accepted proposal: %v\n%s", err, acceptOutput)
 	}
@@ -755,7 +781,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected created work from accepted discovery, got %+v", proposal)
 	}
 
-	readyOutput := runCagent(t, binary, configPath, "--json", "work", "ready")
+	readyOutput := runFase(t, binary, configPath, "--json", "work", "ready")
 	var ready []cliWorkItem
 	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
 		t.Fatalf("unmarshal ready work: %v\n%s", err, readyOutput)
@@ -771,17 +797,17 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected accepted discovered work in ready list, got %+v", ready)
 	}
 
-	checklistOutput := runCagent(t, binary, configPath, "work", "projection", "checklist", rootWork.WorkID)
+	checklistOutput := runFase(t, binary, configPath, "work", "projection", "checklist", rootWork.WorkID)
 	if !strings.Contains(checklistOutput, "# Root plan") || !strings.Contains(checklistOutput, "Implement child") {
 		t.Fatalf("expected checklist projection content, got:\n%s", checklistOutput)
 	}
 
-	statusProjection := runCagent(t, binary, configPath, "work", "projection", "status", childWork.WorkID)
+	statusProjection := runFase(t, binary, configPath, "work", "projection", "status", childWork.WorkID)
 	if !strings.Contains(statusProjection, "Latest Attestation") || !strings.Contains(statusProjection, "Attestation passed") {
 		t.Fatalf("expected status projection content, got:\n%s", statusProjection)
 	}
 
-	hydrateOutput := runCagent(t, binary, configPath, "--json", "work", "hydrate", childWork.WorkID)
+	hydrateOutput := runFase(t, binary, configPath, "--json", "work", "hydrate", childWork.WorkID)
 	var briefing map[string]any
 	if err := json.Unmarshal([]byte(hydrateOutput), &briefing); err != nil {
 		t.Fatalf("unmarshal work hydrate: %v\n%s", err, hydrateOutput)
@@ -816,11 +842,11 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected hydrate worker_contract to include delegation rule, got %+v", rules)
 	}
 
-	createChildProposalOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "create", "--type", "create_child", "--target", rootWork.WorkID, "--patch", `{"title":"Review child","objective":"Review the implementation","kind":"review"}`)
+	createChildProposalOutput := runFase(t, binary, configPath, "--json", "work", "proposal", "create", "--type", "create_child", "--target", rootWork.WorkID, "--patch", `{"title":"Review child","objective":"Review the implementation","kind":"review"}`)
 	if err := json.Unmarshal([]byte(createChildProposalOutput), &proposal); err != nil {
 		t.Fatalf("unmarshal create_child proposal: %v\n%s", err, createChildProposalOutput)
 	}
-	acceptChildOutput := runCagent(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
+	acceptChildOutput := runFase(t, binary, configPath, "--json", "work", "proposal", "accept", proposal.Proposal.ProposalID)
 	if err := json.Unmarshal([]byte(acceptChildOutput), &proposal); err != nil {
 		t.Fatalf("unmarshal accepted create_child proposal: %v\n%s", err, acceptChildOutput)
 	}
@@ -828,12 +854,12 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected created review child, got %+v", proposal)
 	}
 
-	noReadyOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Needs impossible adapter", "--objective", "Should not be ready without a matching adapter", "--preferred-adapters", "nonexistent")
+	noReadyOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Needs impossible adapter", "--objective", "Should not be ready without a matching adapter", "--preferred-adapters", "nonexistent")
 	var constrainedWork cliWorkItem
 	if err := json.Unmarshal([]byte(noReadyOutput), &constrainedWork); err != nil {
 		t.Fatalf("unmarshal constrained work: %v\n%s", err, noReadyOutput)
 	}
-	readyOutput = runCagent(t, binary, configPath, "--json", "work", "ready")
+	readyOutput = runFase(t, binary, configPath, "--json", "work", "ready")
 	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
 		t.Fatalf("unmarshal ready work after capability filter: %v\n%s", err, readyOutput)
 	}
@@ -845,16 +871,16 @@ func TestWorkLifecycleCommands(t *testing.T) {
 }
 
 func TestWorkClaimLifecycleCommands(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	workOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Claimable work", "--objective", "Exercise work lease semantics")
+	workOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Claimable work", "--objective", "Exercise work lease semantics")
 	var work cliWorkItem
 	if err := json.Unmarshal([]byte(workOutput), &work); err != nil {
 		t.Fatalf("unmarshal work create: %v\n%s", err, workOutput)
 	}
 
-	claimOutput := runCagent(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "1h")
+	claimOutput := runFase(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "1h")
 	if err := json.Unmarshal([]byte(claimOutput), &work); err != nil {
 		t.Fatalf("unmarshal work claim: %v\n%s", err, claimOutput)
 	}
@@ -865,7 +891,7 @@ func TestWorkClaimLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected claimant worker-a, got %q", work.ClaimedBy)
 	}
 
-	readyOutput := runCagent(t, binary, configPath, "--json", "work", "ready")
+	readyOutput := runFase(t, binary, configPath, "--json", "work", "ready")
 	var ready []cliWorkItem
 	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
 		t.Fatalf("unmarshal ready work after claim: %v\n%s", err, readyOutput)
@@ -876,15 +902,15 @@ func TestWorkClaimLifecycleCommands(t *testing.T) {
 		}
 	}
 
-	if output, exitCode := runCagentExpectError(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-b", "--lease", "1h"); exitCode != 7 {
+	if output, exitCode := runFaseExpectError(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-b", "--lease", "1h"); exitCode != 7 {
 		t.Fatalf("expected busy exit code 7 for conflicting claim, got %d\n%s", exitCode, output)
 	}
 
-	if output, exitCode := runCagentExpectError(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-b"); exitCode != 7 {
+	if output, exitCode := runFaseExpectError(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-b"); exitCode != 7 {
 		t.Fatalf("expected busy exit code 7 for conflicting release, got %d\n%s", exitCode, output)
 	}
 
-	releaseOutput := runCagent(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-a")
+	releaseOutput := runFase(t, binary, configPath, "--json", "work", "release", work.WorkID, "--claimant", "worker-a")
 	var releasedWork cliWorkItem
 	if err := json.Unmarshal([]byte(releaseOutput), &releasedWork); err != nil {
 		t.Fatalf("unmarshal work release: %v\n%s", err, releaseOutput)
@@ -896,14 +922,14 @@ func TestWorkClaimLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected cleared claimant after release, got %q", releasedWork.ClaimedBy)
 	}
 
-	expiringOutput := runCagent(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "50ms")
+	expiringOutput := runFase(t, binary, configPath, "--json", "work", "claim", work.WorkID, "--claimant", "worker-a", "--lease", "50ms")
 	var expiringWork cliWorkItem
 	if err := json.Unmarshal([]byte(expiringOutput), &expiringWork); err != nil {
 		t.Fatalf("unmarshal expiring claim: %v\n%s", err, expiringOutput)
 	}
 	time.Sleep(125 * time.Millisecond)
 
-	claimNextOutput := runCagent(t, binary, configPath, "--json", "work", "claim-next", "--claimant", "worker-b", "--lease", "1h")
+	claimNextOutput := runFase(t, binary, configPath, "--json", "work", "claim-next", "--claimant", "worker-b", "--lease", "1h")
 	var nextWork cliWorkItem
 	if err := json.Unmarshal([]byte(claimNextOutput), &nextWork); err != nil {
 		t.Fatalf("unmarshal claim-next: %v\n%s", err, claimNextOutput)
@@ -917,16 +943,16 @@ func TestWorkClaimLifecycleCommands(t *testing.T) {
 }
 
 func TestWorkArchiveCommands(t *testing.T) {
-	binary := buildCagentBinary(t)
+	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
 
-	workOutput := runCagent(t, binary, configPath, "--json", "work", "create", "--title", "Archive me", "--objective", "Validate archived filtering", "--kind", "attest")
+	workOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Archive me", "--objective", "Validate archived filtering", "--kind", "attest")
 	var work cliWorkItem
 	if err := json.Unmarshal([]byte(workOutput), &work); err != nil {
 		t.Fatalf("unmarshal work create: %v\n%s", err, workOutput)
 	}
 
-	archiveOutput := runCagent(t, binary, configPath, "--json", "work", "archive", work.WorkID, "--message", "created by mistake")
+	archiveOutput := runFase(t, binary, configPath, "--json", "work", "archive", work.WorkID, "--message", "created by mistake")
 	if err := json.Unmarshal([]byte(archiveOutput), &work); err != nil {
 		t.Fatalf("unmarshal work archive: %v\n%s", err, archiveOutput)
 	}
@@ -934,7 +960,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 		t.Fatalf("expected archived execution state, got %q", work.ExecutionState)
 	}
 
-	listOutput := runCagent(t, binary, configPath, "--json", "work", "list")
+	listOutput := runFase(t, binary, configPath, "--json", "work", "list")
 	var listed []cliWorkItem
 	if err := json.Unmarshal([]byte(listOutput), &listed); err != nil {
 		t.Fatalf("unmarshal work list: %v\n%s", err, listOutput)
@@ -945,7 +971,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 		}
 	}
 
-	listOutput = runCagent(t, binary, configPath, "--json", "work", "list", "--include-archived")
+	listOutput = runFase(t, binary, configPath, "--json", "work", "list", "--include-archived")
 	if err := json.Unmarshal([]byte(listOutput), &listed); err != nil {
 		t.Fatalf("unmarshal archived work list: %v\n%s", err, listOutput)
 	}
@@ -962,7 +988,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 		t.Fatalf("expected archived work in include-archived list, got %+v", listed)
 	}
 
-	readyOutput := runCagent(t, binary, configPath, "--json", "work", "ready")
+	readyOutput := runFase(t, binary, configPath, "--json", "work", "ready")
 	var ready []cliWorkItem
 	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
 		t.Fatalf("unmarshal ready work: %v\n%s", err, readyOutput)
@@ -973,7 +999,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 		}
 	}
 
-	readyOutput = runCagent(t, binary, configPath, "--json", "work", "ready", "--include-archived")
+	readyOutput = runFase(t, binary, configPath, "--json", "work", "ready", "--include-archived")
 	if err := json.Unmarshal([]byte(readyOutput), &ready); err != nil {
 		t.Fatalf("unmarshal archived ready work: %v\n%s", err, readyOutput)
 	}
@@ -991,7 +1017,7 @@ func TestWorkArchiveCommands(t *testing.T) {
 	}
 }
 
-func buildCagentBinary(t *testing.T) string {
+func buildFaseBinary(t *testing.T) string {
 	t.Helper()
 
 	binary := filepath.Join(t.TempDir(), "fase")
@@ -1144,11 +1170,17 @@ func writeFakeCatalogConfig(t *testing.T) string {
 	return configPath
 }
 
-func runCagent(t *testing.T, binary, configPath string, args ...string) string {
+func runFase(t *testing.T, binary, configPath string, args ...string) string {
 	t.Helper()
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
-	cmd.Env = append(os.Environ(), "FASE_CAPABILITY_ENFORCEMENT=audit")
+	// Strip any ambient agent token from the developer shell so JSON assertions
+	// do not inherit audit-mode capability warnings from unrelated state.
+	cmd.Env = append(os.Environ(),
+		"FASE_CAPABILITY_ENFORCEMENT=audit",
+		"FASE_AGENT_TOKEN=",
+
+	)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("run fase %v: %v\n%s", args, err, output)
@@ -1156,11 +1188,15 @@ func runCagent(t *testing.T, binary, configPath string, args ...string) string {
 	return string(output)
 }
 
-func runCagentExpectError(t *testing.T, binary, configPath string, args ...string) (string, int) {
+func runFaseExpectError(t *testing.T, binary, configPath string, args ...string) (string, int) {
 	t.Helper()
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
-	cmd.Env = append(os.Environ(), "FASE_CAPABILITY_ENFORCEMENT=audit")
+	cmd.Env = append(os.Environ(),
+		"FASE_CAPABILITY_ENFORCEMENT=audit",
+		"FASE_AGENT_TOKEN=",
+
+	)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
 		t.Fatalf("expected fase command to fail: %v\n%s", args, output)
@@ -1177,7 +1213,7 @@ func waitForJobState(t *testing.T, binary, configPath, jobID string, allowed map
 
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		output := runCagent(t, binary, configPath, "--json", "status", jobID)
+		output := runFase(t, binary, configPath, "--json", "status", jobID)
 		var status cliStatusResult
 		if err := json.Unmarshal([]byte(output), &status); err != nil {
 			t.Fatalf("unmarshal status: %v\n%s", err, output)
