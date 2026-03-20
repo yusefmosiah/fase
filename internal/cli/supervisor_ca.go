@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/core"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -110,8 +110,8 @@ func (ca *supervisorCA) issueAndWriteCredential(stateDir string, workID, role, a
 	if len(workShort) > 16 {
 		workShort = workShort[:16]
 	}
-	email := workID + "@cagent.local"
-	committerName := "cagent-" + role + "-" + workShort
+	email := workID + "@fase.local"
+	committerName := "fase-" + role + "-" + workShort
 
 	// Add to allowed_signers so git verify-commit works.
 	agentPubKey := agentPriv.Public().(ed25519.PublicKey)

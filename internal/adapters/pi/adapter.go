@@ -7,7 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 type Adapter struct {
@@ -131,5 +131,5 @@ func sessionPath(sessionID string) (string, error) {
 		base = filepath.Join(home, ".pi", "agent")
 	}
 
-	return filepath.Join(base, "sessions", "cagent-"+sessionID+".jsonl"), nil
+	return filepath.Join(base, "sessions", "fase-"+sessionID+".jsonl"), nil
 }

@@ -77,10 +77,10 @@ func TestHostDrivenPlanImplementVerifyPipeline(t *testing.T) {
 func TestRecursiveCagentWorkflow(t *testing.T) {
 	binary := buildCagentBinary(t)
 	configPath := writeFakeCodexConfig(t)
-	t.Setenv("CAGENT_EXECUTABLE", binary)
-	t.Setenv("CAGENT_CONFIG_PATH", configPath)
+	t.Setenv("FASE_EXECUTABLE", binary)
+	t.Setenv("FASE_CONFIG_PATH", configPath)
 
-	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "recursive cagent orchestration")
+	runOutput := runCagent(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--prompt", "recursive fase orchestration")
 	var result cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &result); err != nil {
 		t.Fatalf("unmarshal recursive run: %v\n%s", err, runOutput)

@@ -7,14 +7,14 @@ import (
 )
 
 func TestLiveCheapSmokeMatrix(t *testing.T) {
-	if os.Getenv("CAGENT_LIVE_E2E") == "" {
-		t.Skip("set CAGENT_LIVE_E2E=1 to run live adapter tests")
+	if os.Getenv("FASE_LIVE_E2E") == "" {
+		t.Skip("set FASE_LIVE_E2E=1 to run live adapter tests")
 	}
 
 	binary := buildCagentBinary(t)
-	configPath := os.Getenv("CAGENT_LIVE_CONFIG")
+	configPath := os.Getenv("FASE_LIVE_CONFIG")
 	if configPath == "" {
-		t.Fatal("CAGENT_LIVE_CONFIG is required for live tests")
+		t.Fatal("FASE_LIVE_CONFIG is required for live tests")
 	}
 
 	cases := []struct {
@@ -23,11 +23,11 @@ func TestLiveCheapSmokeMatrix(t *testing.T) {
 		modelEnv string
 		prompt   string
 	}{
-		{name: "codex", adapter: "codex", modelEnv: "CAGENT_LIVE_CODEX_MODEL", prompt: "Reply with exactly OK and nothing else."},
-		{name: "claude", adapter: "claude", modelEnv: "CAGENT_LIVE_CLAUDE_MODEL", prompt: "Reply with exactly OK and nothing else."},
-		{name: "opencode", adapter: "opencode", modelEnv: "CAGENT_LIVE_OPENCODE_MODEL", prompt: "Reply with exactly OK and nothing else."},
-		{name: "gemini", adapter: "gemini", modelEnv: "CAGENT_LIVE_GEMINI_MODEL", prompt: "Reply with exactly OK and nothing else."},
-		{name: "pi", adapter: "pi", modelEnv: "CAGENT_LIVE_PI_MODEL", prompt: "Reply with exactly OK and nothing else."},
+		{name: "codex", adapter: "codex", modelEnv: "FASE_LIVE_CODEX_MODEL", prompt: "Reply with exactly OK and nothing else."},
+		{name: "claude", adapter: "claude", modelEnv: "FASE_LIVE_CLAUDE_MODEL", prompt: "Reply with exactly OK and nothing else."},
+		{name: "opencode", adapter: "opencode", modelEnv: "FASE_LIVE_OPENCODE_MODEL", prompt: "Reply with exactly OK and nothing else."},
+		{name: "gemini", adapter: "gemini", modelEnv: "FASE_LIVE_GEMINI_MODEL", prompt: "Reply with exactly OK and nothing else."},
+		{name: "pi", adapter: "pi", modelEnv: "FASE_LIVE_PI_MODEL", prompt: "Reply with exactly OK and nothing else."},
 	}
 
 	for _, tc := range cases {

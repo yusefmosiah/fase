@@ -58,8 +58,8 @@ func TestAllowedSignersAddRemove(t *testing.T) {
 		t.Fatalf("generate key 2: %v", err)
 	}
 
-	email1 := "agent1@cagent.local"
-	email2 := "agent2@cagent.local"
+	email1 := "agent1@fase.local"
+	email2 := "agent2@fase.local"
 
 	ca.addAllowedSigner(email1, pub1)
 	ca.addAllowedSigner(email2, pub2)

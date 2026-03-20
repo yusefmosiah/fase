@@ -10,8 +10,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 // supervisorLoop encapsulates the shared 5-step dispatch state machine.
@@ -129,7 +129,7 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 			completed = append(completed, completedJob{workID, flight, "process_dead"})
 			delete(l.inFlight, workID)
 
-		case isJobStalled(filepath.Join(l.cwd, ".cagent", "raw", "stdout", flight.jobID), 10*time.Minute):
+		case isJobStalled(filepath.Join(l.cwd, ".fase", "raw", "stdout", flight.jobID), 10*time.Minute):
 			// Mark stalled work as failed so it can be retried.
 			_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 				WorkID:         workID,
@@ -243,7 +243,7 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 		var cred *dispatchCredential
 		if l.ca != nil {
 			cred = l.ca.issueAndWriteCredential(
-				filepath.Join(l.cwd, ".cagent"),
+				filepath.Join(l.cwd, ".fase"),
 				claimed.WorkID, "worker", adapter, model,
 			)
 			if cred != nil && cred.tokenPath != "" {

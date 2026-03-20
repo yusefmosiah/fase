@@ -2,7 +2,7 @@ Date: 2026-03-13
 Kind: Implementation checklist
 Status: Active
 Priority: 1
-Requires: [docs/cagent-v0-local-control-plane.md, docs/cagent-work-runtime.md, docs/cagent-work-api-and-schema.md, docs/cagent-worker-briefing-schema.md]
+Requires: [docs/fase-v0-local-control-plane.md, docs/fase-work-runtime.md, docs/fase-work-api-and-schema.md, docs/fase-worker-briefing-schema.md]
 Owner: Runtime / Local Control Plane
 
 ## Goal
@@ -68,7 +68,7 @@ Exit criteria:
 ### Slice 3: Hydration
 
 - implement deterministic `CompileWorkerBriefing(workID, mode)`
-- add `cagent work hydrate <work-id>`
+- add `fase work hydrate <work-id>`
 - compile from runtime state only
 - include:
   - assignment

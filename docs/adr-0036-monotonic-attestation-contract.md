@@ -12,7 +12,7 @@ The current attestation implementation is a synchronous side-effect in
 `dispatchAttestorAndWait` spawns attestation jobs and blocks the supervisor
 goroutine until each attestor finishes. This causes several problems:
 
-1. **Orphan jobs.** Attestation jobs are created via `cagent run --work
+1. **Orphan jobs.** Attestation jobs are created via `fase run --work
    <work-id>` which links a *job* to a work item, but the attestation job is
    not a *work item* itself. The work graph has no visibility into which
    attestors are running, what they found, or how they relate to each other.
@@ -24,7 +24,7 @@ goroutine until each attestor finishes. This causes several problems:
 
 3. **Invisible review contracts.** A work item's `required_attestations` JSON
    states what review is needed, but the actual attestation jobs are invisible
-   in the DAG. Tooling (UI, `cagent work show`, graph queries) cannot answer
+   in the DAG. Tooling (UI, `fase work show`, graph queries) cannot answer
    "what attestors are reviewing this?" or "which slot is blocking completion?"
 
 4. **No contract enforcement.** Nothing prevents a supervisor restart,
@@ -229,7 +229,7 @@ type Config struct {
 }
 ```
 
-The `CreateWork` service call (or the CLI `cagent work create` path) resolves
+The `CreateWork` service call (or the CLI `fase work create` path) resolves
 defaults: if `required_attestations` is empty, look up the matching rule and
 apply its slots.
 
@@ -305,19 +305,19 @@ Slot: {{slot_index}} ({{verifier_kind}}/{{method}})
 2. If no meaningful files changed: attest failure.
 3. Review the diff. Does it address the objective? Does it build?
 4. Record your finding:
-   cagent work attest {{parent_work_id}} \
+   fase work attest {{parent_work_id}} \
      --nonce {{attestation_nonce}} \
      --result [passed|failed] \
      --summary "<your finding>" \
      --verifier-kind {{verifier_kind}} \
      --method {{method}}
 
-You MUST run exactly one cagent work attest command.
+You MUST run exactly one fase work attest command.
 After attesting, mark this work item done:
-   cagent work update {{self_work_id}} --state done
+   fase work update {{self_work_id}} --state done
 ```
 
-The attestor calls `cagent work attest` on the **parent** work ID (not its
+The attestor calls `fase work attest` on the **parent** work ID (not its
 own), then marks its own work item done. The `AttestWork` service method
 already handles the parent state transition logic.
 
@@ -328,7 +328,7 @@ implements the transition logic: when all blocking slots have passing
 attestations, it transitions the parent to `done`. When any blocking slot
 is attested `failed`, it transitions the parent to `failed`. This logic is
 unchanged. The only change is that it is now triggered by a child work item
-calling `cagent work attest` rather than by an orphan job.
+calling `fase work attest` rather than by an orphan job.
 
 The `requiredAttestationsResolved` and `UnsatisfiedAttestationSlotIndices`
 helpers are unchanged.
@@ -429,7 +429,7 @@ work item to anchor the key binding.
 #### 10. Consequences
 
 **Positive:**
-- Attestation is visible in the work graph. `cagent work show <id>` shows
+- Attestation is visible in the work graph. `fase work show <id>` shows
   pending attestation children and their states.
 - No synchronous goroutine blocks. The supervisor dispatch loop is
   event-driven; a 30-minute attestation does not pin a goroutine.
@@ -488,7 +488,7 @@ work item to anchor the key binding.
 ### References
 
 - ADR-0026: Attestation nonce (temporal ordering, anti-self-attest)
-- ADR-0033: cagent serve (supervisor architecture, job monitoring loop)
+- ADR-0033: fase serve (supervisor architecture, job monitoring loop)
 - ADR-0034: Verification before approval (three-layer model)
 - ADR-0035: Cryptographic agent identity (WHO; this ADR is WHAT)
 - `internal/cli/serve.go:handleJobCompletion` — function being replaced

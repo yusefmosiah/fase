@@ -16,16 +16,16 @@ type WorkEvent struct {
 
 type ToolBridge struct {
 	t            *transport
-	cagentBin    string
+	faseBin      string
 	configPath   string
 	eventCh      <-chan WorkEvent
 	deliveryMode DeliveryMode
 }
 
-func NewToolBridge(t *transport, cagentBin, configPath string, eventCh <-chan WorkEvent, mode DeliveryMode) *ToolBridge {
+func NewToolBridge(t *transport, faseBin, configPath string, eventCh <-chan WorkEvent, mode DeliveryMode) *ToolBridge {
 	return &ToolBridge{
 		t:            t,
-		cagentBin:    cagentBin,
+		faseBin:      faseBin,
 		configPath:   configPath,
 		eventCh:      eventCh,
 		deliveryMode: mode,
@@ -72,38 +72,38 @@ func (tb *ToolBridge) formatEvent(ev WorkEvent) string {
 		parts = append(parts, fmt.Sprintf("  prev_state: %s", ev.PrevState))
 	}
 
-	parts = append(parts, fmt.Sprintf("To inspect: %s work show %s", tb.cagentCmd(), ev.WorkID))
+	parts = append(parts, fmt.Sprintf("To inspect: %s work show %s", tb.faseCmd(), ev.WorkID))
 
 	body := strings.Join(parts, "\n")
-	return fmt.Sprintf("[cagent:message from=\"work-graph\" type=\"info\"]\n%s\n[/cagent:message]", body)
+	return fmt.Sprintf("[fase:message from=\"work-graph\" type=\"info\"]\n%s\n[/fase:message]", body)
 }
 
-func (tb *ToolBridge) cagentCmd() string {
-	cmd := tb.cagentBin
+func (tb *ToolBridge) faseCmd() string {
+	cmd := tb.faseBin
 	if tb.configPath != "" {
 		cmd += " --config " + tb.configPath
 	}
 	return cmd
 }
 
-func CagentCLICommand(cagentBin, configPath string, workID string) string {
-	cmd := cagentBin
+func FaseCLICommand(faseBin, configPath string, workID string) string {
+	cmd := faseBin
 	if configPath != "" {
 		cmd += " --config " + configPath
 	}
 	return fmt.Sprintf("%s work show %s", cmd, workID)
 }
 
-func CagentCLINoteAdd(cagentBin, configPath, workID, body string) string {
-	cmd := cagentBin
+func FaseCLINoteAdd(faseBin, configPath, workID, body string) string {
+	cmd := faseBin
 	if configPath != "" {
 		cmd += " --config " + configPath
 	}
 	return fmt.Sprintf("%s work note-add %s --body %s", cmd, workID, shellQuote(body))
 }
 
-func CagentCLIWorkUpdate(cagentBin, configPath, workID, message string) string {
-	cmd := cagentBin
+func FaseCLIWorkUpdate(faseBin, configPath, workID, message string) string {
+	cmd := faseBin
 	if configPath != "" {
 		cmd += " --config " + configPath
 	}

@@ -2,12 +2,12 @@ Date: 2026-03-10
 Kind: Guide + spec
 Status: Draft
 Priority: 1
-Requires: [cagent-spec-and-implementation-guide.md]
+Requires: [fase-spec-and-implementation-guide.md]
 Owner: Runtime / Work System
 
 ## Narrative Summary (1-minute read)
 
-`cagent` is evolving from a durable job runner into a durable work runtime for
+`fase` is evolving from a durable job runner into a durable work runtime for
 coding agents.
 
 The core idea is that `work`, not prompts, becomes the source of truth.
@@ -28,7 +28,7 @@ instead of a separate hand-maintained truth universe.
 ## What Changed
 
 1. Defined `work` as the primary abstraction above jobs and sessions.
-2. Framed `cagent` as a single integrated runtime, not a federation of hidden
+2. Framed `fase` as a single integrated runtime, not a federation of hidden
    actors.
 3. Made worker hydration from work state the happy path, with prompting as a
    derived compatibility layer.
@@ -47,7 +47,7 @@ instead of a separate hand-maintained truth universe.
 
 ## 1) Product Direction
 
-`cagent` is becoming a runtime for coding-agent work.
+`fase` is becoming a runtime for coding-agent work.
 
 The runtime should unify:
 - heterogeneous coding-agent interfaces,
@@ -57,7 +57,7 @@ The runtime should unify:
 - attestation and approval,
 - documentation as a projection over current state.
 
-This does not make `cagent` a hosted workflow SaaS or a general distributed
+This does not make `fase` a hosted workflow SaaS or a general distributed
 workflow engine. It remains a local machine runtime. The expansion is semantic,
 not infrastructural.
 
@@ -85,7 +85,7 @@ primary control plane.
 
 ## 3) Runtime Framing
 
-`cagent` is one integrated runtime.
+`fase` is one integrated runtime.
 
 It is not best modeled as a collection of durable actors with hidden private
 mailboxes. A more Go-shaped framing is:
@@ -460,7 +460,7 @@ injected into a model context window.
 ## 11) Worker API
 
 Workers should interact with the runtime directly through a work API exposed by
-the `cagent` CLI.
+the `fase` CLI.
 
 Worker-safe read operations:
 - `work show`
@@ -495,7 +495,7 @@ Workers should not start from bespoke handwritten prompts.
 
 They should start from a compiled, versioned worker briefing generated from
 runtime state. The stable contract is documented in
-[docs/cagent-worker-briefing-schema.md](/Users/wiz/cagent/docs/cagent-worker-briefing-schema.md)
+[docs/fase-worker-briefing-schema.md](/Users/wiz/cagent/docs/fase-worker-briefing-schema.md)
 and the schema lives at
 [schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
 
@@ -522,12 +522,12 @@ roles.
 ## 13) Canonical History vs Adapter Import
 
 General case:
-- `cagent history search` over canonical sessions, jobs, turns, events, and
-  artifacts that `cagent` already owns.
+- `fase history search` over canonical sessions, jobs, turns, events, and
+  artifacts that `fase` already owns.
 
 Special case:
 - adapter-native history import for sessions that were never launched through
-  `cagent`.
+  `fase`.
 
 The search path should be built on canonical history first. Native import is an
 extension, not the foundation.
@@ -574,7 +574,7 @@ system with:
 - execution evidence,
 - archive/history.
 
-`cagent work` should not replace that intent.
+`fase work` should not replace that intent.
 
 It should absorb the semantics behind it:
 - "current truth" maps to accepted work state and approved artifacts,
@@ -629,7 +629,7 @@ Bash should keep:
 - retries,
 - policy.
 
-`cagent` should own:
+`fase` should own:
 - work identity,
 - updates,
 - notes,
@@ -644,7 +644,7 @@ stronger substrate.
 
 ## 18) Product Statement
 
-`cagent` is becoming a local runtime that turns coding agents from isolated
+`fase` is becoming a local runtime that turns coding agents from isolated
 chat/process silos into one durable work system.
 
 The central feature is not prompting.

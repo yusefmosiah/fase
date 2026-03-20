@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 var (
@@ -26,9 +26,9 @@ func TestRunPersistsFailedJobForUnavailableAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	setTestExecutable(t)
 	setTestExecutable(t)
@@ -85,9 +85,9 @@ func TestRunCompletesWithFakeCodexAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	setTestExecutable(t)
 	setTestExecutable(t)
@@ -167,9 +167,9 @@ func TestRunStatusEstimatesCostWhenModelPricingKnown(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -220,9 +220,9 @@ func TestClaudeRunStatusUsesVendorCost(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "claude"))
@@ -276,9 +276,9 @@ func TestOpenCodeStructuredErrorMarksJobFailed(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -326,9 +326,9 @@ func TestWaitStatusReturnsTerminalState(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -375,9 +375,9 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -440,9 +440,9 @@ func TestRunCompletesWithFakeFactoryAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "droid"))
@@ -489,9 +489,9 @@ func TestRunAndSessionWithFakePiAdapter(t *testing.T) {
 	cacheDir := t.TempDir()
 	piDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	t.Setenv("PI_CODING_AGENT_DIR", piDir)
 	setTestExecutable(t)
 
@@ -565,9 +565,9 @@ func TestRunCompletesWithFakeGeminiAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "gemini"))
@@ -613,9 +613,9 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -669,9 +669,9 @@ func TestDebriefContinuesSessionAndWritesArtifact(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -783,9 +783,9 @@ func TestRuntimeIncludesAdapterTraits(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -826,9 +826,9 @@ func TestSyncAndShowCatalog(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
 	setTestExecutable(t)
 
@@ -952,9 +952,9 @@ func TestReadyWorkUsesCatalogModelTraitsAndModelPreferences(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -1048,9 +1048,9 @@ func TestProbeCatalogClassifiesEntries(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
 
@@ -1109,9 +1109,9 @@ func TestCatalogReflectsRecentModelHistory(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeOpenCode, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -1204,9 +1204,9 @@ func TestSearchHistoryFindsTurnsAndArtifacts(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1291,9 +1291,9 @@ func TestTransferExportAndRun(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1376,9 +1376,9 @@ func TestExportAndRunTransfer(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1467,17 +1467,17 @@ func TestExportAndRunTransfer(t *testing.T) {
 
 func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 	svc := &Service{
-		ConfigPath: "/tmp/cagent-config/config.toml",
+		ConfigPath: "/tmp/fase-config/config.toml",
 		Paths: core.Paths{
-			StateDir: "/tmp/cagent-state",
-			CacheDir: "/tmp/cagent-cache",
+			StateDir: "/tmp/fase-state",
+			CacheDir: "/tmp/fase-cache",
 		},
 	}
 
 	t.Setenv("PATH", "/usr/bin:/bin")
 	t.Setenv("EXISTING_VAR", "present")
 
-	env := svc.detachedWorkerEnv("/opt/cagent/bin/cagent")
+	env := svc.detachedWorkerEnv("/opt/fase/bin/fase")
 	envMap := make(map[string]string, len(env))
 	for _, entry := range env {
 		key, value, ok := strings.Cut(entry, "=")
@@ -1487,22 +1487,22 @@ func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 		envMap[key] = value
 	}
 
-	if got := envMap["CAGENT_EXECUTABLE"]; got != "/opt/cagent/bin/cagent" {
+	if got := envMap["FASE_EXECUTABLE"]; got != "/opt/fase/bin/fase" {
 		t.Fatalf("expected executable path to be propagated, got %q", got)
 	}
-	if got := envMap["CAGENT_CONFIG_DIR"]; got != "/tmp/cagent-config" {
+	if got := envMap["FASE_CONFIG_DIR"]; got != "/tmp/fase-config" {
 		t.Fatalf("expected config dir to be propagated, got %q", got)
 	}
-	if got := envMap["CAGENT_STATE_DIR"]; got != "/tmp/cagent-state" {
+	if got := envMap["FASE_STATE_DIR"]; got != "/tmp/fase-state" {
 		t.Fatalf("expected state dir to be propagated, got %q", got)
 	}
-	if got := envMap["CAGENT_CACHE_DIR"]; got != "/tmp/cagent-cache" {
+	if got := envMap["FASE_CACHE_DIR"]; got != "/tmp/fase-cache" {
 		t.Fatalf("expected cache dir to be propagated, got %q", got)
 	}
 	if got := envMap["EXISTING_VAR"]; got != "present" {
 		t.Fatalf("expected existing env var to be preserved, got %q", got)
 	}
-	if got := envMap["PATH"]; got != "/opt/cagent/bin:/usr/bin:/bin" {
+	if got := envMap["PATH"]; got != "/opt/fase/bin:/usr/bin:/bin" {
 		t.Fatalf("expected PATH to be prefixed with executable dir, got %q", got)
 	}
 }
@@ -1533,9 +1533,9 @@ func TestBootstrapCreateSeedsWorkAndBootstrapNote(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	projectRoot := t.TempDir()
@@ -1581,9 +1581,9 @@ func TestReviewWorkProposalRejectsSecondParentEdge(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -1647,9 +1647,9 @@ func TestReviewWorkProposalRejectsParentCycleOnReparent(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -1713,9 +1713,9 @@ func TestAttestationSignatureFieldsRoundTrip(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 
 	svc, err := Open(context.Background(), "")
 	if err != nil {
@@ -1762,13 +1762,13 @@ func setTestExecutable(t *testing.T) {
 	t.Helper()
 
 	testBinaryOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "cagent-service-test-*")
+		dir, err := os.MkdirTemp("", "fase-service-test-*")
 		if err != nil {
 			testBinaryErr = err
 			return
 		}
-		testBinaryPath = filepath.Join(dir, "cagent")
-		cmd := exec.Command("go", "build", "-o", testBinaryPath, "./cmd/cagent")
+		testBinaryPath = filepath.Join(dir, "fase")
+		cmd := exec.Command("go", "build", "-o", testBinaryPath, "./cmd/fase")
 		cmd.Dir = filepath.Join("..", "..")
 		output, err := cmd.CombinedOutput()
 		if err != nil {
@@ -1777,10 +1777,10 @@ func setTestExecutable(t *testing.T) {
 		}
 	})
 	if testBinaryErr != nil {
-		t.Fatalf("build cagent binary: %v", testBinaryErr)
+		t.Fatalf("build fase binary: %v", testBinaryErr)
 	}
 
-	t.Setenv("CAGENT_EXECUTABLE", testBinaryPath)
+	t.Setenv("FASE_EXECUTABLE", testBinaryPath)
 }
 
 func mustWriteFile(t *testing.T, path, body string) {
@@ -1822,9 +1822,9 @@ func newTestService(t *testing.T) *Service {
 	stateDir := t.TempDir()
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	svc, err := Open(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)

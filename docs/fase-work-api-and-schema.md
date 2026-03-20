@@ -2,15 +2,15 @@ Date: 2026-03-10
 Kind: Spec + implementation plan
 Status: Draft
 Priority: 1
-Requires: [docs/cagent-work-runtime.md]
+Requires: [docs/fase-work-runtime.md]
 Owner: Runtime / Work System
 
 ## Narrative Summary (1-minute read)
 
-This doc turns the `cagent work` idea into a concrete implementation target.
+This doc turns the `fase work` idea into a concrete implementation target.
 
 The goal is not to build a general workflow DSL. The goal is to add one durable
-work graph to `cagent` with:
+work graph to `fase` with:
 - explicit work items,
 - typed edges,
 - structured progress updates,
@@ -393,42 +393,42 @@ Approval policy can remain simple in v1:
 
 ### 7.1 Worker-Safe Read Commands
 
-- `cagent work show <work-id>`
-- `cagent work notes <work-id>`
-- `cagent work updates <work-id>`
-- `cagent work children <work-id>`
-- `cagent work artifacts <work-id>`
-- `cagent work ready`
+- `fase work show <work-id>`
+- `fase work notes <work-id>`
+- `fase work updates <work-id>`
+- `fase work children <work-id>`
+- `fase work artifacts <work-id>`
+- `fase work ready`
 
 ### 7.2 Worker-Safe Update Commands
 
-- `cagent work claim <work-id>`
-- `cagent work claim-next`
-- `cagent work release <work-id>`
-- `cagent work update <work-id> --state ... --phase ... --message ...`
-- `cagent work note add <work-id> --type ... --text ...`
-- `cagent work block <work-id> --message ...`
-- `cagent work complete <work-id> --message ...`
-- `cagent work fail <work-id> --message ...`
-- `cagent work discover <work-id> --title ... --objective ...`
+- `fase work claim <work-id>`
+- `fase work claim-next`
+- `fase work release <work-id>`
+- `fase work update <work-id> --state ... --phase ... --message ...`
+- `fase work note add <work-id> --type ... --text ...`
+- `fase work block <work-id> --message ...`
+- `fase work complete <work-id> --message ...`
+- `fase work fail <work-id> --message ...`
+- `fase work discover <work-id> --title ... --objective ...`
 
 ### 7.3 Host / Supervisor Commands
 
-- `cagent work create`
-- `cagent work list`
-- `cagent work retry <work-id>`
-- `cagent work proposal list`
-- `cagent work proposal show <proposal-id>`
-- `cagent work proposal accept <proposal-id>`
-- `cagent work proposal reject <proposal-id>`
-- `cagent work attest <work-id> ...`
+- `fase work create`
+- `fase work list`
+- `fase work retry <work-id>`
+- `fase work proposal list`
+- `fase work proposal show <proposal-id>`
+- `fase work proposal accept <proposal-id>`
+- `fase work proposal reject <proposal-id>`
+- `fase work attest <work-id> ...`
 
 ### 7.4 Existing Command Integration
 
-- `cagent run --work <work-id> ...`
-- `cagent send --work <work-id> ...`
-- `cagent artifacts list --work <work-id>`
-- `cagent history search --work <work-id>` later, optional
+- `fase run --work <work-id> ...`
+- `fase send --work <work-id> ...`
+- `fase artifacts list --work <work-id>`
+- `fase history search --work <work-id>` later, optional
 
 ### 7.5 Worker Briefing Contract
 
@@ -436,7 +436,7 @@ Workers should hydrate from a versioned compiled briefing, not a bespoke launch
 prompt.
 
 The stable contract is defined in
-[docs/cagent-worker-briefing-schema.md](/Users/wiz/cagent/docs/cagent-worker-briefing-schema.md)
+[docs/fase-worker-briefing-schema.md](/Users/wiz/cagent/docs/fase-worker-briefing-schema.md)
 with the canonical JSON schema in
 [schemas/worker-briefing.schema.json](/Users/wiz/cagent/schemas/worker-briefing.schema.json).
 
@@ -533,30 +533,30 @@ Goal:
 Sequential plan-implement-verify:
 
 ```bash
-root=$(cagent --json work create \
+root=$(fase --json work create \
   --title "Add work graph" \
   --kind plan \
   --objective "Design and implement the first work runtime layer" | jq -r .work.work_id)
 
-impl=$(cagent --json work create \
+impl=$(fase --json work create \
   --parent "$root" \
   --kind implement \
   --title "Store and CLI" \
   --objective "Add schema and read/update commands" | jq -r .work.work_id)
 
-job=$(cagent --json run \
+job=$(fase --json run \
   --work "$impl" \
   --adapter codex \
   --cwd /repo \
   --prompt "Hydrate from work and implement the feature." | jq -r .job.job_id)
 
-cagent --json status --wait "$job"
+fase --json status --wait "$job"
 ```
 
 Discovery during execution:
 
 ```bash
-cagent --json work discover work_impl \
+fase --json work discover work_impl \
   --title "Add verifier gate" \
   --objective "Verification should become first-class work"
 ```
@@ -564,7 +564,7 @@ cagent --json work discover work_impl \
 Progress update from a worker:
 
 ```bash
-cagent --json work update work_impl \
+fase --json work update work_impl \
   --state in_progress \
   --phase implementation \
   --message "Store schema added; wiring CLI commands now."

@@ -2,12 +2,12 @@ Date: 2026-03-13
 Kind: Product spec + implementation target
 Status: Draft v0
 Priority: 1
-Requires: [docs/cagent-work-runtime.md, docs/cagent-work-api-and-schema.md, docs/cagent-worker-briefing-schema.md]
+Requires: [docs/fase-work-runtime.md, docs/fase-work-api-and-schema.md, docs/fase-worker-briefing-schema.md]
 Owner: Runtime / Local Control Plane
 
 ## Narrative Summary (1-minute read)
 
-`cagent` v0 should become a local work-control plane with a web UI.
+`fase` v0 should become a local work-control plane with a web UI.
 
 The source of truth is the SQLite-backed work graph plus Git-backed repository
 state. Markdown docs, the web board, and worker briefings are all projections
@@ -64,7 +64,7 @@ Remote work is explicitly deferred to v1. v0 is local-only.
 
 ## 1) Product Direction
 
-`cagent` v0 is a local runtime for governed agent work.
+`fase` v0 is a local runtime for governed agent work.
 
 The target operator experience is:
 - capture ideas and work quickly from the terminal
@@ -113,7 +113,7 @@ Remote work is a v1 feature.
 
 v0 has three durable truth layers:
 
-1. `cagent` work graph (SQLite)
+1. `fase` work graph (SQLite)
    - work items
    - edges
    - updates
@@ -316,8 +316,8 @@ policy requires?" is the question, not "did we schedule a test task?"
 
 Low-friction capture is essential. The inbox pattern should be:
 
-    cagent inbox "thing I just thought of"
-    cagent inbox "bug: X breaks when Y" --kind bug
+    fase inbox "thing I just thought of"
+    fase inbox "bug: X breaks when Y" --kind bug
 
 This is shorthand for `work create --kind idea`. Items land in the Inbox
 column. Triage promotes, links, details, or cancels them.
@@ -631,11 +631,11 @@ the work is simply assigned to a new agent. The briefing's `briefing_kind:
 recovery` signals that the previous worker didn't finish.
 
 The recovery agent investigates agentically using runtime read commands:
-- `cagent work show <id>` — work item with neighborhood
-- `cagent logs <job-id>` — session logs for a specific job
-- `cagent session <session-id>` — session detail and job list
-- `cagent artifacts list --work <id>` — artifacts linked to work
-- `cagent history search` — cross-reference with canonical history
+- `fase work show <id>` — work item with neighborhood
+- `fase logs <job-id>` — session logs for a specific job
+- `fase session <session-id>` — session detail and job list
+- `fase artifacts list --work <id>` — artifacts linked to work
+- `fase history search` — cross-reference with canonical history
 
 How deeply it investigates is its decision. It may glance at the last few
 turns and continue. It may spawn subagents to review the full session. It may
@@ -657,17 +657,17 @@ This requires:
 
 ### 12.5 CLI
 
-    cagent work hydrate <work-id>                    # cold, standard density
-    cagent work hydrate <work-id> --debrief          # resume original agent
-    cagent work hydrate <work-id> --mode deep        # more evidence
-    cagent work hydrate <work-id> --mode thin        # minimal, fast
+    fase work hydrate <work-id>                    # cold, standard density
+    fase work hydrate <work-id> --debrief          # resume original agent
+    fase work hydrate <work-id> --mode deep        # more evidence
+    fase work hydrate <work-id> --mode thin        # minimal, fast
 
 ## 14) Git Integration
 
 Git already provides the content-history ledger.
-`cagent` should integrate with Git, not reimplement it.
+`fase` should integrate with Git, not reimplement it.
 
-At minimum, `cagent` records should be able to point at:
+At minimum, `fase` records should be able to point at:
 - `base_commit_oid`
 - `head_commit_oid`
 - `branch_ref`
@@ -701,10 +701,10 @@ Generated views cannot drift because they are compiled from the database on
 demand.
 
 Projection commands:
-- `cagent work projection <work-id> --format md` — renders a work item as
+- `fase work projection <work-id> --format md` — renders a work item as
   markdown (objective, acceptance, notes, attestations, history)
-- `cagent project atlas` — renders an index of all work from the graph
-- `cagent work hydrate <work-id>` — compiles a worker briefing as JSON
+- `fase project atlas` — renders an index of all work from the graph
+- `fase work hydrate <work-id>` — compiles a worker briefing as JSON
 
 Projected markdown can be committed to Git as snapshots for provenance, but
 these are generated artifacts, not source-of-truth documents.
@@ -761,15 +761,15 @@ Six guarantees:
    the lease expires and the work becomes recoverable.
 3. **Idempotent launch/cancel**: starting the same logical run twice does not
    create semantic duplication. Cancelling is safe to retry.
-4. **Startup reconciliation**: on restart, `cagent` inspects store state,
+4. **Startup reconciliation**: on restart, `fase` inspects store state,
    detects orphaned/running/unknown jobs, and marks or reattaches them.
 5. **Bounded event capture**: stdout/stderr/tool events/artifacts are durably
    captured enough to explain what happened, without requiring a live parent
    process.
 6. **Explicit terminal outcomes**: done, failed, cancelled, lost, superseded.
 
-`cagent` supervises work, leases, attestations, and approvals.
-`cagent` does not supervise machines, VMs, or OS processes.
+`fase` supervises work, leases, attestations, and approvals.
+`fase` does not supervise machines, VMs, or OS processes.
 
 In v1, the command vocabulary (section 5.3) becomes the remote broker protocol.
 The local implementation calls the service directly. The remote implementation
@@ -815,7 +815,7 @@ Those are not required to prove the v0 product.
 
 The minimum remote-aware design principle:
 - machines are supervised by the host (systemd, hypervisor)
-- work is supervised by `cagent`
+- work is supervised by `fase`
 
 ## 21) Done Criteria For This Spec
 

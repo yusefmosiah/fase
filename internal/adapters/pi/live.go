@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 type DeliveryMode string
@@ -196,7 +196,7 @@ func (t *transport) readLoop(scanner *bufio.Scanner) {
 }
 
 func (t *transport) nextID() string {
-	return fmt.Sprintf("cagent-%d", t.nextReqID.Add(1))
+	return fmt.Sprintf("fase-%d", t.nextReqID.Add(1))
 }
 
 func (t *transport) call(ctx context.Context, cmdType string, params map[string]any) (json.RawMessage, error) {
@@ -637,7 +637,7 @@ func (s *piSession) steerLoop() {
 				continue
 			}
 
-			msg := fmt.Sprintf("[cagent:message from=\"supervisor\" type=\"info\"]\n%s\n[/cagent:message]", ev.Message)
+			msg := fmt.Sprintf("[fase:message from=\"supervisor\" type=\"info\"]\n%s\n[/fase:message]", ev.Message)
 			switch mode {
 			case DeliveryFollowUp:
 				_ = s.t.followUp(s.ctx, msg)

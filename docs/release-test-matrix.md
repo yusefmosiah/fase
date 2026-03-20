@@ -5,7 +5,7 @@ Status: Draft
 
 ## Purpose
 
-This matrix defines how `cagent` should be tested from cheap and deterministic
+This matrix defines how `fase` should be tested from cheap and deterministic
 to expensive and emergent, with the default release lane biased toward low-cost
 models and fake adapters.
 
@@ -22,7 +22,7 @@ models and fake adapters.
 3. Fake orchestration lane
    - Verify background `run`, `send`, `debrief`, `transfer`, `cancel`,
      `status --wait`, `logs --follow`, and `artifacts`.
-   - Includes recursive `cagent` orchestration through fake CLIs.
+   - Includes recursive `fase` orchestration through fake CLIs.
    - No live model spend.
 
 4. Cheap live smoke lane
@@ -59,7 +59,7 @@ The capstone lane should exist in two forms:
 
 ## Observability Contract
 
-`cagent` should report three separate things:
+`fase` should report three separate things:
 
 1. Runtime inventory
    - Installed adapter CLIs and capability flags.

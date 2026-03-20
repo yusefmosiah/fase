@@ -6,12 +6,12 @@ import "sync"
 type WorkEventKind string
 
 const (
-	WorkEventCreated     WorkEventKind = "work_created"
-	WorkEventUpdated     WorkEventKind = "work_updated"
-	WorkEventClaimed     WorkEventKind = "work_claimed"
-	WorkEventReleased    WorkEventKind = "work_released"
-	WorkEventAttested    WorkEventKind = "work_attested"
-	WorkEventLeaseRenew  WorkEventKind = "work_lease_renewed"
+	WorkEventCreated    WorkEventKind = "work_created"
+	WorkEventUpdated    WorkEventKind = "work_updated"
+	WorkEventClaimed    WorkEventKind = "work_claimed"
+	WorkEventReleased   WorkEventKind = "work_released"
+	WorkEventAttested   WorkEventKind = "work_attested"
+	WorkEventLeaseRenew WorkEventKind = "work_lease_renewed"
 )
 
 // WorkEvent is emitted when a work item is mutated.

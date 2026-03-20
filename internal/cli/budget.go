@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 // dailyUsage tracks per-adapter/model run counts for the current UTC day.

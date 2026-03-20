@@ -1,0 +1,1 @@
+Replace separate supervisor + Vite with fase serve: one process. HTTP on :4242, embed.FS for UI, SSE for real-time, supervisor as goroutine. CLI proxies through service when running. See full report in work graph.

@@ -24,10 +24,10 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/cagent/internal/core"
-	"github.com/yusefmosiah/cagent/internal/mcpserver"
-	"github.com/yusefmosiah/cagent/internal/service"
-	"github.com/yusefmosiah/cagent/internal/web"
+	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/mcpserver"
+	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/fase/internal/web"
 )
 
 // wsHub manages WebSocket connections and broadcasts events to all connected clients.
@@ -192,18 +192,18 @@ func newServeCommand(root *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "serve",
-		Short: "Run the cagent service: web UI, API, and housekeeping",
-		Long: `Starts the cagent service: mind-graph web UI, HTTP API, and background
+		Short: "Run the fase service: web UI, API, and housekeeping",
+		Long: `Starts the fase service: mind-graph web UI, HTTP API, and background
 housekeeping (lease reconciliation, stall detection).
 
 By default, no work is auto-dispatched. Use --auto to enable autonomous
 claiming and execution of ready work items.
 
 Examples:
-  cagent serve                          # UI + API + housekeeping
-  cagent serve --auto                   # also auto-dispatch ready work
-  cagent serve --host 0.0.0.0           # accessible via Tailscale/LAN
-  cagent serve --no-browser             # don't open browser on start`,
+  fase serve                          # UI + API + housekeeping
+  fase serve --auto                   # also auto-dispatch ready work
+  fase serve --host 0.0.0.0           # accessible via Tailscale/LAN
+  fase serve --no-browser             # don't open browser on start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, devAssets)
 		},
@@ -266,7 +266,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	mux := http.NewServeMux()
 	registerAPIHandlers(mux, svc, cwd, hub, &supLoop)
 
-	// MCP endpoint — same work graph tools as `cagent mcp http`
+	// MCP endpoint — same work graph tools as `fase mcp http`
 	mcpServer := mcpserver.New(svc)
 	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
 		return mcpServer.MCP
@@ -341,7 +341,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	if auto {
 		mode = "serve --auto"
 	}
-	fmt.Fprintf(cmd.OutOrStdout(), "cagent %s: %s (pid %d)\n", mode, url, os.Getpid())
+	fmt.Fprintf(cmd.OutOrStdout(), "fase %s: %s (pid %d)\n", mode, url, os.Getpid())
 
 	// Auto-open browser
 	if !noUI && !noBrowser {
@@ -356,7 +356,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
 
-	fmt.Fprintln(cmd.OutOrStdout(), "\ncagent serve: shutting down...")
+	fmt.Fprintln(cmd.OutOrStdout(), "\nfase serve: shutting down...")
 	cancel() // stops housekeeping and supervisor goroutines
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -364,14 +364,14 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	_ = server.Shutdown(shutdownCtx)
 
 	wg.Wait()
-	fmt.Fprintln(cmd.OutOrStdout(), "cagent serve: stopped")
+	fmt.Fprintln(cmd.OutOrStdout(), "fase serve: stopped")
 	return nil
 }
 
 // runHousekeeping runs periodic maintenance without dispatching work:
 // - Reconcile expired leases (orphaned claims)
 // - Detect stalled jobs (no output for 10 minutes)
-// - Dispatch verification for completed jobs (from cagent dispatch)
+// - Dispatch verification for completed jobs (from fase dispatch)
 func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -385,7 +385,7 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 			_, _ = svc.ReconcileExpiredLeases(ctx)
 
 			// Check for stalled jobs and completed jobs needing verification
-			rawDir := filepath.Join(cwd, ".cagent", "raw", "stdout")
+			rawDir := filepath.Join(cwd, ".fase", "raw", "stdout")
 			entries, err := os.ReadDir(rawDir)
 			if err != nil {
 				continue
@@ -557,7 +557,7 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 
 	// Supervisor status
 	mux.HandleFunc("/api/supervisor/status", func(w http.ResponseWriter, r *http.Request) {
-		supPath := filepath.Join(cwd, ".cagent", "supervisor.json")
+		supPath := filepath.Join(cwd, ".fase", "supervisor.json")
 		supData, _ := os.ReadFile(supPath)
 		var sup any
 		if len(supData) > 0 {
@@ -1391,10 +1391,13 @@ func truncateText(text string, limit int) string {
 func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, hub *wsHub, loopOut **supervisorLoop) {
 	selfBin, err := os.Executable()
 	if err != nil {
-		selfBin = "cagent"
+		selfBin = "fase"
 	}
 
-	stateDir := filepath.Join(cwd, ".cagent")
+	stateDir := core.ResolveRepoStateDirFrom(cwd)
+	if stateDir == "" {
+		stateDir = filepath.Join(cwd, ".fase")
+	}
 	ca, caErr := loadOrCreateCA(stateDir)
 	if caErr != nil {
 		fmt.Fprintf(os.Stderr, "supervisor: capability CA init failed (tokens disabled): %v\n", caErr)
@@ -1414,7 +1417,7 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 	if loopOut != nil {
 		*loopOut = loop
 	}
-	loop.budget = newDailyUsage(filepath.Join(cwd, ".cagent"))
+	loop.budget = newDailyUsage(stateDir)
 	loop.limits = buildLimitsMap(cfg)
 	loop.onJobStarted = func(workID, jobID, adapter string) {
 		hub.broadcast("job_started", map[string]string{"work_id": workID, "job_id": jobID, "adapter": adapter})

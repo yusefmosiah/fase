@@ -1,9 +1,9 @@
 ---
 name: fase
-description: Use fase as a bash-callable subagent runtime for coding-agent CLIs. Prefer this when you need to choose among available adapters, launch work through one stable JSON CLI, continue same-vendor sessions, or hand work off across vendors.
+description: Use FASE as a bash-callable subagent runtime for coding-agent CLIs. Prefer this when you need to choose among available adapters, launch work through one stable JSON CLI, continue same-vendor sessions, or hand work off across vendors.
 ---
 
-# fase
+# FASE
 
 ## When to use
 

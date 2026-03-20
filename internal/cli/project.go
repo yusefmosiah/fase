@@ -4,7 +4,7 @@ import (
 	"context"
 
 	"github.com/spf13/cobra"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 func newProjectCommand(root *rootOptions) *cobra.Command {

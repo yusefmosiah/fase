@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/adapters"
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/adapters"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 type Runner interface {

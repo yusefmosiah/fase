@@ -9,7 +9,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 func newDispatchCommand(root *rootOptions) *cobra.Command {
@@ -26,7 +26,7 @@ Without arguments, picks the highest-priority ready item.
 With a work-id argument, dispatches that specific item (must be ready).
 
 This is the preferred way to run work — it goes through the DAG
-instead of bypassing it like "cagent run".`,
+instead of bypassing it like "fase run".`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -108,7 +108,7 @@ func runDispatch(cmd *cobra.Command, root *rootOptions, workID, adapterOverride,
 	// Build prompt — include model override if specified
 	prompt := string(briefingJSON)
 
-	// Dispatch via cagent run (reuses existing job infrastructure)
+	// Dispatch via fase run (reuses existing job infrastructure)
 	result, runErr := svc.Run(ctx, service.RunRequest{
 		Adapter: adapter,
 		CWD:     cwd,

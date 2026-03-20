@@ -1,4 +1,4 @@
-# cagent Spec And Implementation Guide
+# FASE Spec And Implementation Guide
 
 Date: 2026-03-09
 Kind: Spec + implementation guide
@@ -7,7 +7,7 @@ Requires: []
 
 ## Narrative Summary (1-minute read)
 
-`cagent` is a standalone open source CLI for running external coding-agent CLIs
+`fase` is a standalone open source CLI for running external coding-agent CLIs
 as durable background jobs behind one local machine-readable contract.
 
 It is designed to be called from `bash` by:
@@ -17,7 +17,7 @@ It is designed to be called from `bash` by:
 - shell scripts,
 - higher-level runtimes that want to outsource software work to vendor CLIs.
 
-`cagent` is not itself a coding agent and it is not a general distributed
+`fase` is not itself a coding agent and it is not a general distributed
 workflow platform. It is a portable local control plane over coding-agent CLIs.
 
 The critical semantic rule is:
@@ -30,10 +30,10 @@ The critical inventory rule is:
 - `catalog` reports discovered providers, models, and auth/billing mode
 - subscription-backed CLIs and usage-priced API credentials must not be conflated
 
-`cagent` must preserve native vendor identities and raw artifacts, while also
+`fase` must preserve native vendor identities and raw artifacts, while also
 normalizing sessions, jobs, turns, and events into one canonical local model.
 
-When vendor streams expose token usage or cost, `cagent` should normalize and
+When vendor streams expose token usage or cost, `fase` should normalize and
 persist that too. When cost is not vendor-reported, any estimate must be tied to
 provider/model pricing provenance and clearly labeled as best-effort.
 
@@ -41,7 +41,7 @@ The implementation language should be Go.
 
 ## What Changed
 
-1. Named the project `cagent`.
+1. Named the project `fase`.
 2. Declared the product as a standalone general-purpose CLI, not an embedded
    host-specific subsystem.
 3. Declared the CLI contract and JSON output as the primary public API.
@@ -61,7 +61,7 @@ The implementation language should be Go.
 
 ## What To Do Next
 
-1. Create a dedicated `cagent` repository.
+1. Create a dedicated `fase` repository.
 2. Implement the core runtime, SQLite store, and CLI shell.
 3. Implement Tier 1 adapters first:
    - Codex
@@ -77,7 +77,7 @@ The implementation language should be Go.
 
 ## Product Statement
 
-`cagent` is a local job runner and normalization layer for coding-agent CLIs.
+`fase` is a local job runner and normalization layer for coding-agent CLIs.
 
 It must let callers do the following through one binary:
 - start work on a chosen adapter,
@@ -90,7 +90,7 @@ It must let callers do the following through one binary:
 - inspect discovered providers, models, and auth mode,
 - preserve all raw vendor data needed for debugging.
 
-`cagent` must not:
+`fase` must not:
 - erase vendor-specific behavior,
 - pretend all CLIs share one native session model,
 - require a daemon in v0,
@@ -136,12 +136,12 @@ A vendor-specific implementation that knows how to:
 
 ### Job
 
-A durable `cagent` execution record.
+A durable `fase` execution record.
 One job corresponds to one launched vendor run attempt.
 
 ### Canonical Session
 
-A `cagent`-owned logical thread of work across one or more jobs.
+A `fase`-owned logical thread of work across one or more jobs.
 It may have one or many native vendor sessions attached over time.
 
 ### Native Session
@@ -213,7 +213,7 @@ At minimum, catalog entries must distinguish:
 
 ```text
 caller (human / bash / agent / CI)
-  -> cagent CLI
+  -> fase CLI
     -> job service
       -> adapter manager
         -> vendor adapter
@@ -268,13 +268,13 @@ Recommended stack:
 ## Repository Layout
 
 ```text
-cagent/
-  cmd/cagent/
+fase/
+  cmd/fase/
   internal/cli/
   internal/core/
   internal/store/
   internal/events/
-  internal/handoff/
+  internal/transfer/
   internal/adapters/
     codex/
     claude/
@@ -296,20 +296,20 @@ cagent/
 Default config and state:
 
 ```text
-$XDG_CONFIG_HOME/cagent/config.toml
-$XDG_STATE_HOME/cagent/cagent.db
-$XDG_STATE_HOME/cagent/jobs/
-$XDG_STATE_HOME/cagent/raw/
-$XDG_STATE_HOME/cagent/transfers/
-$XDG_CACHE_HOME/cagent/
+$XDG_CONFIG_HOME/fase/config.toml
+$XDG_STATE_HOME/fase/fase.db
+$XDG_STATE_HOME/fase/jobs/
+$XDG_STATE_HOME/fase/raw/
+$XDG_STATE_HOME/fase/transfers/
+$XDG_CACHE_HOME/fase/
 ```
 
 Fallbacks:
 - macOS/Linux fallback to `~/.config`, `~/.local/state`, `~/.cache`
 - allow override via:
-  - `CAGENT_CONFIG_DIR`
-  - `CAGENT_STATE_DIR`
-  - `CAGENT_CACHE_DIR`
+  - `FASE_CONFIG_DIR`
+  - `FASE_STATE_DIR`
+  - `FASE_CACHE_DIR`
 
 ## Command Surface
 
@@ -320,26 +320,26 @@ Every command must support:
 ### Core Commands
 
 ```text
-cagent run
-cagent status
-cagent logs
-cagent send
-cagent debrief
-cagent artifacts list
-cagent artifacts show
-cagent cancel
-cagent list
-cagent session
-cagent history search
-cagent catalog sync
-cagent catalog show
-cagent catalog probe
-cagent transfer export
-cagent transfer run
-cagent adapters
+fase run
+fase status
+fase logs
+fase send
+fase debrief
+fase artifacts list
+fase artifacts show
+fase cancel
+fase list
+fase session
+fase history search
+fase catalog sync
+fase catalog show
+fase catalog probe
+fase transfer export
+fase transfer run
+fase adapters
 ```
 
-### `cagent run`
+### `fase run`
 
 Starts a new job.
 
@@ -369,7 +369,7 @@ Behavior:
 - translate canonical events
 - return immediately with job and session ids
 
-### `cagent status`
+### `fase status`
 
 Returns the latest job state and summary.
 
@@ -378,7 +378,7 @@ Flags:
 - `--interval`
 - `--timeout`
 
-### `cagent logs`
+### `fase logs`
 
 Streams canonical events or raw output.
 
@@ -387,7 +387,7 @@ Flags:
 - `--raw`
 - `--json`
 
-### `cagent send`
+### `fase send`
 
 Sends follow-up input to a native resumable session.
 
@@ -396,7 +396,7 @@ Rules:
 - must acquire a session lock
 - must fail clearly if a run is already active on that session
 
-### `cagent debrief`
+### `fase debrief`
 
 Queues a same-vendor continuation that asks the live source agent to produce a
 structured "land the plane" report.
@@ -407,7 +407,7 @@ Rules:
 - must write a durable debrief artifact on success
 - must return immediately with the queued job id and planned artifact path
 
-### `cagent cancel`
+### `fase cancel`
 
 Cancels a running job.
 
@@ -418,29 +418,29 @@ Default behavior:
 - then SIGKILL if required
 - persist canonical cancellation events
 
-### `cagent list`
+### `fase list`
 
 Lists jobs or sessions with filters.
 
-### `cagent session`
+### `fase session`
 
 Shows canonical session state, linked native sessions, recent turns, and
 available continuation actions.
 
-### `cagent history search`
+### `fase history search`
 
-Searches canonical local `cagent` history across jobs, turns, events, and
+Searches canonical local `fase` history across jobs, turns, events, and
 persisted artifacts.
 
 Rules:
 - must work without any adapter-specific importer
-- must treat canonical `cagent` history as the default/general case
+- must treat canonical `fase` history as the default/general case
 - should support adapter, model, cwd, session, and record-kind filters
 - should search artifact content for small text artifacts like debriefs and transfers
 - should return machine-readable matches with snippets and stable ids
-- adapter-native history import is a separate special case for sessions not created by `cagent`
+- adapter-native history import is a separate special case for sessions not created by `fase`
 
-### `cagent artifacts list`
+### `fase artifacts list`
 
 Lists persisted artifacts for a job or session.
 
@@ -448,11 +448,11 @@ Rules:
 - must support filtering by artifact kind
 - must support machine-readable output
 
-### `cagent artifacts show`
+### `fase artifacts show`
 
 Returns artifact metadata and content for one persisted artifact.
 
-### `cagent catalog sync`
+### `fase catalog sync`
 
 Discovers provider, model, and auth-mode information from installed adapters.
 
@@ -462,7 +462,7 @@ Rules:
 - must not require live web scraping in v0
 - may leave pricing unknown
 
-### `cagent catalog show`
+### `fase catalog show`
 
 Returns the current discovered provider/model catalog.
 
@@ -472,7 +472,7 @@ Rules:
 - should include recent canonical job history so host agents can prefer recently successful models
 - should include pricing metadata only when provenance is clear
 
-### `cagent catalog probe`
+### `fase catalog probe`
 
 Runs best-effort entitlement probes against discovered catalog entries and records
 whether they appear runnable for the current local account/configuration.
@@ -484,15 +484,15 @@ Rules:
 - must distinguish at minimum `runnable`, `unsupported_by_plan`, `failed`, and `hung_or_unstable`
 - must not treat discovered inventory as implied entitlement
 
-### `cagent transfer export`
+### `fase transfer export`
 
 Exports a structured transfer packet.
 
-### `cagent transfer run`
+### `fase transfer run`
 
 Starts a new job from a transfer packet on a target adapter.
 
-### `cagent adapters`
+### `fase adapters`
 
 Lists installed/available adapters and their capability flags.
 
@@ -611,7 +611,7 @@ Rules:
 ```
 
 Important rule:
-- canonical session identity is local to `cagent`
+- canonical session identity is local to `fase`
 - native session identity remains vendor-owned
 
 ## Canonical Turn Schema
@@ -670,11 +670,11 @@ Cross-vendor failover must use this concept, not native resume.
   "evidence_refs": [
     {
       "kind": "recent_turns_json",
-      "path": "/abs/path/.local/state/cagent/transfers/xfer_01/recent_turns.json"
+      "path": "/abs/path/.local/state/fase/transfers/xfer_01/recent_turns.json"
     },
     {
       "kind": "recent_events_jsonl",
-      "path": "/abs/path/.local/state/cagent/transfers/xfer_01/recent_events.jsonl"
+      "path": "/abs/path/.local/state/fase/transfers/xfer_01/recent_events.jsonl"
     },
     {
       "kind": "session_export",
@@ -870,7 +870,7 @@ Docs:
 - https://developers.openai.com/codex/app-server
 - https://github.com/openai/codex
 
-Native surfaces relevant to `cagent`:
+Native surfaces relevant to `fase`:
 - `codex exec --json`
 - `codex exec resume --json`
 - `codex resume`
@@ -912,7 +912,7 @@ Docs:
 - https://code.claude.com/docs/en/sub-agents
 - https://platform.claude.com/docs/en/agent-sdk/overview
 
-Native surfaces relevant to `cagent`:
+Native surfaces relevant to `fase`:
 - `claude -p`
 - `--output-format json`
 - `--output-format stream-json`
@@ -934,7 +934,7 @@ Should support later:
 
 Notes:
 - treat filesystem-based project config as vendor-local behavior, not canonical
-  `cagent` configuration
+  `fase` configuration
 - preserve Claude session ID if surfaced
 - if session ID is not reliably recoverable in a given mode, mark
   `native_resume=false` for that submode
@@ -948,7 +948,7 @@ Docs:
 - https://docs.factory.ai/reference/cli-reference
 - https://docs.factory.ai/cli/getting-started/overview
 
-Native surfaces relevant to `cagent`:
+Native surfaces relevant to `fase`:
 - `droid`
 - `droid exec`
 - `-o json`
@@ -980,7 +980,7 @@ Docs:
 - https://github.com/badlogic/pi-mono/tree/main/packages/coding-agent
 - https://shittycodingagent.ai
 
-Native surfaces relevant to `cagent`:
+Native surfaces relevant to `fase`:
 - interactive mode
 - print / JSON mode
 - RPC mode
@@ -1059,7 +1059,7 @@ v0 implementation choice:
 - otherwise implement as unavailable
 
 Rationale:
-- `cagent` should document the adapter shape without pretending the archived
+- `fase` should document the adapter shape without pretending the archived
   upstream is stable enough for first-wave support
 
 ## Adapter Implementation Order
@@ -1148,9 +1148,9 @@ Machine-readable mode:
 Examples:
 
 ```bash
-cagent status job_01ABC --json
-cagent logs job_01ABC --follow --json
-cagent adapters --json
+fase status job_01ABC --json
+fase logs job_01ABC --follow --json
+fase adapters --json
 ```
 
 ## Config File
@@ -1159,7 +1159,7 @@ Suggested `config.toml`:
 
 ```toml
 [store]
-state_dir = "~/.local/state/cagent"
+state_dir = "~/.local/state/fase"
 
 [defaults]
 json = false
@@ -1247,18 +1247,18 @@ Suggested dimensions:
 - workflow shape
 - failure mode
 
-### Recursive `cagent` Tests
+### Recursive `fase` Tests
 
-`cagent` must be tested as a subagent runtime that can be orchestrated by a
-coding agent which itself has the `cagent` skill loaded.
+`fase` must be tested as a subagent runtime that can be orchestrated by a
+coding agent which itself has the `fase` skill loaded.
 
 Important scenario:
-1. planner `cagent` writes or refines a spec
-2. implementation `cagent` runs one phase of work
-3. verifier `cagent` compiles, tests, and retries until green or blocked
-4. review `cagent` performs code review
-5. red-team `cagent` performs adversarial and security testing
-6. report `cagent` emits a release or security summary
+1. planner `fase` writes or refines a spec
+2. implementation `fase` runs one phase of work
+3. verifier `fase` compiles, tests, and retries until green or blocked
+4. review `fase` performs code review
+5. red-team `fase` performs adversarial and security testing
+6. report `fase` emits a release or security summary
 
 This should first be exercised on low-cost models, then selectively compared
 against stronger models.
@@ -1271,7 +1271,7 @@ capabilities.
 Examples:
 - whether low-cost models can produce useful debriefs
 - whether transfer bundles let a weaker target model recover stronger-source work
-- whether recursive `cagent` orchestration stabilizes into a useful workflow
+- whether recursive `fase` orchestration stabilizes into a useful workflow
 - which adapters are best for planning, coding, verification, review, or red-team tasks
 
 ### Compatibility Gates
@@ -1327,7 +1327,7 @@ Each adapter must ship with:
 - provider/model catalog
 - auth-mode detection
 - low-cost live matrix
-- recursive `cagent` orchestration tests
+- recursive `fase` orchestration tests
 
 ## Known Risks
 

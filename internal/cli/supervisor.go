@@ -19,8 +19,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yusefmosiah/cagent/internal/core"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 // rotationEntry pairs an adapter name with the model to use for that adapter.
@@ -128,10 +128,10 @@ type supervisorOptions struct {
 	dryRun         bool
 }
 
-// inFlightJob tracks a dispatched job by its real cagent job ID.
+// inFlightJob tracks a dispatched job by its real fase job ID.
 type inFlightJob struct {
 	workID       string
-	jobID        string // real cagent job_id from `run --json` output
+	jobID        string // real fase job_id from `run --json` output
 	adapter      string
 	model        string // model used for this job (for attestation offset)
 	started      time.Time
@@ -180,12 +180,12 @@ func newSupervisorCommand(root *rootOptions) *cobra.Command {
 		Use:   "supervisor",
 		Short: "Run an autonomous dispatch loop that claims and executes ready work",
 		Long: `The supervisor polls for ready work items, claims them, hydrates their
-briefing, and spawns "cagent run" processes to execute each item. It tracks
+briefing, and spawns "fase run" processes to execute each item. It tracks
 real job IDs and polls their status for completion.
 
 The core loop:
   1. Reconcile expired leases
-  2. Poll in-flight jobs via "cagent status" and mark work done/failed
+  2. Poll in-flight jobs via "fase status" and mark work done/failed
   3. Renew leases on still-running jobs
   4. If in-flight < max-concurrent, claim next work and spawn a run
   5. Sleep for the poll interval`,
@@ -208,7 +208,7 @@ The core loop:
 	return cmd
 }
 
-// supervisorServeURL reads .cagent/serve.json to discover the running serve API port.
+// supervisorServeURL reads .fase/serve.json to discover the running serve API port.
 func supervisorServeURL(root *rootOptions) (string, error) {
 	svc, err := service.Open(context.Background(), root.configPath)
 	if err != nil {
@@ -292,7 +292,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 
 	selfBin, err := os.Executable()
 	if err != nil {
-		selfBin = "cagent"
+		selfBin = "fase"
 	}
 
 	cwd := opts.cwd
@@ -311,7 +311,10 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	}
 
 	// Budget tracker persists daily run counts to <stateDir>/usage.json.
-	stateDir := filepath.Join(cwd, ".cagent")
+	stateDir := core.ResolveRepoStateDirFrom(cwd)
+	if stateDir == "" {
+		stateDir = filepath.Join(cwd, ".fase")
+	}
 	budget := newDailyUsage(stateDir)
 
 	ca, caErr := loadOrCreateCA(stateDir)
@@ -363,9 +366,9 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 		if stopping {
 			remaining := loop.inFlightLen()
 			// On graceful shutdown, cancel all in-flight jobs rather than
-			// waiting indefinitely. Each `cagent run` spawns a detached
+			// waiting indefinitely. Each `fase run` spawns a detached
 			// background worker (via service.spawnDetachedWorker with
-			// Setpgid: true), so the worker survives `cagent run` exiting.
+			// Setpgid: true), so the worker survives `fase run` exiting.
 			// We must explicitly cancel via the service layer, which sends
 			// escalating signals (SIGINT → SIGTERM → SIGKILL) to the
 			// worker's process group.
@@ -415,20 +418,20 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 	}
 }
 
-// spawnRun launches `cagent run --json` and extracts the real job_id from the output.
+// spawnRun launches `fase run --json` and extracts the real job_id from the output.
 // The run command queues background work and returns immediately with job metadata.
 //
 // Process hierarchy and orphan prevention:
 //
 //	supervisor (this process)
-//	  └─ cagent run --json   (short-lived, returns job ID and exits)
+//	  └─ fase run --json   (short-lived, returns job ID and exits)
 //	       └─ __run-job       (detached worker, Setpgid=true, survives parent)
 //
-// The `cagent run` subprocess is synchronous (we wait for its output). It spawns
+// The `fase run` subprocess is synchronous (we wait for its output). It spawns
 // a detached background worker via service.spawnDetachedWorker which sets
 // Setpgid: true, placing the worker in its own process group. This means:
 //
-//  1. The worker intentionally survives `cagent run` exiting.
+//  1. The worker intentionally survives `fase run` exiting.
 //  2. If the supervisor is killed (SIGKILL), workers will NOT be automatically
 //     cleaned up because they are in separate process groups. This is by design
 //     for crash resilience — workers can finish their work even if the supervisor
@@ -437,7 +440,7 @@ func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOption
 //     each in-flight job via svc.Cancel(), which sends escalating signals
 //     (SIGINT → SIGTERM → SIGKILL) to the worker's process group.
 //
-// We still set Setpgid on the `cagent run` command itself so it doesn't receive
+// We still set Setpgid on the `fase run` command itself so it doesn't receive
 // signals meant for the supervisor's terminal session (e.g., Ctrl+C) before we
 // get a chance to do orderly cleanup.
 func spawnRun(bin, configPath, adapter, model, cwd, prompt string, extraEnv []string) (string, error) {
@@ -450,7 +453,7 @@ func spawnRun(bin, configPath, adapter, model, cwd, prompt string, extraEnv []st
 	}
 
 	runCmd := exec.Command(bin, args...)
-	runCmd.Dir = cwd // ensure cagent resolves .cagent/ from the target repo
+	runCmd.Dir = cwd // ensure fase resolves .fase/ from the target repo
 	runCmd.Stderr = nil
 	runCmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	if len(extraEnv) > 0 {
@@ -458,7 +461,7 @@ func spawnRun(bin, configPath, adapter, model, cwd, prompt string, extraEnv []st
 	}
 	out, err := runCmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("cagent run failed: %w", err)
+		return "", fmt.Errorf("fase run failed: %w", err)
 	}
 
 	// Parse the JSON output to get the job ID
@@ -476,7 +479,7 @@ func spawnRun(bin, configPath, adapter, model, cwd, prompt string, extraEnv []st
 	return result.Job.JobID, nil
 }
 
-// pollJobStatus calls `cagent status --json <job-id>` and returns the job state.
+// pollJobStatus calls `fase status --json <job-id>` and returns the job state.
 func pollJobStatus(ctx context.Context, bin, configPath, jobID, cwd string) (string, error) {
 	args := []string{"status", "--json", jobID}
 	if configPath != "" {
@@ -490,7 +493,7 @@ func pollJobStatus(ctx context.Context, bin, configPath, jobID, cwd string) (str
 	statusCmd.Stderr = nil
 	out, err := statusCmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("cagent status failed: %w", err)
+		return "", fmt.Errorf("fase status failed: %w", err)
 	}
 
 	var result struct {
@@ -566,7 +569,10 @@ type inFlightState struct {
 var supervisorStart = time.Now()
 
 func writeSupState(cwd string, cycle int, paused bool, inFlight map[string]*inFlightJob, report supervisorCycleReport) {
-	stateDir := filepath.Join(cwd, ".cagent")
+	stateDir := core.ResolveRepoStateDirFrom(cwd)
+	if stateDir == "" {
+		stateDir = filepath.Join(cwd, ".fase")
+	}
 	_ = os.MkdirAll(stateDir, 0o755)
 
 	flights := make([]inFlightState, 0, len(inFlight))
@@ -705,7 +711,7 @@ func bootstrapRepo(ctx context.Context, svc *service.Service, cwd string) error 
 		}
 	}
 
-	objective := fmt.Sprintf(`Bootstrap the %s repository into the cagent work graph by ingesting its documentation.
+	objective := fmt.Sprintf(`Bootstrap the %s repository into the fase work graph by ingesting its documentation.
 
 ## Approach
 
@@ -716,7 +722,7 @@ func bootstrapRepo(ctx context.Context, svc *service.Service, cwd string) error 
 3. CREATE WORK ITEMS FROM DOCS: Each significant document (ADR, design doc, spec, guide) should become a work item. The work item's state should reflect the document's status:
    - Documents in "theory" or "proposed" or "draft" directories → kind=plan, state=ready
    - Documents in "practice" or "accepted" or "implemented" directories → kind=implement, state=done
-   - Test reports, audits, load tests → these are attestation evidence, not work items. Record them as attestations on the relevant work item using: cagent work attest <work-id> --result passed --summary "..." --verifier-kind deterministic --method test
+   - Test reports, audits, load tests → these are attestation evidence, not work items. Record them as attestations on the relevant work item using: fase work attest <work-id> --result passed --summary "..." --verifier-kind deterministic --method test
    - Guides and runbooks → attach as notes on the relevant work item
    - Archived/deprecated docs → skip (historical context, not active work)
 
@@ -729,19 +735,19 @@ func bootstrapRepo(ctx context.Context, svc *service.Service, cwd string) error 
 ## Commands
 
 Create work items:
-  cagent work create --title "%s: Per-User VM Lifecycle" --objective "..." --kind plan --priority 2
+  fase work create --title "%s: Per-User VM Lifecycle" --objective "..." --kind plan --priority 2
 
 Record attestations (for test reports):
-  cagent work attest <work-id> --result passed --summary "Load test: 62 concurrent VMs, KSM saving 1.7GB" --verifier-kind deterministic --method test
+  fase work attest <work-id> --result passed --summary "Load test: 62 concurrent VMs, KSM saving 1.7GB" --verifier-kind deterministic --method test
 
 Add notes (for guides, snapshots, findings):
-  cagent work note-add <work-id> --type finding --text "Implementation guide at docs/theory/guides/adr-0014-implementation.md"
+  fase work note-add <work-id> --type finding --text "Implementation guide at docs/theory/guides/adr-0014-implementation.md"
 
 Mark implemented items as done via attestation (bootstrap only — normal workers must NOT call this):
-  cagent work attest <work-id> --result passed --summary "Implemented and operational per practice/decisions/"
+  fase work attest <work-id> --result passed --summary "Implemented and operational per practice/decisions/"
 
 Create dependency edges between work items:
-  cagent work proposal create --type add_edge --target <blocked-work-id> --rationale "ADR-0024 requires ADR-0014" --patch '{"edge_type":"blocks","source_work_id":"<blocker-work-id>"}'
+  fase work proposal create --type add_edge --target <blocked-work-id> --rationale "ADR-0024 requires ADR-0014" --patch '{"edge_type":"blocks","source_work_id":"<blocker-work-id>"}'
 
 ## Repository Context
 
@@ -870,11 +876,11 @@ func gitIsRepo(cwd string) bool {
 	return cmd.Run() == nil
 }
 
-// createWorktree creates a git worktree at .cagent/worktrees/<workID> on a new
-// branch cagent/work_<workID>. Returns the worktree path and branch name.
+// createWorktree creates a git worktree at .fase/worktrees/<workID> on a new
+// branch fase/work_<workID>. Returns the worktree path and branch name.
 func createWorktree(cwd, workID string) (worktreePath, branchName string, err error) {
-	branchName = "cagent/work_" + workID
-	worktreePath = filepath.Join(cwd, ".cagent", "worktrees", workID)
+	branchName = "fase/work_" + workID
+	worktreePath = filepath.Join(cwd, ".fase", "worktrees", workID)
 
 	if err = os.MkdirAll(filepath.Dir(worktreePath), 0o755); err != nil {
 		return "", "", fmt.Errorf("create worktrees dir: %w", err)
@@ -920,7 +926,7 @@ func deleteBranch(cwd, branchName string) {
 	_ = exec.Command("git", "-C", cwd, "branch", "-d", branchName).Run()
 }
 
-// spawnMergeResolver launches a cagent run job that resolves merge conflicts.
+// spawnMergeResolver launches a fase run job that resolves merge conflicts.
 // conflictFiles is the list of paths that have conflict markers.
 func spawnMergeResolver(selfBin, configPath, cwd, workID, branchName string) error {
 	prompt := fmt.Sprintf(`You are a merge-conflict resolver.
@@ -934,7 +940,7 @@ Steps:
 2. For each conflicted file: open it, resolve the conflict markers (<<<<<<<, =======, >>>>>>>)
 3. Run: git add <resolved-files>
 4. Run: git commit -m "Resolve merge conflicts from %s"
-5. Add a note: cagent work note-add %s --type finding --text "Merge conflicts resolved automatically"
+5. Add a note: fase work note-add %s --type finding --text "Merge conflicts resolved automatically"
 
 Only resolve conflicts; do not make other changes.`, branchName, cwd, workID, branchName, workID)
 

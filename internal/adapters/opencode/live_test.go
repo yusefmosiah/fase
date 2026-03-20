@@ -13,7 +13,7 @@ import (
 
 	opencodesdk "github.com/sst/opencode-sdk-go"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 type fakeOpenCodeServer struct {
@@ -284,7 +284,7 @@ func fakeAssistantMessage(messageID, sessionID, cwd string, completed bool) open
 		ProviderID: "openai",
 		Role:       opencodesdk.AssistantMessageRoleAssistant,
 		SessionID:  sessionID,
-		System:     []string{"cagent"},
+		System:     []string{"fase"},
 		Time: opencodesdk.AssistantMessageTime{
 			Created:   1,
 			Completed: 0,

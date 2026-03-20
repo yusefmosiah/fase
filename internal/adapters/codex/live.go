@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 // LiveAdapter implements adapterapi.LiveAgentAdapter for the Codex app-server.
@@ -308,7 +308,7 @@ func (t *transport) close() error {
 func (t *transport) initialize(ctx context.Context) error {
 	params := map[string]any{
 		"clientInfo": map[string]any{
-			"name":    "cagent",
+			"name":    "fase",
 			"title":   nil, // nullable per ClientInfo schema
 			"version": "0.1.0",
 		},
@@ -483,7 +483,7 @@ func newSession(ctx context.Context, t *transport, threadID string, steerCh <-ch
 	return s
 }
 
-// SessionID returns the Codex thread ID (maps to cagent session ID).
+// SessionID returns the Codex thread ID (maps to fase session ID).
 func (s *codexSession) SessionID() string { return s.threadID }
 
 // ActiveTurnID returns the current active Codex turn ID.
@@ -559,7 +559,7 @@ func (s *codexSession) dispatchLoop() {
 	}
 }
 
-// handleNotification converts a Codex server notification to a cagent Event.
+// handleNotification converts a Codex server notification to a fase Event.
 func (s *codexSession) handleNotification(msg rpcMessage) {
 	switch msg.Method {
 	case "turn/started":
@@ -670,8 +670,8 @@ func (s *codexSession) steerLoop() {
 				continue
 			}
 
-			// Format as a cagent inter-agent message visible to the model.
-			msg := fmt.Sprintf("[cagent:message from=\"supervisor\" type=\"info\"]\n%s\n[/cagent:message]", ev.Message)
+			// Format as a fase inter-agent message visible to the model.
+			msg := fmt.Sprintf("[fase:message from=\"supervisor\" type=\"info\"]\n%s\n[/fase:message]", ev.Message)
 			_ = s.t.turnSteer(s.ctx, s.threadID, turnID, []adapterapi.Input{adapterapi.TextInput(msg)})
 		}
 	}

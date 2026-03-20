@@ -9,9 +9,9 @@ import (
 func TestLoadConfigParsesAdapterTraits(t *testing.T) {
 	tempDir := t.TempDir()
 
-	t.Setenv("CAGENT_CONFIG_DIR", tempDir)
-	t.Setenv("CAGENT_STATE_DIR", filepath.Join(tempDir, "state"))
-	t.Setenv("CAGENT_CACHE_DIR", filepath.Join(tempDir, "cache"))
+	t.Setenv("FASE_CONFIG_DIR", tempDir)
+	t.Setenv("FASE_STATE_DIR", filepath.Join(tempDir, "state"))
+	t.Setenv("FASE_CACHE_DIR", filepath.Join(tempDir, "cache"))
 
 	configPath := filepath.Join(tempDir, "config.toml")
 	configBody := []byte(`

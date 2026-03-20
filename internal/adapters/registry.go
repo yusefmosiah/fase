@@ -4,14 +4,14 @@ import (
 	"context"
 	"sort"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
-	"github.com/yusefmosiah/cagent/internal/adapters/claude"
-	"github.com/yusefmosiah/cagent/internal/adapters/codex"
-	"github.com/yusefmosiah/cagent/internal/adapters/factory"
-	"github.com/yusefmosiah/cagent/internal/adapters/gemini"
-	"github.com/yusefmosiah/cagent/internal/adapters/opencode"
-	"github.com/yusefmosiah/cagent/internal/adapters/pi"
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapters/claude"
+	"github.com/yusefmosiah/fase/internal/adapters/codex"
+	"github.com/yusefmosiah/fase/internal/adapters/factory"
+	"github.com/yusefmosiah/fase/internal/adapters/gemini"
+	"github.com/yusefmosiah/fase/internal/adapters/opencode"
+	"github.com/yusefmosiah/fase/internal/adapters/pi"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 type Capabilities = adapterapi.Capabilities

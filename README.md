@@ -1,6 +1,6 @@
-# cagent
+# FASE
 
-`cagent` is a local work-control plane for governed agent work.
+`fase` is the command-line entrypoint for FASE, the Fully Automated Software Engineering local work-control plane for governed agent work.
 
 It gives you:
 - a **work graph** (SQLite) that tracks work items, dependency edges, attestations, approvals, and promotions,
@@ -15,10 +15,10 @@ The core invariant: **agents may always stop, the system may always resume.**
 Attestation is the centerpiece. Work is not "done" because an agent says so — it's done when durable evidence from tests, scripts, agent reviewers, and human review satisfies the attestation policy. Docs are projections of the work graph, not independent stores.
 
 Key specs:
-- [docs/cagent-v0-local-control-plane.md](docs/cagent-v0-local-control-plane.md) — product direction and v0 scope
-- [docs/cagent-work-runtime.md](docs/cagent-work-runtime.md) — work runtime design
-- [docs/cagent-work-api-and-schema.md](docs/cagent-work-api-and-schema.md) — work CLI/API schema
-- [docs/cagent-worker-briefing-schema.md](docs/cagent-worker-briefing-schema.md) — hydration contract
+- [docs/fase-v0-local-control-plane.md](docs/fase-v0-local-control-plane.md) — product direction and v0 scope
+- [docs/fase-work-runtime.md](docs/fase-work-runtime.md) — work runtime design
+- [docs/fase-work-api-and-schema.md](docs/fase-work-api-and-schema.md) — work CLI/API schema
+- [docs/fase-worker-briefing-schema.md](docs/fase-worker-briefing-schema.md) — hydration contract
 - [schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json) — briefing JSON schema
 
 ## Status
@@ -40,7 +40,7 @@ Practical summary:
 
 ## Intended Use
 
-`cagent` is a local runtime for governed agent work. The operator experience:
+`fase` is a local runtime for governed agent work. The operator experience:
 - capture ideas and work from the terminal (`work create`, `inbox`)
 - define or bootstrap work locally
 - inspect the work graph via CLI or mind-graph UI
@@ -76,25 +76,25 @@ More concrete milestone view:
 ## Implemented
 
 Commands currently wired:
-- `cagent run`
-- `cagent status`
-- `cagent logs`
-- `cagent send`
-- `cagent debrief`
-- `cagent artifacts list`
-- `cagent artifacts show`
-- `cagent history search`
-- `cagent cancel`
-- `cagent list`
-- `cagent session`
-- `cagent transfer export`
-- `cagent transfer run`
-- `cagent adapters`
-- `cagent catalog sync`
-- `cagent catalog show`
-- `cagent catalog probe`
-- `cagent runtime`
-- `cagent version`
+- `fase run`
+- `fase status`
+- `fase logs`
+- `fase send`
+- `fase debrief`
+- `fase artifacts list`
+- `fase artifacts show`
+- `fase history search`
+- `fase cancel`
+- `fase list`
+- `fase session`
+- `fase transfer export`
+- `fase transfer run`
+- `fase adapters`
+- `fase catalog sync`
+- `fase catalog show`
+- `fase catalog probe`
+- `fase runtime`
+- `fase version`
 
 Canonical persistence currently wired:
 - sessions
@@ -121,7 +121,7 @@ Testing currently in repo:
 - unit tests for core/store/service paths
 - fixture-based translation tests
 - fake CLI integration tests for all implemented adapters
-- staged orchestration E2E tests, including recursive `cagent` workflows
+- staged orchestration E2E tests, including recursive `fase` workflows
 - env-gated live low-cost smoke tests
 - live smoke tests already exercised against real installed CLIs
 
@@ -135,12 +135,12 @@ Important gaps versus the spec:
 ## Repository Layout
 
 Main code locations:
-- [cmd/cagent/main.go](/Users/wiz/cagent/cmd/cagent/main.go)
+- [cmd/fase/main.go](/Users/wiz/cagent/cmd/fase/main.go)
 - [internal/cli/root.go](/Users/wiz/cagent/internal/cli/root.go)
 - [internal/service/service.go](/Users/wiz/cagent/internal/service/service.go)
 - [internal/store/store.go](/Users/wiz/cagent/internal/store/store.go)
 - [internal/events/translate.go](/Users/wiz/cagent/internal/events/translate.go)
-- [internal/handoff/render.go](/Users/wiz/cagent/internal/handoff/render.go)
+- [internal/transfer/render.go](/Users/wiz/cagent/internal/transfer/render.go)
 - [internal/adapters](/Users/wiz/cagent/internal/adapters)
 
 Fixtures and adapter test assets:
@@ -170,19 +170,19 @@ make lint
 Run:
 
 ```bash
-./bin/cagent run --adapter codex --cwd . --prompt "Reply with exactly OK."
-./bin/cagent status --wait <job-id>
-./bin/cagent logs --follow <job-id>
-./bin/cagent artifacts list --job <job-id>
-./bin/cagent history search --query "provider outage" --adapter claude
-./bin/cagent work create --title "Implement X" --objective "Do the work"
-./bin/cagent work claim-next --claimant worker-a
-./bin/cagent work release <work-id> --claimant worker-a
-./bin/cagent adapters --json
-./bin/cagent catalog sync --json
-./bin/cagent catalog show --json
-./bin/cagent catalog probe --json --adapter opencode --provider openai
-./bin/cagent runtime --json
+./bin/fase run --adapter codex --cwd . --prompt "Reply with exactly OK."
+./bin/fase status --wait <job-id>
+./bin/fase logs --follow <job-id>
+./bin/fase artifacts list --job <job-id>
+./bin/fase history search --query "provider outage" --adapter claude
+./bin/fase work create --title "Implement X" --objective "Do the work"
+./bin/fase work claim-next --claimant worker-a
+./bin/fase work release <work-id> --claimant worker-a
+./bin/fase adapters --json
+./bin/fase catalog sync --json
+./bin/fase catalog show --json
+./bin/fase catalog probe --json --adapter opencode --provider openai
+./bin/fase runtime --json
 ```
 
 ## Catalog
@@ -215,25 +215,25 @@ The staged release matrix for contract, fake, live low-cost, recovery, and recur
 
 ## History
 
-`history search` is the lightweight canonical search path over `cagent`'s own local store.
+`history search` is the lightweight canonical search path over `fase`'s own local store.
 
 It searches existing jobs, turns, events, and persisted artifacts without requiring a separate index or importer.
 
 Use it for:
-- recalling prior work launched through `cagent`,
+- recalling prior work launched through `fase`,
 - finding debrief/transfer artifacts by content,
 - mining recent canonical sessions before deciding whether adapter-native import is needed.
 
-Adapter-native history import remains a future special case for sessions that were never created by `cagent`.
+Adapter-native history import remains a future special case for sessions that were never created by `fase`.
 
 ## Configuration
 
 Config is loaded from the default XDG-style path or `--config`.
 
 Environment overrides:
-- `CAGENT_CONFIG_DIR`
-- `CAGENT_STATE_DIR`
-- `CAGENT_CACHE_DIR`
+- `FASE_CONFIG_DIR`
+- `FASE_STATE_DIR`
+- `FASE_CACHE_DIR`
 
 Current default adapter config is defined in [internal/core/config.go](/Users/wiz/cagent/internal/core/config.go).
 

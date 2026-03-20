@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 type Adapter struct {

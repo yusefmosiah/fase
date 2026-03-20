@@ -24,7 +24,7 @@ func TestShellQuote(t *testing.T) {
 	}
 }
 
-func TestCagentCLICommand(t *testing.T) {
+func TestFaseCLICommand(t *testing.T) {
 	tests := []struct {
 		name       string
 		bin        string
@@ -32,12 +32,12 @@ func TestCagentCLICommand(t *testing.T) {
 		workID     string
 		wantPrefix string
 	}{
-		{"simple", "cagent", "", "w123", "cagent work show w123"},
-		{"with config", "cagent", "/cfg.toml", "w123", "cagent --config /cfg.toml work show w123"},
+		{"simple", "fase", "", "w123", "fase work show w123"},
+		{"with config", "fase", "/cfg.toml", "w123", "fase --config /cfg.toml work show w123"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := CagentCLICommand(tc.bin, tc.config, tc.workID)
+			got := FaseCLICommand(tc.bin, tc.config, tc.workID)
 			if got != tc.wantPrefix {
 				t.Errorf("got %q, want %q", got, tc.wantPrefix)
 			}
@@ -45,17 +45,17 @@ func TestCagentCLICommand(t *testing.T) {
 	}
 }
 
-func TestCagentCLINoteAdd(t *testing.T) {
-	got := CagentCLINoteAdd("cagent", "/cfg.toml", "w123", "test note")
-	want := "cagent --config /cfg.toml work note-add w123 --body 'test note'"
+func TestFaseCLINoteAdd(t *testing.T) {
+	got := FaseCLINoteAdd("fase", "/cfg.toml", "w123", "test note")
+	want := "fase --config /cfg.toml work note-add w123 --body 'test note'"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
 }
 
-func TestCagentCLIWorkUpdate(t *testing.T) {
-	got := CagentCLIWorkUpdate("cagent", "/cfg.toml", "w123", "status update")
-	want := "cagent --config /cfg.toml work update w123 --message 'status update'"
+func TestFaseCLIWorkUpdate(t *testing.T) {
+	got := FaseCLIWorkUpdate("fase", "/cfg.toml", "w123", "status update")
+	want := "fase --config /cfg.toml work update w123 --message 'status update'"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
 	}
@@ -70,7 +70,7 @@ func TestWorkEventFormat(t *testing.T) {
 		PrevState: "claimed",
 	}
 	tb := &ToolBridge{
-		cagentBin:  "cagent",
+		faseBin:    "fase",
 		configPath: "/cfg.toml",
 	}
 	msg := tb.formatEvent(ev)

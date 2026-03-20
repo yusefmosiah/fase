@@ -9,20 +9,21 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 const (
 	// EnvCapabilityEnforcement controls audit vs enforce mode.
 	// Values: "audit" (default) or "enforce".
-	EnvCapabilityEnforcement = "CAGENT_CAPABILITY_ENFORCEMENT"
+	EnvCapabilityEnforcement       = "FASE_CAPABILITY_ENFORCEMENT"
+	LegacyEnvCapabilityEnforcement = "CAGENT_CAPABILITY_ENFORCEMENT"
 )
 
-// capabilityEnforcementMode reads CAGENT_CAPABILITY_ENFORCEMENT and returns the mode.
+// capabilityEnforcementMode reads FASE_CAPABILITY_ENFORCEMENT and returns the mode.
 // Defaults to audit so interactive operator commands work without a token.
 // Set to "enforce" explicitly when the supervisor issues tokens to workers.
 func capabilityEnforcementMode() core.CapabilityEnforcementMode {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv(EnvCapabilityEnforcement)))
+	v := strings.ToLower(strings.TrimSpace(envAny(EnvCapabilityEnforcement, LegacyEnvCapabilityEnforcement)))
 	if v == string(core.CapabilityEnforcementEnforce) {
 		return core.CapabilityEnforcementEnforce
 	}
@@ -41,11 +42,11 @@ func allCapabilities() []string {
 	}
 }
 
-// loadAgentToken reads the credential file at CAGENT_AGENT_TOKEN and returns the token.
+// loadAgentToken reads the credential file at FASE_AGENT_TOKEN and returns the token.
 // Returns (nil, nil) if the env var is not set (no token configured).
 // Returns (nil, err) if the env var is set but the file is unreadable or malformed.
 func loadAgentToken() (*core.CapabilityToken, error) {
-	path := strings.TrimSpace(os.Getenv(core.EnvAgentToken))
+	path := strings.TrimSpace(envAny(core.EnvAgentToken, core.LegacyEnvAgentToken))
 	if path == "" {
 		return nil, nil
 	}
@@ -60,11 +61,11 @@ func loadAgentToken() (*core.CapabilityToken, error) {
 	return &cred.Token, nil
 }
 
-// loadAgentCredential reads the credential file at CAGENT_AGENT_TOKEN and returns
+// loadAgentCredential reads the credential file at FASE_AGENT_TOKEN and returns
 // the full credential including the agent's Ed25519 private key. Used by the attest
 // command to sign attestation records (Phase 3).
 func loadAgentCredential() (*core.AgentCredential, ed25519.PrivateKey, error) {
-	path := strings.TrimSpace(os.Getenv(core.EnvAgentToken))
+	path := strings.TrimSpace(envAny(core.EnvAgentToken, core.LegacyEnvAgentToken))
 	if path == "" {
 		return nil, nil, nil
 	}
@@ -124,7 +125,7 @@ func emitCapabilityViolation(capability, reason, detail string) {
 // Audit mode (default): violations are logged to stderr as structured events but
 // the operation proceeds normally — no behavior change for existing installs.
 //
-// Enforce mode (CAGENT_CAPABILITY_ENFORCEMENT=enforce): violations return an error
+// Enforce mode (FASE_CAPABILITY_ENFORCEMENT=enforce): violations return an error
 // that aborts the command.
 func checkCapability(capability string) error {
 	token, err := loadAgentToken()
@@ -141,7 +142,7 @@ func checkCapability(capability string) error {
 		// No token present. In audit mode this is fine (agent may pre-date Phase 0).
 		// In enforce mode it is an error.
 		if capabilityEnforcementMode() == core.CapabilityEnforcementEnforce {
-			return fmt.Errorf("capability enforcement active: no token found (%s not set)", core.EnvAgentToken)
+			return fmt.Errorf("capability enforcement active: no token found (%s or %s not set)", core.EnvAgentToken, core.LegacyEnvAgentToken)
 		}
 		// Audit: do not log a violation for missing tokens — that would spam every
 		// interactive operator command. Violations are only logged when a token IS
@@ -172,6 +173,15 @@ func checkCapability(capability string) error {
 	}
 
 	return nil
+}
+
+func envAny(keys ...string) string {
+	for _, key := range keys {
+		if value := os.Getenv(key); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // requireCapabilities checks each capability in order and returns the first
@@ -228,7 +238,7 @@ func previewCapabilities() capabilityPreviewReport {
 				Capability: capability,
 				Allowed:    false,
 				Reason:     "missing_token",
-				Detail:     "CAGENT_AGENT_TOKEN not set",
+				Detail:     "FASE_AGENT_TOKEN not set",
 			})
 		}
 		return report

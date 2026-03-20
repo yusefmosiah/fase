@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
-	"github.com/yusefmosiah/cagent/internal/adapters/pi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapters/pi"
 )
 
 func piBinary(t *testing.T) string {
@@ -164,7 +164,7 @@ func TestLiveAdapter_SteerCh(t *testing.T) {
 	drainUntil(t, ctx, session.Events(), adapterapi.EventKindSessionStarted)
 
 	if _, err := session.StartTurn(ctx, []adapterapi.Input{
-		adapterapi.TextInput("Wait for instructions. Reply READY when you see a cagent message, then follow it."),
+		adapterapi.TextInput("Wait for instructions. Reply READY when you see a fase message, then follow it."),
 	}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}

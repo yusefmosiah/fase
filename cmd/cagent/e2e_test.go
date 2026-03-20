@@ -685,12 +685,12 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected approval ledger entry in work show, got %+v", show.Approvals)
 	}
 
-	promoteOutput := runCagent(t, binary, configPath, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/cagent/promoted/staging", "--message", "Ship to staging")
+	promoteOutput := runCagent(t, binary, configPath, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/fase/promoted/staging", "--message", "Ship to staging")
 	var promotion cliPromotionPayload
 	if err := json.Unmarshal([]byte(promoteOutput), &promotion); err != nil {
 		t.Fatalf("unmarshal work promotion: %v\n%s", err, promoteOutput)
 	}
-	if promotion.Promotion.Environment != "staging" || promotion.Promotion.TargetRef != "refs/cagent/promoted/staging" {
+	if promotion.Promotion.Environment != "staging" || promotion.Promotion.TargetRef != "refs/fase/promoted/staging" {
 		t.Fatalf("expected staging promotion payload, got %+v", promotion)
 	}
 	showOutput = runCagent(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
@@ -786,7 +786,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if err := json.Unmarshal([]byte(hydrateOutput), &briefing); err != nil {
 		t.Fatalf("unmarshal work hydrate: %v\n%s", err, hydrateOutput)
 	}
-	if briefing["schema_version"] != "cagent.worker_briefing.v1" {
+	if briefing["schema_version"] != "fase.worker_briefing.v1" {
 		t.Fatalf("unexpected hydrate schema version: %+v", briefing)
 	}
 	evidence, ok := briefing["evidence"].(map[string]any)
@@ -994,12 +994,12 @@ func TestWorkArchiveCommands(t *testing.T) {
 func buildCagentBinary(t *testing.T) string {
 	t.Helper()
 
-	binary := filepath.Join(t.TempDir(), "cagent")
-	cmd := exec.Command("go", "build", "-o", binary, "./cmd/cagent")
+	binary := filepath.Join(t.TempDir(), "fase")
+	cmd := exec.Command("go", "build", "-o", binary, "./cmd/fase")
 	cmd.Dir = filepath.Join("..", "..")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("build cagent binary: %v\n%s", err, output)
+		t.Fatalf("build fase binary: %v\n%s", err, output)
 	}
 	return binary
 }
@@ -1024,9 +1024,9 @@ func writeFakeCodexConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	return configPath
 }
 
@@ -1056,9 +1056,9 @@ func writeFakeCodexGeminiConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	return configPath
 }
 
@@ -1082,9 +1082,9 @@ func writeFakeClaudeConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	return configPath
 }
 
@@ -1138,9 +1138,9 @@ func writeFakeCatalogConfig(t *testing.T) string {
 		t.Fatalf("write config: %v", err)
 	}
 
-	t.Setenv("CAGENT_CONFIG_DIR", configDir)
-	t.Setenv("CAGENT_STATE_DIR", stateDir)
-	t.Setenv("CAGENT_CACHE_DIR", cacheDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
 	return configPath
 }
 
@@ -1148,10 +1148,10 @@ func runCagent(t *testing.T, binary, configPath string, args ...string) string {
 	t.Helper()
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
-	cmd.Env = append(os.Environ(), "CAGENT_CAPABILITY_ENFORCEMENT=audit")
+	cmd.Env = append(os.Environ(), "FASE_CAPABILITY_ENFORCEMENT=audit")
 	output, err := cmd.CombinedOutput()
 	if err != nil {
-		t.Fatalf("run cagent %v: %v\n%s", args, err, output)
+		t.Fatalf("run fase %v: %v\n%s", args, err, output)
 	}
 	return string(output)
 }
@@ -1160,10 +1160,10 @@ func runCagentExpectError(t *testing.T, binary, configPath string, args ...strin
 	t.Helper()
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
-	cmd.Env = append(os.Environ(), "CAGENT_CAPABILITY_ENFORCEMENT=audit")
+	cmd.Env = append(os.Environ(), "FASE_CAPABILITY_ENFORCEMENT=audit")
 	output, err := cmd.CombinedOutput()
 	if err == nil {
-		t.Fatalf("expected cagent command to fail: %v\n%s", args, output)
+		t.Fatalf("expected fase command to fail: %v\n%s", args, output)
 	}
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {

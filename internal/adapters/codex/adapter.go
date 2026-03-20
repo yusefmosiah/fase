@@ -6,7 +6,7 @@ import (
 	"os"
 	"os/exec"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 type Adapter struct {
@@ -61,7 +61,7 @@ func (a *Adapter) Detect(ctx context.Context) (adapterapi.Diagnosis, error) {
 }
 
 func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) (*adapterapi.RunHandle, error) {
-	lastMessageFile, err := os.CreateTemp("", "cagent-codex-last-*.txt")
+	lastMessageFile, err := os.CreateTemp("", "fase-codex-last-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("create last-message temp file: %w", err)
 	}
@@ -120,7 +120,7 @@ func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) 
 }
 
 func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunRequest) (*adapterapi.RunHandle, error) {
-	lastMessageFile, err := os.CreateTemp("", "cagent-codex-last-*.txt")
+	lastMessageFile, err := os.CreateTemp("", "fase-codex-last-*.txt")
 	if err != nil {
 		return nil, fmt.Errorf("create last-message temp file: %w", err)
 	}

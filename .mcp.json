@@ -1,9 +1,9 @@
 {
   "mcpServers": {
-    "cagent": {
-      "command": "cagent",
+    "fase": {
+      "command": "fase",
       "args": ["mcp", "stdio"],
-      "description": "cagent work graph: project hydration, work items, attestations, notes"
+      "description": "fase work graph: project hydration, work items, attestations, notes"
     }
   }
 }

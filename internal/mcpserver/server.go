@@ -9,8 +9,8 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/cagent/internal/core"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 // Server wraps the MCP server and provides channel notification support.
@@ -27,9 +27,9 @@ type Server struct {
 // New creates an MCP server backed by the given service.
 func New(svc *service.Service) *Server {
 	mcpServer := mcp.NewServer(
-		&mcp.Implementation{Name: "cagent", Version: "0.1.0"},
+		&mcp.Implementation{Name: "FASE", Version: "0.1.0"},
 		&mcp.ServerOptions{
-			Instructions: "cagent work graph server. Use tools to inspect and manage work items, attestations, and project state.\n\nWhen working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later.",
+			Instructions: "FASE work graph server. Use tools to inspect and manage work items, attestations, and project state.\n\nWhen working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later.",
 			Capabilities: &mcp.ServerCapabilities{
 				Experimental: map[string]any{
 					"claude/channel": map[string]any{},

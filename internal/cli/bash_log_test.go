@@ -8,7 +8,7 @@ import (
 
 func TestCollectBashLogCommandsParsesCodexClaudeAndOpenCode(t *testing.T) {
 	cwd := t.TempDir()
-	rawDir := filepath.Join(cwd, ".cagent", "raw", "stdout")
+	rawDir := filepath.Join(cwd, ".fase", "raw", "stdout")
 	jobDir := filepath.Join(rawDir, "job_0002")
 	if err := os.MkdirAll(jobDir, 0o755); err != nil {
 		t.Fatalf("mkdir job dir: %v", err)

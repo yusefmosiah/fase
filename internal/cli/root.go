@@ -14,9 +14,9 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yusefmosiah/cagent/internal/adapters"
-	"github.com/yusefmosiah/cagent/internal/core"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/adapters"
+	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 var version = "dev"
@@ -258,7 +258,8 @@ func NewRootCommand() *cobra.Command {
 	opts := &rootOptions{}
 
 	cmd := &cobra.Command{
-		Use:           "cagent",
+		Use:           "fase",
+		Aliases:       []string{"cagent"},
 		Short:         "Run coding-agent CLIs behind one local contract",
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -836,7 +837,7 @@ func newArtifactsCommand(root *rootOptions) *cobra.Command {
 	attachCmd.Flags().StringVar(&attachOpts.workID, "work", "", "attach artifact to a work item's current job/session")
 	attachCmd.Flags().StringVar(&attachOpts.path, "path", "", "file path to attach")
 	attachCmd.Flags().StringVar(&attachOpts.kind, "kind", "", "artifact kind override")
-	attachCmd.Flags().BoolVar(&attachOpts.copy, "copy", true, "copy the file into cagent state for durability")
+	attachCmd.Flags().BoolVar(&attachOpts.copy, "copy", true, "copy the file into fase state for durability")
 	attachCmd.Flags().StringVar(&attachOpts.metadata, "metadata", "", "JSON object metadata")
 	_ = attachCmd.MarkFlagRequired("path")
 
@@ -848,7 +849,7 @@ func newHistoryCommand(root *rootOptions) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "history",
-		Short: "Search canonical local cagent history",
+		Short: "Search canonical local fase history",
 	}
 
 	searchCmd := &cobra.Command{
@@ -2433,7 +2434,7 @@ func newDashboardCommand(root *rootOptions) *cobra.Command {
 func newVersionCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print the cagent version",
+		Short: "Print the fase version",
 		Run: func(cmd *cobra.Command, args []string) {
 			cmd.Println(version)
 		},

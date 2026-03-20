@@ -7,14 +7,14 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
-	"github.com/yusefmosiah/cagent/internal/mcpserver"
-	"github.com/yusefmosiah/cagent/internal/service"
+	"github.com/yusefmosiah/fase/internal/mcpserver"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 func newMCPCommand(root *rootOptions) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Run cagent as an MCP server",
+		Short: "Run fase as an MCP server",
 	}
 
 	stdioCmd := &cobra.Command{
@@ -48,7 +48,7 @@ func newMCPCommand(root *rootOptions) *cobra.Command {
 				return server.MCP
 			}, nil)
 
-			fmt.Fprintf(cmd.OutOrStdout(), "cagent MCP server listening on %s\n", httpAddr)
+			fmt.Fprintf(cmd.OutOrStdout(), "FASE MCP server listening on %s\n", httpAddr)
 			return http.ListenAndServe(httpAddr, handler)
 		},
 	}

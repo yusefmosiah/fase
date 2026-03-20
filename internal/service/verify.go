@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/core"
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 type WorkVerifyResult struct {
@@ -133,7 +133,7 @@ func (s *Service) VerifyWork(ctx context.Context, workID string) (*WorkVerifyRes
 		}
 		if token == nil {
 			agent.TokenStatus = "missing"
-			agent.Reason = "CAGENT_AGENT_TOKEN not set"
+			agent.Reason = "FASE_AGENT_TOKEN not set"
 			report.Agents = append(report.Agents, agent)
 			continue
 		}

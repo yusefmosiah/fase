@@ -2,12 +2,12 @@ Date: 2026-03-11
 Kind: Spec
 Status: Draft
 Priority: 1
-Requires: [docs/cagent-work-runtime.md, docs/cagent-work-api-and-schema.md]
+Requires: [docs/fase-work-runtime.md, docs/fase-work-api-and-schema.md]
 Owner: Runtime / Work System
 
 ## Narrative Summary (1-minute read)
 
-This doc defines the stable compiled worker briefing contract for `cagent`.
+This doc defines the stable compiled worker briefing contract for `fase`.
 
 Workers should not start from a handwritten orchestration prompt. They should
 start from a versioned, deterministic briefing compiled from the work graph,
@@ -29,7 +29,7 @@ The stable schema lives in
 ## What To Do Next
 
 1. Implement `CompileWorkerBriefing(workID, mode)` in the service layer.
-2. Add `cagent work hydrate <work-id>`.
+2. Add `fase work hydrate <work-id>`.
 3. Make all worker adapters consume the same compiled briefing contract.
 4. Add projection/rendering tests to keep the contract stable.
 
@@ -47,7 +47,7 @@ It exists to answer:
 5. How should the worker interact with the runtime?
 6. What is the recommended next action frontier?
 
-This is the stable hydration contract between `cagent` runtime state and any
+This is the stable hydration contract between `fase` runtime state and any
 execution adapter.
 
 ## 2) Contract Shape
@@ -295,13 +295,13 @@ Not:
 
 ```json
 {
-  "schema_version": "cagent.worker_briefing.v1",
+  "schema_version": "fase.worker_briefing.v1",
   "briefing_kind": "assignment",
   "generated_at": "2026-03-11T07:00:00Z",
   "runtime": {
     "runtime_version": "dev",
-    "config_path": "/Users/wiz/.config/cagent/config.toml",
-    "state_dir": "/Users/wiz/.local/state/cagent",
+    "config_path": "/Users/wiz/.config/fase/config.toml",
+    "state_dir": "/Users/wiz/.local/state/fase",
     "claimant": "worker-opencode-1"
   },
   "assignment": {
@@ -353,6 +353,6 @@ The first implementation should add:
 
 1. `CompileWorkerBriefing(workID, mode)` in the service layer
 2. a `WorkerBriefing` Go type mirroring the schema
-3. `cagent work hydrate <work-id> [--mode thin|standard|deep]`
+3. `fase work hydrate <work-id> [--mode thin|standard|deep]`
 4. adapter renderers that consume `WorkerBriefing`
 5. tests that pin the JSON shape and deterministic ordering rules

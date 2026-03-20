@@ -1,6 +1,6 @@
-# cagent for Host Agents
+# fase for Host Agents
 
-`cagent` is designed to be called by another coding agent as a local subprocess.
+`fase` is designed to be called by another coding agent as a local subprocess.
 
 Use it when the host agent wants:
 - one stable JSON CLI instead of vendor-specific command lines,
@@ -16,11 +16,11 @@ Use it when the host agent wants:
 1. Query runtime inventory:
 
 ```bash
-cagent runtime --json
-cagent catalog sync --json
-cagent catalog show --json
-cagent catalog probe --json --adapter opencode --provider openai
-cagent history search --json --query "retry after test failure"
+fase runtime --json
+fase catalog sync --json
+fase catalog show --json
+fase catalog probe --json --adapter opencode --provider openai
+fase history search --json --query "retry after test failure"
 ```
 
 2. Choose an adapter based on:
@@ -33,7 +33,7 @@ cagent history search --json --query "retry after test failure"
 3. Launch work:
 
 ```bash
-cagent run --json --adapter codex --cwd /repo --prompt "Fix the failing tests."
+fase run --json --adapter codex --cwd /repo --prompt "Fix the failing tests."
 ```
 
 `run` queues background work and returns immediately with a job id and session id.
@@ -41,16 +41,16 @@ cagent run --json --adapter codex --cwd /repo --prompt "Fix the failing tests."
 4. Poll or inspect:
 
 ```bash
-cagent status --json --wait <job-id>
-cagent logs --json <job-id>
-cagent session --json <session-id>
-cagent artifacts list --json --job <job-id>
+fase status --json --wait <job-id>
+fase logs --json <job-id>
+fase session --json <session-id>
+fase artifacts list --json --job <job-id>
 ```
 
 5. Continue same-vendor work:
 
 ```bash
-cagent send --json --session <session-id> --prompt "Continue from the last result."
+fase send --json --session <session-id> --prompt "Continue from the last result."
 ```
 
 `send` also queues background work and returns a new job id immediately.
@@ -58,7 +58,7 @@ cagent send --json --session <session-id> --prompt "Continue from the last resul
 6. Ask the live source agent to land the plane when needed:
 
 ```bash
-cagent debrief --json --session <session-id> --reason "prepare a recovery summary"
+fase debrief --json --session <session-id> --reason "prepare a recovery summary"
 ```
 
 `debrief` queues a continuation job and writes a durable markdown artifact when it completes.
@@ -66,16 +66,16 @@ cagent debrief --json --session <session-id> --reason "prepare a recovery summar
 7. Transfer to another adapter only when native continuation is not possible:
 
 ```bash
-cagent transfer export --json --job <job-id> --reason "anthropic outage" --mode recovery
-cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cwd /repo
+fase transfer export --json --job <job-id> --reason "anthropic outage" --mode recovery
+fase transfer run --json --transfer <transfer-id-or-path> --adapter codex --cwd /repo
 ```
 
 `transfer run` should follow the same background-job contract as `run`.
 
 ## Important behavior
 
-- `cagent` does not perform vendor auth flows.
-- `cagent` preserves native session IDs and raw vendor output.
+- `fase` does not perform vendor auth flows.
+- `fase` preserves native session IDs and raw vendor output.
 - `runtime --json` is the preferred machine-facing inventory command.
 - `catalog show --json` is the preferred machine-facing provider/model inventory command.
 - `catalog probe --json` is the preferred machine-facing entitlement check when discovery alone is not enough.
@@ -89,4 +89,4 @@ cagent transfer run --json --transfer <transfer-id-or-path> --adapter codex --cw
 - Treat `transfer` as explicit failover/recovery, not as the normal orchestration path.
 - The transfer prompt should explicitly disclose the source adapter and reason for transfer.
 - Treat `catalog show` as discoverability and `catalog probe` as best-effort runnability verification.
-- Treat adapter-native history import as a special case for sessions `cagent` did not launch.
+- Treat adapter-native history import as a special case for sessions `fase` did not launch.

@@ -16,7 +16,7 @@ import (
 	"github.com/sst/opencode-sdk-go/packages/ssestream"
 	"github.com/sst/opencode-sdk-go/shared"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
 )
 
 // LiveAdapter implements adapterapi.LiveAgentAdapter for OpenCode.

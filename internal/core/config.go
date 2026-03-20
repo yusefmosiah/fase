@@ -51,7 +51,7 @@ type RotationEntry struct {
 	Adapter       string   `toml:"adapter"`
 	Model         string   `toml:"model"`
 	MaxRunsPerDay int      `toml:"max_runs_per_day"` // 0 = unlimited
-	Roles         []string `toml:"roles"`             // empty = all roles; e.g. ["implement","design"]
+	Roles         []string `toml:"roles"`            // empty = all roles; e.g. ["implement","design"]
 }
 
 // RotationConfig holds the ordered list of adapter/model pairs for round-robin dispatch.

@@ -5,7 +5,7 @@ Status: Research complete, ready for implementation
 
 ## Purpose
 
-`cagent` needs a release-quality inventory feature that tells a host agent:
+`fase` needs a release-quality inventory feature that tells a host agent:
 - which coding-agent CLIs are installed and usable,
 - which providers and models are available through them,
 - whether access is subscription-backed or usage-priced,
@@ -28,7 +28,7 @@ This is separate from `runtime`.
 
 ## Strategic Goal
 
-For shipped `cagent` usage, the most valuable auth path is not "any available key",
+For shipped `fase` usage, the most valuable auth path is not "any available key",
 but "an account the user already has and is allowed to reuse across harnesses."
 
 Right now that means:
@@ -39,7 +39,7 @@ Implications:
 - Codex should treat ChatGPT-backed login as a first-class catalog signal.
 - OpenCode should treat OpenAI OAuth / ChatGPT-backed access as a first-class catalog signal.
 - Pi should not be modeled as supporting OpenAI account reuse unless it gains an official OpenAI account auth flow; today it looks API-key based.
-- `cagent` should not invent a synthetic shared-login layer when the underlying harness only supports API keys.
+- `fase` should not invent a synthetic shared-login layer when the underlying harness only supports API keys.
 
 ## Data Model
 
@@ -193,7 +193,7 @@ Implications:
   - credential method per provider
 - OpenCode also appears to support OpenAI-backed account reuse directly:
   - the public site explicitly says "Log in with OpenAI to use your ChatGPT Plus or Pro account"
-- This should be the first adapter with full provider/model enumeration in `cagent`.
+- This should be the first adapter with full provider/model enumeration in `fase`.
 - OpenCode is also the best low-cost testbed because provider choice is explicit and `glm-5` is available.
 
 ### Pi
@@ -249,8 +249,8 @@ Implications:
 ### v0 Catalog Commands
 
 Public commands:
-- `cagent catalog sync`
-- `cagent catalog show`
+- `fase catalog sync`
+- `fase catalog show`
 
 Behavior:
 - `catalog sync`
@@ -409,15 +409,15 @@ Goals:
 - verify host-agent selection behavior
 - surface latent capabilities in lower-cost models
 
-### Recursive `cagent` Tests
+### Recursive `fase` Tests
 
-The capstone scenario should validate `cagent in cagent`:
-1. planner `cagent`
-2. implementation `cagent`
-3. verification loop `cagent`
-4. review `cagent`
-5. red-team `cagent`
-6. report `cagent`
+The capstone scenario should validate `fase in fase`:
+1. planner `fase`
+2. implementation `fase`
+3. verification loop `fase`
+4. review `fase`
+5. red-team `fase`
+6. report `fase`
 
 Run this first on low-cost models.
 Use higher-end models only as sparse comparison baselines.
@@ -431,7 +431,7 @@ Use higher-end models only as sparse comparison baselines.
 5. Implement conservative Codex and Gemini discovery.
 6. Add fixture tests for all parsers.
 7. Add low-cost live routing tests.
-8. Add recursive `cagent` orchestration tests.
+8. Add recursive `fase` orchestration tests.
 
 ## Non-Goals For This Slice
 

@@ -2,12 +2,12 @@ Date: 2026-03-20
 Kind: Protocol spec
 Status: Draft
 Priority: 1
-Requires: [docs/cagent-work-runtime.md, docs/host-agents.md]
+Requires: [docs/fase-work-runtime.md, docs/host-agents.md]
 Owner: Runtime / Agent Adapters
 
 ## Summary
 
-`cagent` standardizes a **live agent protocol** for multi-agent orchestration
+`fase` standardizes a **live agent protocol** for multi-agent orchestration
 across heterogeneous coding agent adapters.
 
 The protocol is discovered through sequential implementation, not designed
@@ -18,7 +18,7 @@ Build order: Claude Code → Codex → Pi → OpenCode → native Go.
 
 ## 1) Design Position
 
-`cagent` is not normalizing every possible coding-agent CLI.
+`fase` is not normalizing every possible coding-agent CLI.
 
 It is defining a live-session orchestration standard for adapters that can
 support real-time cooperative work. The protocol emerges from concrete
@@ -46,19 +46,19 @@ This protocol does not attempt to:
 - support every vendor CLI,
 - hide meaningful capability differences behind fake equivalence,
 - define the internal prompting strategy of a model,
-- replace `cagent`'s canonical job/session/work graph,
+- replace `fase`'s canonical job/session/work graph,
 - prematurely abstract before understanding each adapter's strengths.
 
 ## 4) Adapter Landscape
 
 ### 4.1 Transport Matrix
 
-Each adapter has two independent concerns: **control transport** (how cagent
-drives the agent) and **tool bridge** (how the agent calls cagent mid-turn).
+Each adapter has two independent concerns: **control transport** (how fase
+drives the agent) and **tool bridge** (how the agent calls fase mid-turn).
 
 ```
                     Control Transport          Tool Bridge
-                    (cagent → agent)          (agent → cagent)
+                    (fase → agent)          (agent → fase)
                     ─────────────────         ────────────────
 Claude Code         MCP channels              MCP tools
 Codex               JSON-RPC (app-server)     MCP tools or CLI (TBD)
@@ -133,20 +133,20 @@ A turn is the unit of:
 ### 5.3 Event
 
 An event is a structured notification emitted while a session or turn is
-active. Events are the runtime observation surface for `cagent`.
+active. Events are the runtime observation surface for `fase`.
 
-Internally, `cagent` publishes events via the service-level `EventBus`.
+Internally, `fase` publishes events via the service-level `EventBus`.
 Each adapter subscribes to the EventBus and translates events into its
 native push mechanism:
 - Claude: MCP channel notifications
-- Codex: `turn/steer` with cagent messages
+- Codex: `turn/steer` with fase messages
 - Pi: `steer` command on stdin
 - OpenCode: `prompt_async` + `noReply`
 - Native Go: direct channel read
 
 ### 5.4 Tool Call
 
-A tool call is an outbound invocation from the running agent into `cagent`.
+A tool call is an outbound invocation from the running agent into `fase`.
 
 Tool calls are first-class protocol events, not unstructured text.
 
@@ -181,7 +181,7 @@ A conforming adapter MUST implement all of the following.
 
 ### 7.1 Persistent session identity
 
-The adapter MUST expose a stable native session identifier that `cagent` can
+The adapter MUST expose a stable native session identifier that `fase` can
 map onto its canonical session.
 
 ### 7.2 Explicit turn lifecycle
@@ -190,7 +190,7 @@ The adapter MUST expose turn start and turn completion semantics.
 
 ### 7.3 Mid-turn steering
 
-The adapter MUST allow `cagent` to inject a message into the currently active
+The adapter MUST allow `fase` to inject a message into the currently active
 turn without starting a new session.
 
 This is the defining capability of the protocol. Implementation varies:
@@ -218,7 +218,7 @@ The adapter MUST support continuing an existing session after a completed turn.
 
 ### 7.7 Tool callback path
 
-The running agent MUST be able to call `cagent` tools during execution via
+The running agent MUST be able to call `fase` tools during execution via
 MCP, CLI, or direct service calls.
 
 ## 8) Canonical RPC Surface
@@ -311,26 +311,26 @@ structured format.
 ### 10.1 Message
 
 ```text
-[cagent:message from="agent-id" type="info|result|request"]
+[fase:message from="agent-id" type="info|result|request"]
 Message body.
-[/cagent:message]
+[/fase:message]
 ```
 
 ### 10.2 Request / Response
 
 ```text
-[cagent:request from="agent-id" request_id="req_123"]
+[fase:request from="agent-id" request_id="req_123"]
 Question body.
-[/cagent:request]
+[/fase:request]
 
-[cagent:response to="agent-id" request_id="req_123"]
+[fase:response to="agent-id" request_id="req_123"]
 Answer body.
-[/cagent:response]
+[/fase:response]
 ```
 
 Adapters MUST preserve message structure so that:
 - the receiving model can recognize it,
-- `cagent` can log or parse it,
+- `fase` can log or parse it,
 - transport differences do not change the agent-visible format.
 
 ## 11) Concurrency and Race Safety
@@ -366,7 +366,7 @@ Minimum error classes:
 
 The adapter is not the system of record.
 
-`cagent` remains authoritative for:
+`fase` remains authoritative for:
 - canonical session identity mapping,
 - work graph state,
 - durable event persistence,
@@ -429,11 +429,11 @@ Approach:
 - Spawn `codex app-server --listen stdio://` as subprocess
 - Speak JSON-RPC 2.0 for control (thread/turn/steer/interrupt)
 - Evaluate MCP vs CLI for tool bridge during build
-- Map Codex thread → cagent session, Codex turn → cagent turn
+- Map Codex thread → fase session, Codex turn → fase turn
 
 Key questions to answer:
 - Does Codex app-server reliably support MCP server connections?
-- How does Codex approval flow interact with cagent attestation?
+- How does Codex approval flow interact with fase attestation?
 - What's the right mapping for Codex's rich item model?
 
 ### Phase 3: Pi adapter
@@ -446,7 +446,7 @@ Approach:
 
 Key questions to answer:
 - Is CLI tool bridge sufficient for full work graph interaction?
-- How does Pi's session file model map to cagent sessions?
+- How does Pi's session file model map to fase sessions?
 - Can we build a Pi extension for richer integration?
 
 ### Phase 4: OpenCode adapter
@@ -494,7 +494,7 @@ These will be resolved through implementation:
    supervision? What's the minimum viable event set?
 
 4. **Session persistence**: How does each adapter's session model map to
-   cagent's canonical session? Where are the impedance mismatches?
+   fase's canonical session? Where are the impedance mismatches?
 
 5. **Abstraction shape**: What does the `LiveAgentAdapter` interface actually
    look like after implementing all 5 adapters? The current interface is

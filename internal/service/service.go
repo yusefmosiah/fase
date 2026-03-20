@@ -17,15 +17,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yusefmosiah/cagent/internal/adapterapi"
-	"github.com/yusefmosiah/cagent/internal/adapters"
-	catalogpkg "github.com/yusefmosiah/cagent/internal/catalog"
-	"github.com/yusefmosiah/cagent/internal/core"
-	debriefpkg "github.com/yusefmosiah/cagent/internal/debrief"
-	"github.com/yusefmosiah/cagent/internal/events"
-	"github.com/yusefmosiah/cagent/internal/pricing"
-	"github.com/yusefmosiah/cagent/internal/store"
-	transferpkg "github.com/yusefmosiah/cagent/internal/transfer"
+	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/fase/internal/adapters"
+	catalogpkg "github.com/yusefmosiah/fase/internal/catalog"
+	"github.com/yusefmosiah/fase/internal/core"
+	debriefpkg "github.com/yusefmosiah/fase/internal/debrief"
+	"github.com/yusefmosiah/fase/internal/events"
+	"github.com/yusefmosiah/fase/internal/pricing"
+	"github.com/yusefmosiah/fase/internal/store"
+	transferpkg "github.com/yusefmosiah/fase/internal/transfer"
 )
 
 var (
@@ -1414,8 +1414,8 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 	nextActions = append(nextActions, delegationNextAction(result.Work))
 
 	writeCommands := []string{
-		"cagent work update <work-id>",
-		"cagent work note-add <work-id>",
+		"fase work update <work-id>",
+		"fase work note-add <work-id>",
 	}
 	contractRules := []string{
 		"Do the work, add updates and notes as you go, then EXIT.",
@@ -1423,7 +1423,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"Record notes for findings, risks, and open questions.",
 		"Run verification (tests, builds) and report results as notes.",
 		"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
-		"Do NOT call cagent work complete, cagent work fail, or cagent work attest.",
+		"Do NOT call fase work complete, fase work fail, or fase work attest.",
 		delegationNextAction(result.Work),
 	}
 
@@ -1432,20 +1432,20 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		if parent != nil {
 			parentWorkID = parent.WorkID
 		}
-		attestCmd := fmt.Sprintf("cagent work attest %s --result [passed|failed] --message \"<summary>\"", parentWorkID)
+		attestCmd := fmt.Sprintf("fase work attest %s --result [passed|failed] --message \"<summary>\"", parentWorkID)
 		writeCommands = append(writeCommands, attestCmd)
 		attestInstruction := fmt.Sprintf(
-			"REQUIRED: After completing your review, you MUST call: cagent work attest %s --result passed|failed --message \"<your finding summary>\"",
+			"REQUIRED: After completing your review, you MUST call: fase work attest %s --result passed|failed --message \"<your finding summary>\"",
 			parentWorkID,
 		)
 		nextActions = append(nextActions, attestInstruction)
 		contractRules = []string{
 			"Review the parent work item thoroughly: inspect the code, diff, tests, notes, and evidence.",
 			"Record notes for your findings before attesting.",
-			fmt.Sprintf("REQUIRED: You MUST call 'cagent work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
+			fmt.Sprintf("REQUIRED: You MUST call 'fase work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
 			"Use --result passed if the work meets its objective; use --result failed if it does not.",
 			"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
-			"Do NOT call cagent work complete or cagent work fail.",
+			"Do NOT call fase work complete or fase work fail.",
 			delegationNextAction(result.Work),
 		}
 	}
@@ -1486,7 +1486,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 	}
 
 	return WorkHydrateResult{
-		"schema_version": "cagent.worker_briefing.v1",
+		"schema_version": "fase.worker_briefing.v1",
 		"briefing_kind":  "assignment",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339Nano),
 		"runtime":        runtimeSection,
@@ -1525,10 +1525,10 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		},
 		"worker_contract": map[string]any{
 			"read_commands": []string{
-				"cagent work show <work-id>",
-				"cagent work notes <work-id>",
-				"cagent artifacts list --work <work-id>",
-				"cagent history search --query <text>",
+				"fase work show <work-id>",
+				"fase work notes <work-id>",
+				"fase artifacts list --work <work-id>",
+				"fase history search --query <text>",
 			},
 			"write_commands": writeCommands,
 			"rules":          contractRules,
@@ -1646,7 +1646,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 	}
 
 	result := ProjectHydrateResult{
-		"schema_version": "cagent.project_briefing.v1",
+		"schema_version": "fase.project_briefing.v1",
 		"briefing_kind":  "project",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339Nano),
 		"mode":           mode,
@@ -1666,23 +1666,23 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 		"pending_attestations": pendingAttestations,
 		"contract": map[string]any{
 			"read_commands": []string{
-				"cagent work show <work-id>",
-				"cagent work notes <work-id>",
-				"cagent work hydrate <work-id>",
-				"cagent work list",
-				"cagent work ready",
-				"cagent project hydrate",
+				"fase work show <work-id>",
+				"fase work notes <work-id>",
+				"fase work hydrate <work-id>",
+				"fase work list",
+				"fase work ready",
+				"fase project hydrate",
 			},
 			"write_commands": []string{
-				"cagent work create",
-				"cagent work update <work-id>",
-				"cagent work note-add <work-id>",
-				"cagent work attest <work-id>",
+				"fase work create",
+				"fase work update <work-id>",
+				"fase work note-add <work-id>",
+				"fase work attest <work-id>",
 			},
 			"rules": []string{
-				"Build with 'make' to install cagent to ~/.local/bin.",
-				"Use 'cagent' (on PATH), not './cagent'.",
-				"All persistent state belongs in the cagent work graph (notes, updates, private-notes).",
+				"Build with 'make' to install fase to ~/.local/bin.",
+				"Use 'fase' (on PATH), not './fase'.",
+				"All persistent state belongs in the fase work graph (notes, updates, private-notes).",
 				"Do not create memory files, CLAUDE.md, or .claude hidden state files.",
 				"Host agent role: delegate and review, never write code directly.",
 				"No new work dispatches while completed work awaits attestation.",
@@ -3825,14 +3825,18 @@ func (s *Service) detachedWorkerEnv(exePath string) []string {
 		envMap[key] = value
 	}
 
+	envMap["FASE_EXECUTABLE"] = exePath
 	envMap["CAGENT_EXECUTABLE"] = exePath
 	if s.ConfigPath != "" {
+		envMap["FASE_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
 		envMap["CAGENT_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
 	}
 	if s.Paths.StateDir != "" {
+		envMap["FASE_STATE_DIR"] = s.Paths.StateDir
 		envMap["CAGENT_STATE_DIR"] = s.Paths.StateDir
 	}
 	if s.Paths.CacheDir != "" {
+		envMap["FASE_CACHE_DIR"] = s.Paths.CacheDir
 		envMap["CAGENT_CACHE_DIR"] = s.Paths.CacheDir
 	}
 	if exeDir := filepath.Dir(exePath); exeDir != "" {
@@ -4094,12 +4098,15 @@ func (s *Service) persistDebrief(ctx context.Context, job *core.JobRecord, messa
 }
 
 func detachedExecutablePath() (string, error) {
+	if explicit := os.Getenv("FASE_EXECUTABLE"); explicit != "" {
+		return explicit, nil
+	}
 	if explicit := os.Getenv("CAGENT_EXECUTABLE"); explicit != "" {
 		return explicit, nil
 	}
 	path, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("resolve cagent executable: %w", err)
+		return "", fmt.Errorf("resolve fase executable: %w", err)
 	}
 	return path, nil
 }
@@ -4484,7 +4491,7 @@ Slot: %d (%s/%s)
 1. Inspect the parent work item and its diff.
 2. Decide whether the work matches the objective and evidence.
 3. Record exactly one attestation on the parent:
-   cagent work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
+   fase work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
 
 Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
 }

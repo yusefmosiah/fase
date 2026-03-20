@@ -8,7 +8,7 @@ Requires: []
 
 ### Context
 
-cagent's public work graph is currently SQLite tracked in git. This has three problems:
+fase's public work graph is currently SQLite tracked in git. This has three problems:
 
 1. **No meaningful diffs** — git sees the DB as an opaque binary blob
 2. **No concurrent agent isolation** — single-writer lock, no branching
@@ -43,9 +43,9 @@ Migrate the public work graph from SQLite to Dolt (embedded) in four phases. Kee
 
 **Phase 4: Global Knowledge Base (choir-on-choir)**
 - Dolt push/pull to DoltHub for ADR-0027 promotion pipeline
-- Per-user cagent → global DoltDB via subgraph promotion
+- Per-user fase → global DoltDB via subgraph promotion
 - Merge-based publishing with review/approval
-- Exit criteria: work promoted from local cagent appears in global KB
+- Exit criteria: work promoted from local fase appears in global KB
 
 ### Tradeoffs
 
@@ -68,11 +68,11 @@ Migrate the public work graph from SQLite to Dolt (embedded) in four phases. Kee
 ### Architecture
 
 ```
-.cagent/
+.fase/
   workgraph/           # Dolt database (Phase 3+)
     .dolt/             # Dolt version control
-  cagent.db            # SQLite public DB (Phase 1-2, deprecated Phase 3)
-  cagent-private.db    # SQLite private DB (always, never versioned)
+  fase.db            # SQLite public DB (Phase 1-2, deprecated Phase 3)
+  fase-private.db    # SQLite private DB (always, never versioned)
 ```
 
 Private DB stays SQLite permanently — no reason to version-control secrets.
@@ -83,4 +83,4 @@ Private DB stays SQLite permanently — no reason to version-control secrets.
 - Embedded Go driver: https://github.com/dolthub/driver
 - ChoirOS ADR-0027: Publishing and Global Knowledge Base
 - Dolt latency benchmarks: ~1.35x slower than MySQL on reads, ~1.3x faster on writes
-- At cagent's scale (100s of work items), performance difference is imperceptible
+- At fase's scale (100s of work items), performance difference is imperceptible
