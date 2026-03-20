@@ -1436,6 +1436,41 @@ func (s *Store) ListWorkNotes(ctx context.Context, workID string, limit int) ([]
 	return notes, nil
 }
 
+// ListConventionNotes returns all notes with note_type='convention' across all work items,
+// ordered newest-first. Used by project hydrate to compile project-wide conventions.
+func (s *Store) ListConventionNotes(ctx context.Context, limit int) ([]core.WorkNoteRecord, error) {
+	if limit <= 0 {
+		limit = 200
+	}
+
+	rows, err := s.db.QueryContext(
+		ctx,
+		`SELECT note_id, work_id, note_type, body, metadata_json, created_by, created_at
+		   FROM work_notes
+		  WHERE note_type = 'convention'
+		  ORDER BY created_at DESC
+		  LIMIT ?`,
+		limit,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("query convention notes: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var notes []core.WorkNoteRecord
+	for rows.Next() {
+		rec, err := scanWorkNote(rows)
+		if err != nil {
+			return nil, err
+		}
+		notes = append(notes, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate convention notes: %w", err)
+	}
+	return notes, nil
+}
+
 func (s *Store) CreateWorkProposal(ctx context.Context, rec core.WorkProposalRecord) error {
 	patch, err := marshalJSON(rec.ProposedPatch)
 	if err != nil {

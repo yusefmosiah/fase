@@ -291,6 +291,7 @@ func NewRootCommand() *cobra.Command {
 		newDashboardCommand(opts),
 		newServeCommand(opts),
 		newDispatchCommand(opts),
+		newProjectCommand(opts),
 		newVersionCommand(),
 	)
 

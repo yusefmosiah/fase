@@ -374,6 +374,12 @@ type WorkHydrateRequest struct {
 
 type WorkHydrateResult map[string]any
 
+type ProjectHydrateRequest struct {
+	Mode string // thin, standard, deep
+}
+
+type ProjectHydrateResult map[string]any
+
 type WorkPromoteRequest struct {
 	WorkID      string
 	Environment string
@@ -1527,6 +1533,158 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 			"recommended_next_actions": nextActions,
 		},
 	}, nil
+}
+
+// ProjectHydrate compiles a project-scoped briefing for cold-starting any session.
+// Unlike work-scoped hydration, this covers the entire project: conventions, graph summary,
+// active/blocked/ready work, and recent activity. Designed to replace the MEMORY.md bootstrap hack.
+func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest) (ProjectHydrateResult, error) {
+	mode := strings.TrimSpace(req.Mode)
+	if mode == "" {
+		mode = "standard"
+	}
+	if mode != "thin" && mode != "standard" && mode != "deep" {
+		return nil, fmt.Errorf("%w: hydrate mode must be thin, standard, or deep", ErrInvalidInput)
+	}
+
+	// Conventions — the core of project hydration.
+	conventionLimit := 50
+	if mode == "thin" {
+		conventionLimit = 20
+	} else if mode == "deep" {
+		conventionLimit = 200
+	}
+	conventions, err := s.store.ListConventionNotes(ctx, conventionLimit)
+	if err != nil {
+		return nil, fmt.Errorf("list conventions: %w", err)
+	}
+
+	// Work graph summary — counts by execution state.
+	allWork, err := s.ListWork(ctx, WorkListRequest{Limit: 500, IncludeArchived: false})
+	if err != nil {
+		return nil, fmt.Errorf("list work: %w", err)
+	}
+	stateCounts := map[core.WorkExecutionState]int{}
+	var recentCompleted []map[string]any
+	var activeWork []map[string]any
+	var readyWork []map[string]any
+	var blockedWork []map[string]any
+	completedLimit := 5
+	if mode == "deep" {
+		completedLimit = 15
+	}
+	for _, w := range allWork {
+		stateCounts[w.ExecutionState]++
+		switch w.ExecutionState {
+		case core.WorkExecutionStateDone:
+			if len(recentCompleted) < completedLimit {
+				recentCompleted = append(recentCompleted, map[string]any{
+					"work_id": w.WorkID,
+					"title":   w.Title,
+					"kind":    w.Kind,
+				})
+			}
+		case core.WorkExecutionStateInProgress, core.WorkExecutionStateClaimed:
+			activeWork = append(activeWork, map[string]any{
+				"work_id":    w.WorkID,
+				"title":      w.Title,
+				"kind":       w.Kind,
+				"claimed_by": w.ClaimedBy,
+			})
+		case core.WorkExecutionStateReady:
+			readyWork = append(readyWork, map[string]any{
+				"work_id":  w.WorkID,
+				"title":    w.Title,
+				"kind":     w.Kind,
+				"priority": w.Priority,
+			})
+		case core.WorkExecutionStateBlocked:
+			blockedWork = append(blockedWork, map[string]any{
+				"work_id": w.WorkID,
+				"title":   w.Title,
+				"kind":    w.Kind,
+			})
+		}
+	}
+
+	// Pending attestations — work awaiting review.
+	var pendingAttestations []map[string]any
+	for _, w := range allWork {
+		if w.ExecutionState == core.WorkExecutionStateAwaitingAttestation {
+			pendingAttestations = append(pendingAttestations, map[string]any{
+				"work_id":               w.WorkID,
+				"title":                 w.Title,
+				"required_attestations": w.RequiredAttestations,
+			})
+		}
+	}
+
+	// Compile conventions into a deduplicated list (newest wins on duplicate body).
+	conventionEntries := make([]map[string]any, 0, len(conventions))
+	seen := map[string]bool{}
+	for _, note := range conventions {
+		body := strings.TrimSpace(note.Body)
+		if seen[body] {
+			continue
+		}
+		seen[body] = true
+		entry := map[string]any{
+			"body":       body,
+			"created_at": note.CreatedAt.UTC().Format(time.RFC3339),
+		}
+		if note.WorkID != "" {
+			entry["source_work_id"] = note.WorkID
+		}
+		conventionEntries = append(conventionEntries, entry)
+	}
+
+	result := ProjectHydrateResult{
+		"schema_version": "cagent.project_briefing.v1",
+		"briefing_kind":  "project",
+		"generated_at":   time.Now().UTC().Format(time.RFC3339Nano),
+		"mode":           mode,
+		"runtime": map[string]any{
+			"config_path": s.ConfigPath,
+			"state_dir":   s.Paths.StateDir,
+		},
+		"conventions": conventionEntries,
+		"graph_summary": map[string]any{
+			"total_items":  len(allWork),
+			"state_counts": stateCounts,
+		},
+		"active_work":          activeWork,
+		"ready_work":           readyWork,
+		"blocked_work":         blockedWork,
+		"recent_completed":     recentCompleted,
+		"pending_attestations": pendingAttestations,
+		"contract": map[string]any{
+			"read_commands": []string{
+				"cagent work show <work-id>",
+				"cagent work notes <work-id>",
+				"cagent work hydrate <work-id>",
+				"cagent work list",
+				"cagent work ready",
+				"cagent project hydrate",
+			},
+			"write_commands": []string{
+				"cagent work create",
+				"cagent work update <work-id>",
+				"cagent work note-add <work-id>",
+				"cagent work attest <work-id>",
+			},
+			"rules": []string{
+				"Build with 'make' to install cagent to ~/.local/bin.",
+				"Use 'cagent' (on PATH), not './cagent'.",
+				"All persistent state belongs in the cagent work graph (notes, updates, private-notes).",
+				"Do not create memory files, CLAUDE.md, or .claude hidden state files.",
+				"Host agent role: delegate and review, never write code directly.",
+				"No new work dispatches while completed work awaits attestation.",
+				"max-concurrent=1 until isolated environments exist.",
+			},
+		},
+	}
+
+	return result, nil
 }
 
 func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (WorkHydrateResult, error) {
