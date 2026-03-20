@@ -838,7 +838,7 @@ func (s *Store) ListReadyWork(ctx context.Context, limit int, includeArchived bo
 			        wi.current_job_id, wi.current_session_id, wi.claimed_by, wi.claimed_until, wi.created_at, wi.updated_at
 			   FROM work_items wi
 			  WHERE `+where+`
-			  ORDER BY wi.position ASC, wi.priority DESC, wi.updated_at DESC
+			  ORDER BY wi.priority DESC, wi.position ASC, wi.updated_at DESC
 			  LIMIT ?`,
 			args...,
 		)
