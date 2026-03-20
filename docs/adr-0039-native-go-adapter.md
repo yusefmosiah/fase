@@ -11,16 +11,101 @@ This is wrong. The native adapter should be a first-class LLM client: direct HTT
 
 ## Decision
 
-### Single Client, Two Providers
+### Three Providers, Two API Formats
 
-Both z.ai coding plan and AWS Bedrock Claude support the Anthropic Messages API format. The native adapter uses one HTTP client with provider-specific configuration:
+The native adapter supports three LLM providers with two distinct API formats:
 
-| Provider | Base URL | Auth | Models |
-|----------|----------|------|--------|
-| z.ai coding plan | `https://api.z.ai/api/anthropic` | `Bearer $ZAI_API_KEY` | glm-4.7, glm-4.7-flash, glm-5-turbo, glm-5 |
-| AWS Bedrock | `https://bedrock-runtime.$AWS_REGION.amazonaws.com` | `Bearer $AWS_BEARER_TOKEN_BEDROCK` | claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-6 |
+| Provider | API Format | Base URL | Auth | Models |
+|----------|-----------|----------|------|--------|
+| z.ai coding plan | Anthropic Messages | `https://api.z.ai/api/anthropic` | `Bearer $ZAI_API_KEY` | glm-4.7, glm-4.7-flash, glm-5-turbo, glm-5 |
+| AWS Bedrock | Anthropic Messages | `https://bedrock-runtime.$AWS_REGION.amazonaws.com` | `Bearer $AWS_BEARER_TOKEN_BEDROCK` | claude-haiku-4-5, claude-sonnet-4-6, claude-opus-4-6 |
+| ChatGPT (via Codex OAuth) | OpenAI Responses | `https://chatgpt.com/backend-api/codex/responses` | `Bearer <access_token from auth.json>` | gpt-5.4-mini, gpt-5.4-codex, o3, o4-mini |
 
 Bedrock differences: model ID goes in URL path (`/model/{modelId}/invoke`), requires `anthropic_version: "bedrock-2023-05-31"`, tool_use IDs prefixed `toolu_bdrk_`.
+
+### ChatGPT OAuth Provider
+
+The ChatGPT provider uses Codex's OAuth flow to bill API usage to a ChatGPT subscription (Plus/Pro/Max) instead of metered API credits. This is how OpenCode and Pi already access OpenAI models.
+
+**Auth flow:**
+1. One-time: user runs `fase login chatgpt` which shells out to `codex login` (opens browser for ChatGPT sign-in)
+2. Codex writes `~/.codex/auth.json` with access/refresh/id tokens
+3. Native adapter reads `auth.json`, uses `access_token` as `Bearer` token
+4. Token refresh: either shell out to `codex` to refresh, or use `https://auth.openai.com/oauth/token` directly with the refresh token
+
+**`auth.json` structure:**
+```json
+{
+  "auth_mode": "chatgpt",
+  "tokens": {
+    "access_token": "...",
+    "refresh_token": "...",
+    "id_token": "..."
+  }
+}
+```
+
+**API format — OpenAI Responses API (`POST /v1/responses`):**
+
+Unlike the Anthropic Messages API, the Responses API uses a different request/response format:
+
+```json
+{
+  "model": "gpt-5.4-mini",
+  "instructions": "system prompt here",
+  "input": [
+    {"role": "user", "content": "user message"}
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "read_file",
+      "description": "Read file contents",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {"type": "string"}
+        },
+        "required": ["path"]
+      }
+    }
+  ],
+  "stream": true
+}
+```
+
+**Tool calls in response** appear as Items:
+```json
+{
+  "type": "function_call",
+  "call_id": "call_abc123",
+  "name": "read_file",
+  "arguments": {"path": "/foo/bar.go"}
+}
+```
+
+**Tool results** are sent back as Items in the next request's `input`:
+```json
+{
+  "type": "function_call_output",
+  "call_id": "call_abc123",
+  "output": "file contents here"
+}
+```
+
+**Key differences from Anthropic Messages API:**
+- `input` (not `messages`), `instructions` (not `system`)
+- `output` array of typed Items (not `content` blocks)
+- Tool calls are `function_call` Items with `call_id` (not `tool_use` blocks with `id`)
+- Results are `function_call_output` Items (not `tool_result` blocks)
+- Stateful: supports `previous_response_id` for multi-turn without resending history
+- The endpoint at `chatgpt.com/backend-api/codex/responses` mirrors the standard Responses API format
+
+**Implementation:** The native adapter needs two API client implementations sharing a common tool-use loop:
+1. `AnthropicClient` — for z.ai and Bedrock (Messages API format)
+2. `OpenAIClient` — for ChatGPT/Codex (Responses API format)
+
+Both implement a common `LLMClient` interface that abstracts the request/response format differences away from the tool-use loop.
 
 ### Architecture
 
@@ -144,21 +229,60 @@ type nativeSession struct {
 - **Session = one conversation thread**: Multiple turns share history within a session.
 - **Concurrency**: One active turn at a time per session. StartTurn while a turn is active returns an error.
 
-### Provider Client
+### LLM Client Interface
+
+```go
+// LLMClient abstracts Anthropic Messages API vs OpenAI Responses API.
+type LLMClient interface {
+    // Call sends a request and streams response events.
+    // Returns tool calls (if any) and the stop reason.
+    Call(ctx context.Context, req LLMRequest) (*LLMResponse, error)
+}
+
+type LLMRequest struct {
+    System   string
+    Messages []Message       // conversation history
+    Tools    []ToolDef        // tool definitions
+    Stream   bool
+}
+
+type LLMResponse struct {
+    TextBlocks []string        // text output
+    ToolCalls  []ToolCall       // tool invocations
+    StopReason string          // "end_turn", "tool_use", "max_tokens"
+    Usage      Usage
+    // For streaming: events are emitted via callback during Call()
+    OnDelta    func(text string)
+}
+```
+
+Two implementations:
+- `anthropicClient` — for z.ai and Bedrock (Messages API, `POST /v1/messages`)
+- `openaiClient` — for ChatGPT/Codex (Responses API, `POST /v1/responses`)
+
+### Provider Configuration
 
 ```go
 type Provider struct {
-    Name       string  // "zai" or "bedrock"
+    Name       string  // "zai", "bedrock", or "chatgpt"
+    APIFormat  string  // "anthropic" or "openai"
     BaseURL    string
-    AuthHeader string  // "Bearer <key>"
+    AuthFunc   func() (string, error)  // returns "Bearer <token>"
     ModelID    string
-    // Bedrock-specific
-    AnthropicVersion string  // "bedrock-2023-05-31" or ""
+    // Anthropic-specific
+    AnthropicVersion string  // "bedrock-2023-05-31" for bedrock, "" for z.ai
     ModelInPath      bool    // true for bedrock
 }
 ```
 
-Model string parsing: `"bedrock/claude-haiku-4-5"` → Provider=bedrock, Model=anthropic.claude-haiku-4-5-20251001-v1:0. `"zai/glm-4.7"` → Provider=zai, Model=glm-4.7.
+Model string parsing:
+- `"bedrock/claude-haiku-4-5"` → Provider=bedrock, APIFormat=anthropic
+- `"zai/glm-4.7"` → Provider=zai, APIFormat=anthropic
+- `"chatgpt/gpt-5.4-mini"` → Provider=chatgpt, APIFormat=openai
+
+The `AuthFunc` closure handles the different auth patterns:
+- z.ai/bedrock: read env var, return static bearer token
+- chatgpt: read `~/.codex/auth.json`, refresh if expired, return access token
 
 ### Configuration
 
@@ -168,15 +292,30 @@ enabled = true
 summary = "Direct LLM API client"
 
 [adapters.native.providers.zai]
+api_format = "anthropic"
 base_url = "https://api.z.ai/api/anthropic"
 api_key_env = "ZAI_API_KEY"
 models = ["glm-4.7", "glm-4.7-flash", "glm-5-turbo"]
 
 [adapters.native.providers.bedrock]
+api_format = "anthropic"
 base_url = "https://bedrock-runtime.us-east-1.amazonaws.com"
 api_key_env = "AWS_BEARER_TOKEN_BEDROCK"
 anthropic_version = "bedrock-2023-05-31"
 models = ["claude-haiku-4-5", "claude-sonnet-4-6", "claude-opus-4-6"]
+
+[adapters.native.providers.chatgpt]
+api_format = "openai"
+base_url = "https://chatgpt.com/backend-api/codex/responses"
+auth_method = "codex_oauth"  # reads ~/.codex/auth.json
+models = ["gpt-5.4-mini", "gpt-5.4-codex", "o3", "o4-mini"]
+```
+
+### Login Command
+
+```bash
+fase login chatgpt    # shells out to `codex login`, stores auth.json
+fase login status     # shows active auth methods and token freshness
 ```
 
 ### What This Replaces
@@ -190,18 +329,42 @@ The echo session moves to a test helper.
 - **No vendor CLI dependency**: Native adapter runs anywhere with API keys
 - **Type-safe tool calls**: Direct `service.Method()` calls, not subprocess/MCP bridging
 - **Co-agent composability**: LLM decides when to delegate, can spawn any adapter
-- **Two cheap providers**: z.ai glm-4.7 and Bedrock claude-haiku-4-5 for eval/bulk work
+- **Three providers**: z.ai glm-4.7, Bedrock claude-haiku-4-5, ChatGPT gpt-5.4-mini for eval/bulk work
+- **ChatGPT subscription billing**: Use existing Plus/Pro subscription via Codex OAuth — no API credits needed
 - **Same interface contract**: `LiveAgentAdapter`/`LiveSession` — conductor/supervisor treats it identically to codex, claude, opencode
 - **Streaming**: Real-time output deltas via SSE parsing
 - **Future extensibility**: Adding a provider = new Provider struct, no code changes to the loop
 
 ## Implementation Plan
 
-1. **Provider client**: HTTP client with Anthropic Messages API, SSE streaming, provider-specific URL/auth
-2. **Tool registry**: Define tools as Go structs, map to service calls and shell commands
-3. **Tool-use loop**: Core goroutine that calls LLM, executes tools, loops
-4. **LiveSession implementation**: Wire tool loop into StartTurn/Steer/Interrupt/Events/Close
-5. **LiveAdapter**: Factory that creates sessions with provider + tool registry
-6. **Co-agent tools**: Spawn/send/steer/close other LiveSessions
-7. **Integration**: Register in adapter registry, wire into supervisor dispatch
-8. **Eval**: Run multi-step tasks through the supervisor using native adapter
+### Phase 1: LLM Clients
+1. **LLMClient interface**: Common abstraction over Anthropic Messages + OpenAI Responses
+2. **Anthropic client**: HTTP + SSE streaming, supports z.ai and Bedrock via provider config
+3. **OpenAI client**: HTTP + SSE streaming, supports ChatGPT/Codex Responses API
+4. **Auth**: Env var readers for z.ai/Bedrock, `auth.json` reader + refresh for ChatGPT
+
+### Phase 2: Tool System
+5. **Tool registry**: Define tools as Go structs with JSON schema parameters
+6. **Coding tools**: read_file, write_file, edit_file, glob, grep, bash, git ops
+7. **FASE tools**: work_list, work_create, work_update, work_attest, etc. (direct service calls)
+
+### Phase 3: Core Loop + LiveSession
+8. **Tool-use loop**: Provider-agnostic goroutine that calls LLM, executes tools, loops
+9. **LiveSession**: Wire tool loop into StartTurn/Steer/Interrupt/Events/Close
+10. **LiveAdapter**: Factory that creates sessions with provider + tool registry
+
+### Phase 4: Integration
+11. **Co-agent tools**: Spawn/send/steer/close other LiveSessions via channels
+12. **Adapter registry**: Register native adapter, wire into supervisor dispatch
+13. **Login command**: `fase login chatgpt` flow
+
+### Phase 5: Eval
+14. **Multi-step eval tasks** through the supervisor using native adapter with cheap models
+
+## References
+
+- [Codex Auth Documentation](https://developers.openai.com/codex/auth/)
+- [Codex App Server (JSON-RPC)](https://developers.openai.com/codex/app-server)
+- [OpenAI Responses API](https://platform.openai.com/docs/guides/function-calling)
+- [openai-oauth: ChatGPT OAuth proxy](https://github.com/EvanZhouDev/openai-oauth)
+- [AWS Bedrock Claude](https://docs.aws.amazon.com/bedrock/latest/userguide/model-parameters-anthropic-claude-messages.html)
