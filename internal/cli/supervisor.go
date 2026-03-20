@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -66,31 +65,111 @@ func modelForAdapter(adapter string) string {
 // jobs should be ordered newest-first so jobs[0] is the most recent attempt.
 // rotation is the effective pool to draw from (budget-filtered); nil falls back to workRotation.
 func pickAdapterModel(item core.WorkItemRecord, jobs []core.JobRecord, rotation []rotationEntry) (adapter, model string) {
+	return pickAdapterModelWithFallback(item, jobs, rotation, "")
+}
+
+// pickAdapterModelWithFallback selects adapter/model with an optional default
+// adapter hint when the work item and history do not provide a stronger signal.
+func pickAdapterModelWithFallback(item core.WorkItemRecord, jobs []core.JobRecord, rotation []rotationEntry, defaultAdapter string) (adapter, model string) {
 	pool := rotation
 	if len(pool) == 0 {
 		pool = workRotation
 	}
-	if len(item.PreferredAdapters) > 0 {
-		a := item.PreferredAdapters[0]
-		m := modelForAdapter(a)
-		// If the preferred adapter isn't in the pool (budget exhausted), still honour
-		// the explicit preference — work items that pin an adapter know what they want.
-		return a, m
+	if len(pool) == 0 {
+		return "", ""
 	}
-	if len(jobs) > 0 {
-		// Find the most recent job that used a known rotation adapter and
-		// advance to the next slot (ensures retries differ from last attempt).
-		for _, job := range jobs {
-			lastIdx := rotationIndexForEntry(job.Adapter, pool)
-			if lastIdx >= 0 {
-				next := pool[(lastIdx+1)%len(pool)]
-				return next.adapter, next.model
+
+	forbidden := make(map[string]struct{}, len(item.ForbiddenAdapters))
+	for _, a := range item.ForbiddenAdapters {
+		forbidden[a] = struct{}{}
+	}
+	avoidModel := make(map[string]struct{}, len(item.AvoidModels))
+	for _, m := range item.AvoidModels {
+		avoidModel[m] = struct{}{}
+	}
+
+	isAllowed := func(adapter, model string) bool {
+		if _, ok := forbidden[adapter]; ok {
+			return false
+		}
+		if model != "" {
+			if _, ok := avoidModel[model]; ok {
+				return false
+			}
+		}
+		return true
+	}
+
+	findCandidate := func(adapter string, exactModels []string) (string, string, bool) {
+		for _, e := range pool {
+			if e.adapter != adapter {
+				continue
+			}
+			if !isAllowed(e.adapter, e.model) {
+				continue
+			}
+			if len(exactModels) > 0 {
+				match := false
+				for _, m := range exactModels {
+					if e.model == m {
+						match = true
+						break
+					}
+				}
+				if !match {
+					continue
+				}
+			}
+			return e.adapter, e.model, true
+		}
+		return "", "", false
+	}
+
+	if len(item.PreferredAdapters) > 0 {
+		for _, a := range item.PreferredAdapters {
+			if adapter, model, ok := findCandidate(a, item.PreferredModels); ok {
+				return adapter, model
+			}
+			if model := modelForAdapter(a); model != "" && isAllowed(a, model) {
+				return a, model
 			}
 		}
 	}
-	// No usable history: global round-robin over the effective pool.
-	idx := int(atomic.AddInt64(&globalRotationIdx, 1)-1) % len(pool)
-	return pool[idx].adapter, pool[idx].model
+
+	if len(jobs) > 0 {
+		for _, job := range jobs {
+			lastIdx := rotationIndexForEntry(job.Adapter, pool)
+			if lastIdx < 0 {
+				continue
+			}
+			for step := 1; step <= len(pool); step++ {
+				next := pool[(lastIdx+step)%len(pool)]
+				if isAllowed(next.adapter, next.model) {
+					return next.adapter, next.model
+				}
+			}
+		}
+	}
+
+	if defaultAdapter != "" {
+		if adapter, model, ok := findCandidate(defaultAdapter, item.PreferredModels); ok {
+			return adapter, model
+		}
+		if model := modelForAdapter(defaultAdapter); model != "" && isAllowed(defaultAdapter, model) {
+			return defaultAdapter, model
+		}
+	}
+
+	// No stronger signal: choose the best available entry with round-robin
+	// fairness, skipping explicitly forbidden adapters and avoided models.
+	base := int(atomic.AddInt64(&globalRotationIdx, 1) - 1)
+	for i := 0; i < len(pool); i++ {
+		idx := (base + i) % len(pool)
+		if isAllowed(pool[idx].adapter, pool[idx].model) {
+			return pool[idx].adapter, pool[idx].model
+		}
+	}
+	return pool[0].adapter, pool[0].model
 }
 
 // rotationIndexForEntry returns the index of adapter in the given pool, or -1.
@@ -282,140 +361,7 @@ func newSupervisorResumeCommand(root *rootOptions) *cobra.Command {
 }
 
 func runSupervisor(cmd *cobra.Command, root *rootOptions, opts *supervisorOptions) error {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
-
-	stopping := false
-
-	selfBin, err := os.Executable()
-	if err != nil {
-		selfBin = "fase"
-	}
-
-	cwd := opts.cwd
-	if cwd == "" || cwd == "." {
-		cwd, _ = os.Getwd()
-	}
-
-	// Load config for budget-aware rotation. Errors are non-fatal; we fall back
-	// to the hard-coded workRotation with no budget limits.
-	cfg, _ := core.LoadConfig(root.configPath)
-
-	// Update the package-level workRotation from config if entries are provided
-	// so that attestation dispatch in serve.go also sees the configured pool.
-	if len(cfg.Rotation.Entries) > 0 {
-		workRotation = rotationFromConfig(cfg)
-	}
-
-	// Budget tracker persists daily run counts to <stateDir>/usage.json.
-	stateDir := core.ResolveRepoStateDirFrom(cwd)
-	if stateDir == "" {
-		stateDir = filepath.Join(cwd, ".fase")
-	}
-	budget := newDailyUsage(stateDir)
-
-	ca, caErr := loadOrCreateCA(stateDir)
-	if caErr != nil {
-		_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: capability CA init failed (tokens disabled): %v\n", caErr)
-	}
-	if ca != nil {
-		sweepStaleTokenFiles(stateDir, 2*time.Hour)
-	}
-
-	jsonOutput := root.jsonOutput
-
-	loop := newSupervisorLoop(opts.maxConcurrent, cwd, selfBin, root.configPath)
-	loop.dryRun = opts.dryRun
-	loop.budget = budget
-	loop.limits = buildLimitsMap(cfg)
-	loop.ca = ca
-
-	emit := func(report supervisorCycleReport) {
-		if jsonOutput {
-			_ = writeJSON(cmd.OutOrStdout(), report)
-		} else {
-			parts := []string{
-				fmt.Sprintf("[cycle %d]", report.Cycle),
-				fmt.Sprintf("ready=%d", report.Ready),
-				fmt.Sprintf("in_flight=%d", report.InFlight),
-			}
-			for _, d := range report.Dispatched {
-				if report.DryRun {
-					parts = append(parts, fmt.Sprintf("would-dispatch %s (%s via %s)", d.WorkID, d.Title, d.Adapter))
-				} else {
-					parts = append(parts, fmt.Sprintf("dispatched %s job=%s (%s via %s)", d.WorkID, d.JobID, d.Title, d.Adapter))
-				}
-			}
-			for _, c := range report.Completed {
-				parts = append(parts, fmt.Sprintf("completed %s job=%s status=%s", c.WorkID, c.JobID, c.Status))
-			}
-			_, _ = fmt.Fprintln(cmd.OutOrStdout(), strings.Join(parts, " "))
-		}
-	}
-
-	for {
-		select {
-		case <-sigCh:
-			stopping = true
-		default:
-		}
-
-		if stopping {
-			remaining := loop.inFlightLen()
-			// On graceful shutdown, cancel all in-flight jobs rather than
-			// waiting indefinitely. Each `fase run` spawns a detached
-			// background worker (via service.spawnDetachedWorker with
-			// Setpgid: true), so the worker survives `fase run` exiting.
-			// We must explicitly cancel via the service layer, which sends
-			// escalating signals (SIGINT → SIGTERM → SIGKILL) to the
-			// worker's process group.
-			if remaining > 0 {
-				if !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.OutOrStdout(), "supervisor: stopping, cancelling %d in-flight job(s)\n", remaining)
-				}
-				shutdownSvc, svcErr := service.Open(ctx, root.configPath)
-				if svcErr == nil {
-					if !jsonOutput {
-						for workID, flight := range loop.snapshotInFlight() {
-							_, _ = fmt.Fprintf(cmd.OutOrStdout(), "supervisor: cancelling job %s (work %s)\n", flight.jobID, workID)
-						}
-					}
-					loop.cancelInFlight(ctx, shutdownSvc)
-					_ = shutdownSvc.Close()
-				} else if !jsonOutput {
-					_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to open service for shutdown cleanup: %v\n", svcErr)
-				}
-			}
-			if !jsonOutput {
-				_, _ = fmt.Fprintln(cmd.OutOrStdout(), "supervisor: shutdown complete")
-			}
-			return nil
-		}
-
-		svc, err := service.Open(ctx, root.configPath)
-		if err != nil {
-			if !jsonOutput {
-				_, _ = fmt.Fprintf(cmd.ErrOrStderr(), "supervisor: failed to open service: %v\n", err)
-			}
-			sleepOrStop(ctx, opts.interval, sigCh, &stopping)
-			continue
-		}
-
-		report := loop.runOneCycle(ctx, svc)
-		_ = svc.Close()
-
-		emit(report)
-		writeSupState(cwd, report.Cycle, loop.IsPaused(), loop.snapshotInFlight(), report)
-
-		if opts.dryRun {
-			return nil
-		}
-
-		sleepOrStop(ctx, opts.interval, sigCh, &stopping)
-	}
+	return runEventDrivenSupervisor(cmd, root, opts)
 }
 
 // spawnRun launches `fase run --json` and extracts the real job_id from the output.

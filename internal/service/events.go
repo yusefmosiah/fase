@@ -1,8 +1,10 @@
 package service
 
-import "sync"
+import (
+	"sync"
+	"sync/atomic"
+)
 
-// WorkEventKind identifies the type of work graph mutation.
 type WorkEventKind string
 
 const (
@@ -14,33 +16,39 @@ const (
 	WorkEventLeaseRenew WorkEventKind = "work_lease_renewed"
 )
 
-// WorkEvent is emitted when a work item is mutated.
 type WorkEvent struct {
 	Kind      WorkEventKind
 	WorkID    string
 	Title     string
 	State     string
 	PrevState string
+	JobID     string
+	Adapter   string
+	Metadata  map[string]string
 }
 
-// EventBus is a synchronous fan-out event bus for work graph mutations.
-// Subscribers receive events on a buffered channel. Slow consumers are dropped.
 type EventBus struct {
-	mu   sync.Mutex
-	subs []chan WorkEvent
+	mu        sync.Mutex
+	subs      []chan WorkEvent
+	drops     atomic.Int64
+	published atomic.Int64
 }
 
-// Subscribe returns a channel that receives work events.
-// Call Unsubscribe when done.
 func (b *EventBus) Subscribe() chan WorkEvent {
-	ch := make(chan WorkEvent, 64)
+	return b.SubscribeWithBuffer(64)
+}
+
+func (b *EventBus) SubscribeWithBuffer(size int) chan WorkEvent {
+	if size <= 0 {
+		size = 64
+	}
+	ch := make(chan WorkEvent, size)
 	b.mu.Lock()
 	b.subs = append(b.subs, ch)
 	b.mu.Unlock()
 	return ch
 }
 
-// Unsubscribe removes a subscriber channel and closes it.
 func (b *EventBus) Unsubscribe(ch chan WorkEvent) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -53,14 +61,19 @@ func (b *EventBus) Unsubscribe(ch chan WorkEvent) {
 	}
 }
 
-// publish sends an event to all subscribers. Non-blocking; slow consumers are skipped.
 func (b *EventBus) publish(ev WorkEvent) {
+	b.published.Add(1)
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	for _, ch := range b.subs {
 		select {
 		case ch <- ev:
 		default:
+			b.drops.Add(1)
 		}
 	}
+}
+
+func (b *EventBus) Stats() (published int64, drops int64) {
+	return b.published.Load(), b.drops.Load()
 }

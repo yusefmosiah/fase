@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -131,7 +133,14 @@ func budgetFilter(entries []rotationEntry, limits map[string]int, usage *dailyUs
 		}
 	}
 	if len(available) == 0 {
-		// All exhausted — fail open so work still makes progress.
+		exhausted := make([]string, 0, len(entries))
+		for _, e := range entries {
+			max := limits[e.adapter+"/"+e.model]
+			if max > 0 {
+				exhausted = append(exhausted, fmt.Sprintf("%s/%s (%d/%d)", e.adapter, e.model, usage.runsToday(e.adapter, e.model), max))
+			}
+		}
+		fmt.Fprintf(os.Stderr, "supervisor: budget: all adapters exhausted, failing open: %s\n", strings.Join(exhausted, ", "))
 		return entries
 	}
 	return available

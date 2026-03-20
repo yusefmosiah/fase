@@ -72,30 +72,21 @@ func (a *LiveAdapter) ResumeSession(ctx context.Context, nativeSessionID string,
 //   - aggregating all worker events into the session event channel
 type conductorSession struct {
 	id      string
-	cwd     string // working directory for co-agent sub-sessions
-	model   string // "adapter/model" → adapterName + modelRef
+	cwd     string
+	model   string
 	profile string
 
-	// steerCh receives external steer requests from the supervisor.
-	// nil if not provided.
-	steerCh <-chan adapterapi.SteerEvent
-
-	// eventCh is the outbound event channel, closed by conductorLoop on exit.
+	steerCh      <-chan adapterapi.SteerEvent
 	eventCh      chan adapterapi.Event
 	eventChClose sync.Once
+	workEventCh  chan service.WorkEvent
+	eventDrops   atomic.Int64
 
-	// workEventCh receives service EventBus notifications.
-	// nil if svc is nil.
-	workEventCh chan service.WorkEvent
-
-	// workers holds active co-agent workers indexed by worker ID.
 	workersMu sync.Mutex
 	workers   map[string]*coAgentWorker
 
-	// turnSeq generates monotonic conductor turn IDs.
 	turnSeq atomic.Int64
 
-	// activeTurn tracks the current conductor turn ID under activeMu.
 	activeMu   sync.Mutex
 	activeTurn string
 
@@ -288,8 +279,13 @@ func (s *conductorSession) conductorLoop() {
 }
 
 // forwardWorkEvent translates a service WorkEvent into a co-agent steer message.
-// Only steers if a turn is active.
+// Only steers if a turn is active and the event is relevant to this session.
+// Filters out noise: lease renewals and events for unrelated work items.
 func (s *conductorSession) forwardWorkEvent(ev service.WorkEvent) {
+	if ev.Kind == service.WorkEventLeaseRenew {
+		return
+	}
+
 	s.activeMu.Lock()
 	activeTurn := s.activeTurn
 	s.activeMu.Unlock()
@@ -557,7 +553,12 @@ func (s *conductorSession) emit(ev adapterapi.Event) {
 	select {
 	case s.eventCh <- ev:
 	default:
+		s.eventDrops.Add(1)
 	}
+}
+
+func (s *conductorSession) EventDrops() int64 {
+	return s.eventDrops.Load()
 }
 
 // -----------------------------------------------------------------------

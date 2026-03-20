@@ -39,6 +39,7 @@ func allCapabilities() []string {
 		core.CapWorkEdgeAdd,
 		core.CapWorkApprove,
 		core.CapWorkReject,
+		core.CapWorkForceDone,
 	}
 }
 

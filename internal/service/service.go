@@ -282,6 +282,7 @@ type WorkUpdateRequest struct {
 	ArtifactID     string
 	Metadata       map[string]any
 	CreatedBy      string
+	ForceDone      bool // bypass guardDoneTransition; requires work:force-done capability
 }
 
 type WorkNoteRequest struct {
@@ -2127,6 +2128,12 @@ func (s *Service) RenewWorkLease(ctx context.Context, req WorkRenewLeaseRequest)
 	}); err != nil {
 		return nil, err
 	}
+	s.Events.publish(WorkEvent{
+		Kind:   WorkEventLeaseRenew,
+		WorkID: work.WorkID,
+		Title:  work.Title,
+		State:  string(work.ExecutionState),
+	})
 	return &work, nil
 }
 
@@ -2145,8 +2152,12 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		// attestation is unresolved. Terminal-success transitions require
 		// satisfied attestations; failed/cancelled are exempt.
 		if req.ExecutionState == core.WorkExecutionStateDone || req.ExecutionState == core.WorkExecutionStateArchived {
-			if err := s.guardDoneTransition(ctx, work); err != nil {
-				return nil, err
+			if req.ForceDone {
+				emitForceDoneWarning(req.WorkID, req.CreatedBy)
+			} else {
+				if err := s.guardDoneTransition(ctx, work); err != nil {
+					return nil, err
+				}
 			}
 		}
 		work.ExecutionState = req.ExecutionState
@@ -2415,11 +2426,25 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 	if err != nil {
 		return nil, nil, normalizeStoreError("work", req.WorkID, err)
 	}
+	attestationTarget := work
+	if strings.EqualFold(work.Kind, "attest") {
+		parentID := ""
+		if work.Metadata != nil {
+			if rawParentID, ok := work.Metadata["parent_work_id"].(string); ok {
+				parentID = strings.TrimSpace(rawParentID)
+			}
+		}
+		if parentID != "" {
+			if parent, parentErr := s.store.GetWorkItem(ctx, parentID); parentErr == nil {
+				attestationTarget = parent
+			}
+		}
+	}
 	prevState := string(work.ExecutionState)
 	// Nonce validation: if the work item has an attestation nonce,
 	// the caller must provide it. The nonce is generated after the worker
 	// exits, so workers cannot attest their own work.
-	if storedNonce, ok := work.Metadata["attestation_nonce"].(string); ok && storedNonce != "" {
+	if storedNonce, ok := attestationTarget.Metadata["attestation_nonce"].(string); ok && storedNonce != "" {
 		if req.Nonce == "" || req.Nonce != storedNonce {
 			return nil, nil, fmt.Errorf("attestation nonce mismatch: work item requires valid nonce (generated post-completion)")
 		}
@@ -2429,19 +2454,19 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
-	if work.HeadCommitOID != "" {
+	if attestationTarget.HeadCommitOID != "" {
 		if _, ok := metadata["commit_oid"]; !ok {
-			metadata["commit_oid"] = work.HeadCommitOID
+			metadata["commit_oid"] = attestationTarget.HeadCommitOID
 		}
 	}
 
 	unsatisfiedSlots := []core.RequiredAttestation(nil)
-	if len(work.RequiredAttestations) > 0 {
-		attestations, fetchErr := s.store.ListAttestationRecords(ctx, "work", req.WorkID, 200)
+	if len(attestationTarget.RequiredAttestations) > 0 {
+		attestations, fetchErr := s.store.ListAttestationRecords(ctx, "work", attestationTarget.WorkID, 200)
 		if fetchErr != nil {
 			return nil, nil, fetchErr
 		}
-		unsatisfiedSlots = unsatisfiedAttestationSlots(work, attestations)
+		unsatisfiedSlots = unsatisfiedAttestationSlots(attestationTarget, attestations)
 	}
 
 	verifierKind := strings.TrimSpace(req.VerifierKind)
@@ -2454,14 +2479,17 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 			method = strings.TrimSpace(unsatisfiedSlots[0].Method)
 		}
 	}
-	if len(work.RequiredAttestations) > 0 && !attestationSubmissionMatchesAnySlot(verifierKind, method, unsatisfiedSlots) {
+	if verifierKind == "" || method == "" {
+		return nil, nil, fmt.Errorf("%w: attestation requires non-empty verifier_kind and method; got verifier_kind=%q method=%q", ErrInvalidInput, verifierKind, method)
+	}
+	if len(unsatisfiedSlots) > 0 && !attestationSubmissionMatchesAnySlot(verifierKind, method, unsatisfiedSlots) {
 		return nil, nil, fmt.Errorf("%w: attestation verifier_kind/method must match one unsatisfied required attestation slot; expected one of %s, got verifier_kind=%q method=%q", ErrInvalidInput, formatAttestationSlots(unsatisfiedSlots), verifierKind, method)
 	}
 
 	record := core.AttestationRecord{
 		AttestationID:           core.GenerateID("attest"),
 		SubjectKind:             "work",
-		SubjectID:               req.WorkID,
+		SubjectID:               attestationTarget.WorkID,
 		Result:                  req.Result,
 		Summary:                 req.Summary,
 		ArtifactID:              req.ArtifactID,
@@ -2568,6 +2596,11 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
 	})
+	if strings.EqualFold(work.Kind, "attest") && attestationTarget.WorkID != work.WorkID {
+		if err := s.refreshAttestationParentState(ctx, attestationTarget.WorkID); err != nil {
+			return nil, nil, err
+		}
+	}
 	return &record, &work, nil
 }
 
@@ -3532,15 +3565,36 @@ func (s *Service) Cancel(ctx context.Context, jobID string) (*core.JobRecord, er
 		return nil, err
 	}
 
-	runtimeRec, runtimeErr := s.store.GetJobRuntime(ctx, job.JobID)
-	if runtimeErr != nil && !errors.Is(runtimeErr, store.ErrNotFound) {
-		return nil, runtimeErr
+	var runtimeRec *core.JobRuntimeRecord
+	waitForRuntimeUntil := time.Now().Add(5 * time.Second)
+	for runtimeRec == nil && time.Now().Before(waitForRuntimeUntil) {
+		rec, runtimeErr := s.store.GetJobRuntime(ctx, job.JobID)
+		if runtimeErr == nil {
+			runtimeRec = &rec
+			break
+		}
+		if runtimeErr != nil && !errors.Is(runtimeErr, store.ErrNotFound) {
+			return nil, runtimeErr
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(100 * time.Millisecond):
+		}
 	}
 
 	signals := []syscall.Signal{syscall.SIGINT, syscall.SIGTERM, syscall.SIGKILL}
 	delays := []time.Duration{1500 * time.Millisecond, 1500 * time.Millisecond, 1500 * time.Millisecond}
 	for idx, sig := range signals {
-		if runtimeErr == nil {
+		if runtimeRec == nil {
+			rec, runtimeErr := s.store.GetJobRuntime(ctx, job.JobID)
+			if runtimeErr == nil {
+				runtimeRec = &rec
+			} else if runtimeErr != nil && !errors.Is(runtimeErr, store.ErrNotFound) {
+				return nil, runtimeErr
+			}
+		}
+		if runtimeRec != nil {
 			if runtimeRec.VendorPID != 0 {
 				_ = signalProcessGroup(runtimeRec.VendorPID, sig)
 			} else if runtimeRec.SupervisorPID != 0 {
@@ -3981,6 +4035,7 @@ func (s *Service) launchDetachedWorker(jobID, turnID string) (int, error) {
 	cmd.Stdout = devNull
 	cmd.Stderr = devNull
 	cmd.Stdin = devNull
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Env = s.detachedWorkerEnv(exePath)
 	adapterapi.PrepareCommand(cmd)
 
@@ -6298,18 +6353,11 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 			work.AttestationFrozenAt = &frozenAt
 		}
 	case core.JobStateCompleted:
-		if work.Kind == "attest" {
-			workState = core.WorkExecutionStateDone
-			work.ExecutionState = workState
-			work.ClaimedBy = ""
-			work.ClaimedUntil = nil
-			if shouldSetPendingApproval(work) {
-				work.ApprovalState = core.WorkApprovalStatePending
-			}
-		} else {
-			workState = core.WorkExecutionStateAwaitingAttestation
-			work.ClaimedBy = ""
-			work.ClaimedUntil = nil
+		workState = core.WorkExecutionStateDone
+		work.ClaimedBy = ""
+		work.ClaimedUntil = nil
+		if shouldSetPendingApproval(work) {
+			work.ApprovalState = core.WorkApprovalStatePending
 		}
 	case core.JobStateFailed:
 		workState = core.WorkExecutionStateFailed
@@ -6426,6 +6474,36 @@ func (s *Service) refreshParentAfterAttestationChild(ctx context.Context, child 
 		return nil
 	}
 	return s.refreshAttestationParentState(ctx, parentID)
+}
+
+// forceDoneWarningEvent is the structured log payload emitted to stderr when
+// the force-done escape hatch is used.
+type forceDoneWarningEvent struct {
+	Level     string `json:"level"`
+	Kind      string `json:"kind"`
+	WorkID    string `json:"work_id"`
+	Actor     string `json:"actor,omitempty"`
+	Timestamp string `json:"timestamp"`
+	Message   string `json:"message"`
+}
+
+// emitForceDoneWarning writes a structured warning to stderr when --force
+// bypasses guardDoneTransition. Errors are intentionally swallowed; this is
+// a best-effort audit trail only.
+func emitForceDoneWarning(workID, actor string) {
+	event := forceDoneWarningEvent{
+		Level:     "warn",
+		Kind:      "force_done_override",
+		WorkID:    workID,
+		Actor:     actor,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Message:   "guardDoneTransition bypassed via --force; attestation requirements not verified",
+	}
+	data, err := json.Marshal(event)
+	if err != nil {
+		return
+	}
+	_, _ = fmt.Fprintln(os.Stderr, string(data))
 }
 
 // guardDoneTransition returns an error if the work item cannot transition to a

@@ -1,6 +1,6 @@
 Date: 2026-03-20
 Kind: ADR
-Status: Proposed
+Status: Accepted
 Priority: 1
 Supersedes: None (extends current supervisor_loop.go)
 Owner: Runtime / Supervisor
@@ -533,33 +533,25 @@ type WorkEvent struct {
 ```
 
 The `JobID` and `Adapter` fields let the reactor correlate events to in-flight
-jobs without querying the database.
+jobs without querying the database or shelling out to `fase status`.
 
-#### 6b. Guaranteed Delivery Option
+#### 6b. Publish `work_lease_renewed`
 
-The current publish is fire-and-forget (drops slow consumers). For the
-supervisor's subscription, add an option for blocking delivery with timeout:
+The `WorkEventLeaseRenew` constant (events.go:14) is dead code — defined but
+never published. `RenewWorkLease` (service.go:1943) should call
+`s.Events.publish(WorkEvent{Kind: WorkEventLeaseRenew, ...})`. This enables
+the supervisor to track lease activity without periodic DB queries.
 
-```go
-func (b *EventBus) SubscribeReliable(bufSize int) chan WorkEvent {
-    ch := make(chan WorkEvent, bufSize)
-    b.mu.Lock()
-    b.reliable = append(b.reliable, ch)
-    b.mu.Unlock()
-    return ch
-}
-```
+#### 6c. Buffer Size and Delivery Guarantee
 
-Reliable subscribers block `publish()` for up to 100ms before dropping.
-Only the supervisor uses this — UI subscribers remain non-blocking.
+Current publish is fire-and-forget: `select { case ch <- ev: default: }`
+(events.go:57). Slow consumers are silently dropped. Buffer size is 64 per
+subscriber. With 3 existing subscribers (conductor, change watcher, MCP), a
+burst of 20 work mutations would fill 60% of each subscriber's buffer.
 
-**Alternative:** Instead of blocking publish, use a larger buffer (256 vs 64)
-and log dropped events. The heartbeat catches anything missed. This is simpler
-and avoids the risk of slow supervisor blocking all work mutations.
-
-**Recommendation:** Larger buffer + heartbeat. The supervisor must never be
-a bottleneck for work mutations. Dropped events are rare with a 256-entry
-buffer, and the 60s heartbeat is the safety net.
+**Recommendation:** Increase supervisor's subscription buffer to 256. The
+heartbeat catches anything missed. The supervisor must never be a bottleneck
+for work mutations — blocking publish would be worse than dropping events.
 
 ### 7. Migration Path
 
@@ -567,18 +559,37 @@ buffer, and the 60s heartbeat is the safety net.
 
 Change `runInProcessSupervisor` to subscribe to EventBus and react to
 `work_updated`, `work_attested`, `work_released` events by calling
-`tryDispatch()` immediately. Keep the 30s heartbeat for lease renewal and
-stall detection. This is a ~50 line change.
+`tryDispatch()` immediately. Collapse the redundant `runHousekeeping` ticker
+into the heartbeat. Keep the 30s heartbeat (not 60s initially — use 30s to
+match existing lease renewal interval of 10 minutes within the 30-minute
+lease duration) for lease renewal and stall detection. This is a ~50 line
+change.
+
+The key insight: `work_updated` fires when a worker calls `fase work update
+--state done`, and `work_attested` fires when attestation completes. Both are
+already published by `UpdateWork` (service.go:2062) and `AttestWork`
+(service.go:2413). The supervisor just needs to subscribe and react.
 
 **Impact:** Dispatch latency drops from 0-30s to near-zero for the common
-case (work completed → next item dispatched).
+case (work completed → next item dispatched). Eliminates one of the two
+concurrent polling loops in serve mode.
 
-#### Phase 2: Process Watcher (medium risk)
+#### Phase 2: Eliminate Subprocess Polling (medium risk)
 
-Replace PID polling with `os.Process.Wait()` goroutines for child processes.
-For detached workers, fall back to heartbeat-based mtime checks.
+Replace `pollJobStatus` (which shells out to `fase status --json <job-id>`)
+with direct DB queries for job state. Add `os.Process.Wait()` goroutines for
+the `fase run` child process (not the detached `__run-job` worker). For
+detached workers, add `fsnotify` on the JSONL output directory
+(`.fase/raw/stdout/<jobID>/`) as a liveness signal with 10-minute stall
+threshold matching `isJobStalled`.
+
+This phase adds an `fsnotify` dependency. The alternative (skip fsnotify,
+keep mtime polling in heartbeat) is simpler but retains the 10-minute stall
+detection latency for detached workers.
 
 **Impact:** Crash detection drops from 0-30s to near-zero for child processes.
+Eliminates subprocess spawning overhead from `pollJobStatus` (~1 subprocess
+per in-flight job per 30s cycle).
 
 #### Phase 3: Recovery Engine (medium risk)
 
@@ -596,14 +607,66 @@ circuit breaker.
 
 #### Phase 5: Live Session Integration (high risk)
 
-Migrate dispatch from subprocess `spawnRun` to `LiveAgentAdapter.StartSession`
-+ `StartTurn`. The supervisor manages session lifecycles directly and receives
-adapter events on the session channel.
+Migrate dispatch from subprocess `spawnRun` (which spawns `fase run --json`
+as a child, which in turn calls `launchDetachedWorker` to fork a detached
+`__run-job`) to `LiveAgentAdapter.StartSession` + `StartTurn`. The supervisor
+manages session lifecycles directly and receives adapter events on the session
+channel. This eliminates the two-level process hierarchy entirely.
+
+All 4 live adapters (native conductor, codex JSON-RPC, pi JSONL, opencode
+REST+SSE) already implement the `LiveAgentAdapter` interface. The 2 remaining
+subprocess-only adapters (gemini, factory) would either get live
+implementations or continue on the subprocess path.
 
 **Impact:** Full event-driven lifecycle — no PID polling, no mtime checks,
-structured error reporting from adapters.
+no subprocess spawning for status, structured error reporting from adapters.
 
-### 8. Interface Changes
+### 8. Two-Tier Adapter Architecture
+
+The codebase has two distinct dispatch paths that the event-driven supervisor
+must bridge:
+
+| Tier | Interface | Used By | Events | Session Lifecycle |
+|------|-----------|---------|--------|-------------------|
+| **Subprocess** | `adapterapi.Adapter` | `supervisor_loop.go` via `spawnRun` | None — fire-and-forget | `fase run` → `__run-job` (detached) |
+| **Live** | `adapterapi.LiveAgentAdapter` | `native conductor` via `StartSession` | Per-session `Events()` channel | Supervisor manages directly |
+
+The subprocess tier (claude, codex, opencode, pi, gemini, factory adapters in
+`adapterapi.Adapter`) spawns CLI processes, returns `*RunHandle` with
+stdout/stderr pipes, and does NOT emit events on any EventBus. Job completion
+is detected via polling `fase status --json`.
+
+The live tier (native, codex-live, opencode-live, pi-live adapters in
+`adapterapi.LiveAgentAdapter`) maintains persistent sessions and emits
+structured events (`turn.completed`, `turn.failed`, `session.closed`, etc.) on
+a per-session channel. The native conductor is the only adapter that currently
+bridges live sessions with the EventBus — it subscribes to EventBus events and
+forwards them as steers to active workers via `conductorSession.conductorLoop`
+(native/live.go:257).
+
+The event-driven supervisor must handle both tiers during the migration:
+subprocess adapters via process watchers and fsnotify (Phases 1-2), live
+adapters via session event channels (Phase 5).
+
+### 9. Reconciliation and Startup Behavior
+
+The current `ReconcileOnStartup` (service.go:1738) is a blunt reset:
+1. Releases all expired leases
+2. **Fails all orphan jobs** — marks `JobStateRunning` → `JobStateFailed`
+3. **Releases all stale claims** — resets `claimed`/`in_progress` → `ready`
+
+This means any work in-flight when the supervisor restarts is failed and
+returned to the ready pool. The event-driven supervisor should preserve this
+behavior for startup safety, but the recovery engine (Phase 3) should add a
+more nuanced approach: check git for committed work on failed-orphaned items
+before resetting them.
+
+The `ReconcileExpiredLeases` (service.go:1715) runs every cycle and is
+responsible for releasing claims where `claimed_until <= now`. This remains
+necessary as a heartbeat function but should be triggered less frequently
+(every 60s) since event-driven reactions handle the hot path.
+
+### 10. Interface Changes
 
 #### New: `eventDrivenLoop` (replaces or wraps `supervisorLoop`)
 
@@ -623,7 +686,6 @@ func (l *eventDrivenLoop) tryDispatch(ctx context.Context, svc *service.Service)
 ```
 
 #### Modified: `WorkEvent` (extended payload)
-
 Add `JobID`, `Adapter`, `Metadata` fields. Backward compatible — existing
 subscribers ignore new fields.
 
@@ -637,7 +699,7 @@ Persisted to `.fase/adapter_health.json`.
 Policy-driven recovery for premature exits, stalls, and attestation failures.
 Configured via `config.toml` recovery section.
 
-### 9. Non-Goals
+### 11. Non-Goals
 
 - **Distributed supervisor.** Single-process supervisor is sufficient for the
   current single-repo, single-machine deployment model.
@@ -649,15 +711,18 @@ Configured via `config.toml` recovery section.
 - **Replacing the EventBus.** The current simple fan-out bus is adequate.
   No need for a message broker, persistent queue, or pub/sub system.
 
-### 10. Risks
+### 12. Risks
 
 | Risk | Mitigation |
 |------|------------|
 | Event storms (many rapid mutations) | Debounce dispatch attempts; at most one dispatch evaluation per 500ms |
-| Missed events (buffer overflow) | 60s heartbeat catches anything missed; larger buffer (256) |
+| Missed events (buffer overflow) | Heartbeat catches anything missed; increase supervisor buffer to 256 |
 | Recovery engine makes wrong call | Start with deterministic-only auto-recovery; human review for judgment calls |
 | Process watcher goroutine leak | Track watchers in map; clean up on supervisor shutdown |
 | Backward compatibility | `supervisorLoop` is embedded, not replaced; all existing behavior preserved |
+| fsnotify dependency (Phase 2) | New external dependency; gate behind build tag if needed; fallback to mtime polling |
+| Two-tier adapter migration (Phase 5) | Subprocess and live adapters coexist during migration; no flag day |
+| ForbiddenAdapters routing gap | Scoring router checks forbidden adapters at dispatch time (fixes existing bug) |
 
 ## Consequences
 

@@ -27,6 +27,7 @@ type supervisorLoop struct {
 	cwd                string
 	selfBin            string
 	configPath         string
+	defaultAdapter     string
 	dryRun             bool
 	budget             *dailyUsage    // nil = no budget limits
 	limits             map[string]int // adapter/model -> max runs/day
@@ -171,7 +172,14 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 	report.InFlight = inFlightCount
 
 	// Fetch ready work.
-	readyItems, _ := svc.ReadyWork(ctx, l.maxConcurrent*2, false)
+	availableSlots := l.maxConcurrent - inFlightCount
+	if availableSlots <= 0 {
+		availableSlots = 0
+	}
+	if availableSlots == 0 {
+		return report
+	}
+	readyItems, _ := svc.ReadyWork(ctx, availableSlots*2, false)
 	report.Ready = len(readyItems)
 
 	// Step 5: Dispatch ready work to available capacity.
@@ -207,7 +215,7 @@ func (l *supervisorLoop) runOneCycle(ctx context.Context, svc *service.Service) 
 		if l.budget != nil {
 			effectivePool = budgetFilter(workRotation, l.limits, l.budget)
 		}
-		adapter, model := pickAdapterModel(item, jobHistory, effectivePool)
+		adapter, model := pickAdapterModelWithFallback(item, jobHistory, effectivePool, l.defaultAdapter)
 
 		if l.dryRun {
 			report.Dispatched = append(report.Dispatched, dispatchEntry{
@@ -331,6 +339,10 @@ func (l *supervisorLoop) cancelInFlight(ctx context.Context, svc *service.Servic
 		removeSSHKeyFile(flight.sshKeyPath)
 		if l.ca != nil && flight.agentEmail != "" {
 			l.ca.removeAllowedSigner(flight.agentEmail)
+		}
+		if flight.worktreePath != "" {
+			_ = removeWorktree(l.cwd, flight.worktreePath)
+			deleteBranch(l.cwd, flight.branchName)
 		}
 	}
 }

@@ -16,13 +16,14 @@ import (
 
 // Capability constants — the canonical string names checked by the CLI.
 const (
-	CapWorkUpdate  = "work:update"
-	CapWorkNoteAdd = "work:note-add"
-	CapWorkAttest  = "work:attest"
-	CapWorkCreate  = "work:create"
-	CapWorkEdgeAdd = "work:edge-add"
-	CapWorkApprove = "work:approve"
-	CapWorkReject  = "work:reject"
+	CapWorkUpdate    = "work:update"
+	CapWorkNoteAdd   = "work:note-add"
+	CapWorkAttest    = "work:attest"
+	CapWorkCreate    = "work:create"
+	CapWorkEdgeAdd   = "work:edge-add"
+	CapWorkApprove   = "work:approve"
+	CapWorkReject    = "work:reject"
+	CapWorkForceDone = "work:force-done"
 
 	EnvAgentToken       = "FASE_AGENT_TOKEN"
 	LegacyEnvAgentToken = "CAGENT_AGENT_TOKEN"
@@ -42,6 +43,9 @@ var roleCapabilities = map[string][]string{
 	"attestor": {CapWorkAttest, CapWorkNoteAdd},
 	"reviewer": {CapWorkApprove, CapWorkReject, CapWorkNoteAdd},
 	"planner":  {CapWorkCreate, CapWorkEdgeAdd, CapWorkNoteAdd},
+	// overseer is the host/supervisor role — it holds all standard caps plus the
+	// force-done escape hatch for manual recovery.
+	"overseer": {CapWorkUpdate, CapWorkNoteAdd, CapWorkAttest, CapWorkCreate, CapWorkEdgeAdd, CapWorkApprove, CapWorkReject, CapWorkForceDone},
 }
 
 // CapabilitiesForRole returns the standard capability slice for a role.

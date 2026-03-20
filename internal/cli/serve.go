@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -34,6 +35,7 @@ import (
 type wsHub struct {
 	mu      sync.Mutex
 	clients map[chan []byte]struct{}
+	drops   atomic.Int64
 }
 
 func newWSHub() *wsHub {
@@ -68,9 +70,14 @@ func (h *wsHub) broadcast(eventType string, data any) {
 	for ch := range h.clients {
 		select {
 		case ch <- msg:
-		default: // drop if client is slow
+		default:
+			h.drops.Add(1)
 		}
 	}
+}
+
+func (h *wsHub) Drops() int64 {
+	return h.drops.Load()
 }
 
 func supervisorAvailableSlots(inFlightCount, maxConcurrent int, spawnedCompletionJob bool) int {
@@ -205,7 +212,7 @@ Examples:
   fase serve --host 0.0.0.0           # accessible via Tailscale/LAN
   fase serve --no-browser             # don't open browser on start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, devAssets)
+			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, defaultAdapter, devAssets)
 		},
 	}
 
@@ -221,7 +228,7 @@ Examples:
 	return cmd
 }
 
-func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, devAssets string) error {
+func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, defaultAdapter, devAssets string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -319,7 +326,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, hub, &supLoop)
+			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, defaultAdapter, hub, &supLoop)
 		}()
 	}
 
@@ -1413,7 +1420,7 @@ func truncateText(text string, limit int) string {
 // runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
 // Only active when --auto is set. Delegates to supervisorLoop for the core 5-step algorithm.
 // loopOut is set to the loop pointer before the first cycle so HTTP handlers can call Pause/Resume.
-func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, hub *wsHub, loopOut **supervisorLoop) {
+func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, defaultAdapter string, hub *wsHub, loopOut **supervisorLoop) {
 	selfBin, err := os.Executable()
 	if err != nil {
 		selfBin = "fase"
@@ -1431,23 +1438,23 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		sweepStaleTokenFiles(stateDir, 2*time.Hour)
 	}
 
-	// Load config for budget-aware rotation and apply to the package-level pool.
 	cfg, _ := core.LoadConfig(root.configPath)
 	if len(cfg.Rotation.Entries) > 0 {
 		workRotation = rotationFromConfig(cfg)
 	}
 
-	loop := newSupervisorLoop(maxConcurrent, cwd, selfBin, root.configPath)
-	loop.ca = ca
+	edLoop := newEventDrivenLoop(maxConcurrent, cwd, selfBin, root.configPath)
+	edLoop.defaultAdapter = defaultAdapter
+	edLoop.ca = ca
 	if loopOut != nil {
-		*loopOut = loop
+		*loopOut = &edLoop.supervisorLoop
 	}
-	loop.budget = newDailyUsage(stateDir)
-	loop.limits = buildLimitsMap(cfg)
-	loop.onJobStarted = func(workID, jobID, adapter string) {
+	edLoop.budget = newDailyUsage(stateDir)
+	edLoop.limits = buildLimitsMap(cfg)
+	edLoop.onJobStarted = func(workID, jobID, adapter string) {
 		hub.broadcast("job_started", map[string]string{"work_id": workID, "job_id": jobID, "adapter": adapter})
 	}
-	loop.onJobCompleted = func(workID, jobID, state string) {
+	edLoop.onJobCompleted = func(workID, jobID, state string) {
 		if state == "failed" || state == "cancelled" || state == "stalled" {
 			hub.broadcast("work_updated", map[string]string{
 				"work_id": workID, "job_id": jobID, "state": state,
@@ -1459,22 +1466,5 @@ func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd strin
 		}
 	}
 
-	for {
-		select {
-		case <-ctx.Done():
-			loop.cancelInFlight(ctx, svc)
-			return
-		default:
-		}
-
-		report := loop.runOneCycle(ctx, svc)
-		writeSupState(cwd, report.Cycle, loop.IsPaused(), loop.snapshotInFlight(), report)
-
-		select {
-		case <-ctx.Done():
-			loop.cancelInFlight(ctx, svc)
-			return
-		case <-time.After(30 * time.Second):
-		}
-	}
+	edLoop.run(ctx, svc)
 }

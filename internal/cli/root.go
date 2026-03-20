@@ -89,6 +89,7 @@ type workUpdateOptions struct {
 	jobID          string
 	sessionID      string
 	artifactID     string
+	force          bool
 }
 
 type workNoteOptions struct {
@@ -1071,8 +1072,8 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = svc.Close() }()
 
-			// Self-heal: release orphaned claims before listing ready work.
-			_, _ = svc.ReconcileOnStartup(context.Background())
+			// Self-heal: release only expired claims before listing ready work.
+			_, _ = svc.ReconcileExpiredLeases(context.Background())
 
 			items, err := svc.ReadyWork(context.Background(), readyOpts.limit, readyOpts.includeArchived)
 			if err != nil {
@@ -1119,8 +1120,8 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			}
 			defer func() { _ = svc.Close() }()
 
-			// Self-heal: release orphaned claims before claiming next.
-			_, _ = svc.ReconcileOnStartup(context.Background())
+			// Self-heal: release only expired claims before claiming next.
+			_, _ = svc.ReconcileExpiredLeases(context.Background())
 
 			work, err := svc.ClaimNextWork(context.Background(), service.WorkClaimNextRequest{
 				Claimant:      claimOpts.claimant,
@@ -1196,6 +1197,11 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			if err := checkCapability(core.CapWorkUpdate); err != nil {
 				return err
 			}
+			if updateOpts.force {
+				if err := checkCapability(core.CapWorkForceDone); err != nil {
+					return err
+				}
+			}
 			svc, err := service.Open(context.Background(), root.configPath)
 			if err != nil {
 				return err
@@ -1212,6 +1218,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				JobID:          updateOpts.jobID,
 				SessionID:      updateOpts.sessionID,
 				ArtifactID:     updateOpts.artifactID,
+				ForceDone:      updateOpts.force,
 				CreatedBy:      "cli",
 			})
 			if err != nil {
@@ -1228,6 +1235,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	updateCmd.Flags().StringVar(&updateOpts.jobID, "job", "", "related job id")
 	updateCmd.Flags().StringVar(&updateOpts.sessionID, "session", "", "related session id")
 	updateCmd.Flags().StringVar(&updateOpts.artifactID, "artifact", "", "related artifact id")
+	updateCmd.Flags().BoolVar(&updateOpts.force, "force", false, "bypass attestation guard (requires work:force-done capability; overseer role only)")
 
 	blockCmd := &cobra.Command{
 		Use:   "block <work-id>",
@@ -1502,6 +1510,12 @@ This guarantees every doc has a corresponding work item.`,
 			if err != nil {
 				return exitf(2, "invalid --metadata JSON: %v", err)
 			}
+			nonce := strings.TrimSpace(attestOpts.nonce)
+			if nonce == "" {
+				if workRec, workErr := svc.Work(context.Background(), args[0]); workErr == nil && workRec != nil {
+					nonce = attestationNonceFromWorkShow(workRec)
+				}
+			}
 
 			// Phase 3: load agent credential for attestation signing.
 			var signerPubkey string
@@ -1525,7 +1539,7 @@ This guarantees every doc has a corresponding work item.`,
 				SupersedesAttestationID: attestOpts.supersedesAttestationID,
 				Metadata:                metadata,
 				CreatedBy:               "cli",
-				Nonce:                   attestOpts.nonce,
+				Nonce:                   nonce,
 				SignerPubkey:            signerPubkey,
 			})
 			if err != nil {
@@ -3520,6 +3534,42 @@ func mapServiceError(err error) error {
 func mustJSON(v any) []byte {
 	encoded, _ := json.Marshal(v)
 	return encoded
+}
+
+func attestationNonceFromWorkShow(result *service.WorkShowResult) string {
+	if result == nil {
+		return ""
+	}
+	if nonce := stringMetadata(result.Work.Metadata, "attestation_nonce"); nonce != "" {
+		return nonce
+	}
+	for _, child := range result.Children {
+		if !strings.EqualFold(child.Kind, "attest") {
+			continue
+		}
+		if nonce := stringMetadata(child.Metadata, "attestation_nonce"); nonce != "" {
+			return nonce
+		}
+	}
+	return ""
+}
+
+func stringMetadata(metadata map[string]any, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	value, ok := metadata[key]
+	if !ok || value == nil {
+		return ""
+	}
+	switch v := value.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case []byte:
+		return strings.TrimSpace(string(v))
+	default:
+		return strings.TrimSpace(fmt.Sprint(v))
+	}
 }
 
 func parseJSONObjectFlag(value string) (map[string]any, error) {
