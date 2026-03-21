@@ -305,8 +305,12 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
-		// Also broadcast to WebSocket for web UI visibility
-		hub.broadcast("channel_message", map[string]string{"content": req.Content})
+		// Broadcast to WebSocket — proxy relays as claude/channel notification.
+		broadcastData := map[string]any{"content": req.Content}
+		if len(req.Meta) > 0 {
+			broadcastData["meta"] = req.Meta
+		}
+		hub.broadcast("channel_message", broadcastData)
 		writeJSONHTTP(w, 200, map[string]string{"status": "sent"})
 	})
 

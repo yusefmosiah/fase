@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -88,6 +89,10 @@ Use this in .mcp.json instead of 'fase mcp stdio'.`,
 // runMCPProxy proxies MCP JSON-RPC between stdio and serve's HTTP endpoint.
 // Tool calls: stdin → HTTP POST → stdout (SSE events parsed and relayed).
 // Channel notifications: WebSocket /ws → stdout (push from serve to client).
+// proxyStdoutMu synchronizes writes to stdout from the main goroutine
+// (MCP responses) and the WebSocket goroutine (channel notifications).
+var proxyStdoutMu sync.Mutex
+
 func runMCPProxy(ctx context.Context, endpoint string) error {
 	client := &http.Client{}
 
@@ -134,15 +139,18 @@ func runMCPProxy(ctx context.Context, endpoint string) error {
 		}
 
 		// Parse SSE response and relay as raw JSON lines.
+		proxyStdoutMu.Lock()
 		if strings.Contains(resp.Header.Get("Content-Type"), "text/event-stream") {
 			relaySSEToStdout(resp.Body)
 		} else {
 			if _, err := io.Copy(os.Stdout, resp.Body); err != nil {
 				resp.Body.Close()
+				proxyStdoutMu.Unlock()
 				return fmt.Errorf("proxy response: %w", err)
 			}
 			fmt.Fprintln(os.Stdout)
 		}
+		proxyStdoutMu.Unlock()
 		resp.Body.Close()
 	}
 	return scanner.Err()
@@ -293,7 +301,9 @@ func listenWebSocketChannels(ctx context.Context, wsURL string) error {
 				},
 			}
 			notifJSON, _ := json.Marshal(notification)
+			proxyStdoutMu.Lock()
 			fmt.Fprintln(os.Stdout, string(notifJSON))
+			proxyStdoutMu.Unlock()
 		}
 	}
 }
