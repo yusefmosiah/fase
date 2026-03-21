@@ -9,6 +9,7 @@ import (
 	"github.com/yusefmosiah/fase/internal/adapters/codex"
 	"github.com/yusefmosiah/fase/internal/adapters/factory"
 	"github.com/yusefmosiah/fase/internal/adapters/gemini"
+	"github.com/yusefmosiah/fase/internal/adapters/native"
 	"github.com/yusefmosiah/fase/internal/adapters/opencode"
 	"github.com/yusefmosiah/fase/internal/adapters/pi"
 	"github.com/yusefmosiah/fase/internal/core"
@@ -22,6 +23,7 @@ func CatalogFromConfig(cfg core.Config) []Diagnosis {
 		describeAdapter(context.Background(), claude.New(cfg.Adapters.Claude.Binary, cfg.Adapters.Claude.Enabled)),
 		describeAdapter(context.Background(), factory.New(cfg.Adapters.Factory.Binary, cfg.Adapters.Factory.Enabled)),
 		describeAdapter(context.Background(), gemini.New(cfg.Adapters.Gemini.Binary, cfg.Adapters.Gemini.Enabled)),
+		describeAdapter(context.Background(), native.New(cfg.Adapters.Native.Binary, cfg.Adapters.Native.Enabled)),
 		describeAdapter(context.Background(), opencode.New(cfg.Adapters.OpenCode.Binary, cfg.Adapters.OpenCode.Enabled)),
 		describeAdapter(context.Background(), pi.New(cfg.Adapters.Pi.Binary, cfg.Adapters.Pi.Enabled)),
 		describeAdapter(context.Background(), codex.New(cfg.Adapters.Codex.Binary, cfg.Adapters.Codex.Enabled)),
@@ -46,6 +48,8 @@ func Resolve(ctx context.Context, cfg core.Config, name string) (adapterapi.Adap
 		adapter = factory.New(cfg.Adapters.Factory.Binary, cfg.Adapters.Factory.Enabled)
 	case "gemini":
 		adapter = gemini.New(cfg.Adapters.Gemini.Binary, cfg.Adapters.Gemini.Enabled)
+	case "native":
+		adapter = native.New(cfg.Adapters.Native.Binary, cfg.Adapters.Native.Enabled)
 	case "opencode":
 		adapter = opencode.New(cfg.Adapters.OpenCode.Binary, cfg.Adapters.OpenCode.Enabled)
 	case "pi":

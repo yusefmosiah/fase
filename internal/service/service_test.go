@@ -1507,6 +1507,28 @@ func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 	}
 }
 
+func TestDetachedExecutablePathPrefersCurrentBinaryOutsideGoTest(t *testing.T) {
+	t.Setenv("FASE_EXECUTABLE", "/stale/fase")
+	original := osExecutable
+	osExecutable = func() (string, error) { return "/opt/fase/bin/fase", nil }
+	defer func() { osExecutable = original }()
+
+	got, err := detachedExecutablePath()
+	if err != nil {
+		t.Fatalf("detachedExecutablePath returned error: %v", err)
+	}
+	if got != "/opt/fase/bin/fase" {
+		t.Fatalf("expected current executable to win over stale env override, got %q", got)
+	}
+}
+
+func TestDiagnosticMessageHandlesStringError(t *testing.T) {
+	got := diagnosticMessage(map[string]any{"error": "provider exploded"})
+	if got != "provider exploded" {
+		t.Fatalf("expected string error to be returned, got %q", got)
+	}
+}
+
 func TestInspectBootstrapClassifiesStandardProject(t *testing.T) {
 	root := t.TempDir()
 	mustWriteFile(t, filepath.Join(root, "AGENTS.md"), "# instructions\n")

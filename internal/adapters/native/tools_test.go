@@ -48,6 +48,9 @@ func TestToolRegistryDefinitionsAndExecute(t *testing.T) {
 	if got := openAI[0].Parameters["type"]; got != "object" {
 		t.Fatalf("expected default schema object, got %v", got)
 	}
+	if props, ok := openAI[0].Parameters["properties"].(map[string]any); !ok || len(props) != 0 {
+		t.Fatalf("expected empty properties map for parameterless tool, got %+v", openAI[0].Parameters["properties"])
+	}
 	openAI[0].Parameters["mutated"] = true
 	if defsAgain := registry.Definitions(); defsAgain[0].Parameters["mutated"] != nil {
 		t.Fatalf("definitions should be cloned, got %+v", defsAgain[0].Parameters)

@@ -8,7 +8,6 @@ import (
 	"sync/atomic"
 
 	"github.com/yusefmosiah/fase/internal/adapterapi"
-	"github.com/yusefmosiah/fase/internal/service"
 )
 
 type nativeSessionConfig struct {
@@ -17,7 +16,7 @@ type nativeSessionConfig struct {
 	client   LLMClient
 	registry *ToolRegistry
 	steerCh  <-chan adapterapi.SteerEvent
-	svc      *service.Service
+	svc      any
 	resumed  bool
 	manager  *coAgentManager
 }
@@ -33,7 +32,7 @@ type nativeSession struct {
 
 	eventCh chan adapterapi.Event
 	steerQ  chan adapterapi.SteerEvent
-	svc     *service.Service
+	svc     any
 	manager *coAgentManager
 
 	ctx    context.Context

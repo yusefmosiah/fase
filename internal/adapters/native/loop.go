@@ -12,6 +12,7 @@ import (
 func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 	for {
 		response, err := s.client.Call(ctx, LLMRequest{
+			System:             defaultSystemPrompt(),
 			Messages:           s.snapshotHistory(),
 			Tools:              s.tools,
 			Stream:             true,
@@ -55,6 +56,10 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			return fmt.Errorf("native session: unsupported stop reason %q", response.StopReason)
 		}
 	}
+}
+
+func defaultSystemPrompt() string {
+	return "You are the FASE native coding agent. Help with software tasks, use tools when needed, and keep responses concise and actionable."
 }
 
 func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Message, error) {

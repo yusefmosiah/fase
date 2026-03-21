@@ -197,3 +197,128 @@ func TestOpenAIClientCallStream(t *testing.T) {
 		t.Fatalf("unexpected response: %+v", resp)
 	}
 }
+
+func TestOpenAIClientDefaultsInstructions(t *testing.T) {
+	var requestBody openAIRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}`)
+	}))
+	defer srv.Close()
+
+	client, err := NewOpenAIClient(Provider{
+		Name:      providerChatGPT,
+		APIFormat: apiFormatOpenAI,
+		BaseURL:   srv.URL,
+		ModelID:   "gpt-5.4-mini",
+		AuthFunc: func(context.Context) (string, error) {
+			return "Bearer openai-token", nil
+		},
+	}, srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAIClient: %v", err)
+	}
+
+	_, err = client.Call(context.Background(), LLMRequest{
+		Messages: []Message{{
+			Role: "user",
+			Content: []ContentBlock{{
+				Type: "text",
+				Text: "say ok",
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if strings.TrimSpace(requestBody.Instructions) == "" {
+		t.Fatalf("expected default instructions to be sent, got %+v", requestBody)
+	}
+}
+
+func TestOpenAIClientOmitsPreviousResponseIDForChatGPTProvider(t *testing.T) {
+	var requestBody openAIRequest
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&requestBody); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"id":"resp_1","output":[{"type":"message","content":[{"type":"output_text","text":"OK"}]}]}`)
+	}))
+	defer srv.Close()
+
+	client, err := NewOpenAIClient(Provider{
+		Name:      providerChatGPT,
+		APIFormat: apiFormatOpenAI,
+		BaseURL:   srv.URL,
+		ModelID:   "gpt-5.4-mini",
+		AuthFunc: func(context.Context) (string, error) {
+			return "Bearer openai-token", nil
+		},
+	}, srv.Client())
+	if err != nil {
+		t.Fatalf("NewOpenAIClient: %v", err)
+	}
+
+	_, err = client.Call(context.Background(), LLMRequest{
+		System:             "system",
+		PreviousResponseID: "resp_prev",
+		Messages: []Message{{
+			Role: "user",
+			Content: []ContentBlock{{
+				Type: "text",
+				Text: "say ok",
+			}},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if requestBody.PreviousResponseID != "" {
+		t.Fatalf("expected previous_response_id to be omitted for chatgpt provider, got %+v", requestBody)
+	}
+}
+
+func TestOpenAIInputEncodesToolUseArgumentsAsString(t *testing.T) {
+	items := openAIInput([]Message{{
+		Role: "assistant",
+		Content: []ContentBlock{{
+			Type:  "tool_use",
+			ID:    "call_1",
+			Name:  "grep",
+			Input: json.RawMessage(`{"pattern":"TODO"}`),
+		}},
+	}})
+	if len(items) != 1 {
+		t.Fatalf("expected one item, got %+v", items)
+	}
+	if items[0].Arguments != `{"pattern":"TODO"}` {
+		t.Fatalf("expected tool arguments to stay JSON string, got %+v", items[0])
+	}
+}
+
+func TestOpenAIInputEmitsToolResultItemsAlongsideText(t *testing.T) {
+	items := openAIInput([]Message{{
+		Role: "user",
+		Content: []ContentBlock{
+			{Type: "text", Text: "steer"},
+			{Type: "tool_result", ToolUseID: "call_1", Text: "done"},
+			{Type: "tool_result", ToolUseID: "call_2", Text: "done2"},
+		},
+	}})
+	if len(items) != 3 {
+		t.Fatalf("expected text plus two tool outputs, got %+v", items)
+	}
+	if items[0].Role != "user" {
+		t.Fatalf("expected first item to preserve user text, got %+v", items[0])
+	}
+	if items[1].Type != "function_call_output" || items[1].CallID != "call_1" || items[1].Output != "done" {
+		t.Fatalf("unexpected first tool output item: %+v", items[1])
+	}
+	if items[2].Type != "function_call_output" || items[2].CallID != "call_2" || items[2].Output != "done2" {
+		t.Fatalf("unexpected second tool output item: %+v", items[2])
+	}
+}

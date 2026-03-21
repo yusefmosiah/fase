@@ -13,7 +13,6 @@ import (
 	"github.com/yusefmosiah/fase/internal/adapters/opencode"
 	"github.com/yusefmosiah/fase/internal/adapters/pi"
 	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/service"
 )
 
 type Adapter struct {
@@ -174,7 +173,7 @@ func writeNativeEvent(w io.Writer, payload map[string]any) {
 
 // LiveAdapter creates provider-backed native live sessions.
 type LiveAdapter struct {
-	svc         *service.Service
+	svc         any
 	baseTools   []Tool
 	httpClient  HTTPDoer
 	newClientFn func(provider Provider, httpClient HTTPDoer) (LLMClient, error)
@@ -182,7 +181,7 @@ type LiveAdapter struct {
 }
 
 // NewLiveAdapter creates a native live adapter with optional shared tools.
-func NewLiveAdapter(svc *service.Service, registry *ToolRegistry) *LiveAdapter {
+func NewLiveAdapter(svc any, registry *ToolRegistry) *LiveAdapter {
 	var baseTools []Tool
 	if registry != nil {
 		baseTools = append(baseTools, registry.Tools()...)
@@ -265,7 +264,7 @@ func (a *LiveAdapter) buildRegistry(cwd string, manager *coAgentManager) (*ToolR
 	return registry, nil
 }
 
-func defaultCoAgentAdapters(svc *service.Service, codexBinary string) map[string]adapterapi.LiveAgentAdapter {
+func defaultCoAgentAdapters(svc any, codexBinary string) map[string]adapterapi.LiveAgentAdapter {
 	live := map[string]adapterapi.LiveAgentAdapter{
 		"codex":    codex.NewLiveAdapter(defaultBinary(codexBinary, "codex")),
 		"opencode": opencode.NewLiveAdapter("opencode"),

@@ -173,12 +173,13 @@ func toolFromFunc(name, description string, parameters map[string]any, fn func(c
 }
 
 func jsonSchemaObject(properties map[string]any, required []string, additionalProperties bool) map[string]any {
+	if properties == nil {
+		properties = map[string]any{}
+	}
 	schema := map[string]any{
 		"type":                 "object",
+		"properties":           properties,
 		"additionalProperties": additionalProperties,
-	}
-	if len(properties) > 0 {
-		schema["properties"] = properties
 	}
 	if len(required) > 0 {
 		schema["required"] = required

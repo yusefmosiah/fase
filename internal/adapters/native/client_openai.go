@@ -23,18 +23,19 @@ type openAIRequest struct {
 	Instructions       string       `json:"instructions,omitempty"`
 	Input              []openAIItem `json:"input,omitempty"`
 	Tools              []openAITool `json:"tools,omitempty"`
+	Store              bool         `json:"store"`
 	Stream             bool         `json:"stream,omitempty"`
 	PreviousResponseID string       `json:"previous_response_id,omitempty"`
 }
 
 type openAIItem struct {
-	Type      string          `json:"type,omitempty"`
-	Role      string          `json:"role,omitempty"`
-	Content   any             `json:"content,omitempty"`
-	Name      string          `json:"name,omitempty"`
-	CallID    string          `json:"call_id,omitempty"`
-	Arguments json.RawMessage `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	Type      string `json:"type,omitempty"`
+	Role      string `json:"role,omitempty"`
+	Content   any    `json:"content,omitempty"`
+	Name      string `json:"name,omitempty"`
+	CallID    string `json:"call_id,omitempty"`
+	Arguments string `json:"arguments,omitempty"`
+	Output    string `json:"output,omitempty"`
 }
 
 type openAITool struct {
@@ -67,13 +68,20 @@ type openAIResponseContent struct {
 }
 
 func (c *openAIClient) Call(ctx context.Context, req LLMRequest) (*LLMResponse, error) {
+	instructions := strings.TrimSpace(req.System)
+	if instructions == "" {
+		instructions = defaultSystemPrompt()
+	}
 	payload := openAIRequest{
-		Model:              c.provider.ModelID,
-		Instructions:       req.System,
-		Input:              openAIInput(req.Messages),
-		Tools:              openAITools(req.Tools),
-		Stream:             req.Stream,
-		PreviousResponseID: req.PreviousResponseID,
+		Model:        c.provider.ModelID,
+		Instructions: instructions,
+		Input:        openAIInput(req.Messages),
+		Tools:        openAITools(req.Tools),
+		Store:        false,
+		Stream:       req.Stream,
+	}
+	if c.provider.Name != providerChatGPT {
+		payload.PreviousResponseID = req.PreviousResponseID
 	}
 	httpReq, err := newJSONRequest(ctx, http.MethodPost, c.provider.BaseURL, payload)
 	if err != nil {
@@ -108,19 +116,17 @@ func (c *openAIClient) Call(ctx context.Context, req LLMRequest) (*LLMResponse, 
 func openAIInput(messages []Message) []openAIItem {
 	out := make([]openAIItem, 0, len(messages))
 	for _, msg := range messages {
-		// OpenAI accepts regular text messages and tool call IO items in the same input array.
-		if len(msg.Content) == 1 && msg.Content[0].Type == "tool_result" {
-			block := msg.Content[0]
-			out = append(out, openAIItem{
-				Type:   "function_call_output",
-				CallID: block.ToolUseID,
-				Output: block.Text,
-			})
-			continue
-		}
-
 		var parts []map[string]string
-		var textBuilder strings.Builder
+		flushText := func() {
+			if len(parts) == 0 {
+				return
+			}
+			out = append(out, openAIItem{
+				Role:    msg.Role,
+				Content: parts,
+			})
+			parts = nil
+		}
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "text":
@@ -129,28 +135,25 @@ func openAIInput(messages []Message) []openAIItem {
 						"type": "input_text",
 						"text": block.Text,
 					})
-					textBuilder.WriteString(block.Text)
 				}
 			case "tool_use":
+				flushText()
 				out = append(out, openAIItem{
 					Type:      "function_call",
 					CallID:    block.ID,
 					Name:      block.Name,
-					Arguments: canonicalJSON(block.Input),
+					Arguments: string(canonicalJSON(block.Input)),
+				})
+			case "tool_result":
+				flushText()
+				out = append(out, openAIItem{
+					Type:   "function_call_output",
+					CallID: block.ToolUseID,
+					Output: block.Text,
 				})
 			}
 		}
-		if len(parts) > 0 {
-			out = append(out, openAIItem{
-				Role:    msg.Role,
-				Content: parts,
-			})
-		} else if textBuilder.Len() > 0 {
-			out = append(out, openAIItem{
-				Role:    msg.Role,
-				Content: textBuilder.String(),
-			})
-		}
+		flushText()
 	}
 	return out
 }
