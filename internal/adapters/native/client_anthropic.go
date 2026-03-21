@@ -31,7 +31,8 @@ type anthropicRequest struct {
 }
 
 type anthropicThinking struct {
-	Type string `json:"type"` // "adaptive"
+	Type         string `json:"type"`                    // "adaptive" or "enabled"
+	BudgetTokens int    `json:"budget_tokens,omitempty"` // only for type="enabled" (legacy)
 }
 
 type anthropicOutputCfg struct {
@@ -99,8 +100,18 @@ func (c *anthropicClient) Call(ctx context.Context, req LLMRequest) (*LLMRespons
 		AnthropicVersion: c.provider.AnthropicVersion,
 	}
 	if req.ReasoningEffort != "" {
-		payload.Thinking = &anthropicThinking{Type: "adaptive"}
-		payload.OutputConfig = &anthropicOutputCfg{Effort: req.ReasoningEffort}
+		if supportsAdaptiveThinking(c.provider.ModelID) {
+			payload.Thinking = &anthropicThinking{Type: "adaptive"}
+			payload.OutputConfig = &anthropicOutputCfg{Effort: req.ReasoningEffort}
+		} else {
+			// Older models: use legacy extended thinking with budget_tokens.
+			budget := map[string]int{"low": 1024, "medium": 4096, "high": 16384, "max": 65536}
+			tokens := budget[req.ReasoningEffort]
+			if tokens == 0 {
+				tokens = 4096
+			}
+			payload.Thinking = &anthropicThinking{Type: "enabled", BudgetTokens: tokens}
+		}
 	}
 	// Bedrock: model goes in URL path, not body. Stream flag not in body.
 	if !c.provider.ModelInPath {
@@ -135,6 +146,24 @@ func (c *anthropicClient) Call(ctx context.Context, req LLMRequest) (*LLMRespons
 		return parseAnthropicStream(resp, req.OnDelta)
 	}
 	return parseAnthropicResponse(resp)
+}
+
+// supportsAdaptiveThinking returns true for models that support type="adaptive".
+// Older models (haiku 4.5, sonnet 4.5) only support type="enabled" with budget_tokens.
+func supportsAdaptiveThinking(modelID string) bool {
+	// Adaptive thinking is supported on Sonnet 4.6+ and Opus 4.6+.
+	// GLM models on z.ai also support it.
+	for _, prefix := range []string{
+		"claude-sonnet-4-6", "claude-opus-4-6",
+		"us.anthropic.claude-sonnet-4-6", "us.anthropic.claude-opus-4-6",
+		"anthropic.claude-sonnet-4-6", "anthropic.claude-opus-4-6",
+		"glm-",
+	} {
+		if strings.HasPrefix(modelID, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func anthropicMessages(msgs []Message) []anthropicMessage {
