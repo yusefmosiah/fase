@@ -40,6 +40,7 @@ type nativeSession struct {
 
 	mu          sync.Mutex
 	activeTurn  string
+	toolErrors  int
 	turnCancel  context.CancelFunc
 	turnDone    chan struct{}
 	closed      bool

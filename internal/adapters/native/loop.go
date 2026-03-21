@@ -103,7 +103,14 @@ func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Mes
 
 		output, err := s.registry.Execute(ctx, call.Name, call.Arguments)
 		if err != nil {
-			output = fmt.Sprintf("tool_error: %v", err)
+			s.toolErrors++
+			if s.toolErrors >= 5 {
+				output = fmt.Sprintf("tool_error: %v\n\nWARNING: %d consecutive tool errors. This tool may be unavailable. Stop retrying and work with what you have.", err, s.toolErrors)
+			} else {
+				output = fmt.Sprintf("tool_error: %v", err)
+			}
+		} else {
+			s.toolErrors = 0
 		}
 		message.Content = append(message.Content, ContentBlock{
 			Type:      "tool_result",

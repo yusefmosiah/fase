@@ -252,8 +252,9 @@ func (a *LiveAdapter) buildRegistry(cwd string, manager *coAgentManager) (*ToolR
 	if err := RegisterCodingTools(registry, cwd); err != nil {
 		return nil, err
 	}
-	// Web tools (search + fetch) — available when EXA_API_KEY is set.
-	if os.Getenv("EXA_API_KEY") != "" {
+	// Web tools — available when any search API key is set.
+	if os.Getenv("EXA_API_KEY") != "" || os.Getenv("TAVILY_API_KEY") != "" ||
+		os.Getenv("BRAVE_API_KEY") != "" || os.Getenv("SERPER_API_KEY") != "" {
 		_ = registry.Register(WebSearchTool())
 		_ = registry.Register(WebFetchTool())
 	}
