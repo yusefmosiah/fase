@@ -3,18 +3,15 @@ package cli
 import (
 	"context"
 	"fmt"
-	"strings"
 	"sync"
 	"time"
 
 	"github.com/yusefmosiah/fase/internal/service"
 )
 
-// agenticSupervisor implements the agentic supervisor (ADR-0041).
-// The supervisor is a long-running adapter session. Each turn, the LLM uses
-// FASE MCP tools to inspect the queue, dispatch workers, and attest completed
-// work. Between turns, the loop waits for EventBus events and sends event
-// summaries as the next turn's prompt.
+// agenticSupervisor runs the supervisor as a regular adapter session (ADR-0041).
+// The LLM has FASE MCP tools and handles all dispatch/attestation logic.
+// The Go code just manages the session lifecycle.
 type agenticSupervisor struct {
 	svc     *service.Service
 	cwd     string
@@ -22,9 +19,9 @@ type agenticSupervisor struct {
 	adapter string
 	model   string
 
-	mu      sync.Mutex
-	paused  bool
-	hostCh  chan string // host messages injected via API
+	mu     sync.Mutex
+	paused bool
+	hostCh chan string
 }
 
 func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string) *agenticSupervisor {
@@ -52,17 +49,14 @@ func (s *agenticSupervisor) isPaused() bool {
 	return s.paused
 }
 
-// send injects a host message into the supervisor session. The message will
-// be included in the next turn's prompt, triggering the supervisor to act.
 func (s *agenticSupervisor) send(msg string) {
 	select {
 	case s.hostCh <- msg:
 	default:
-		// Drop if channel is full — host can retry.
 	}
 }
 
-// run is the main supervisor loop.
+// run is the supervisor loop. Start session, wait for events, send next turn.
 func (s *agenticSupervisor) run(ctx context.Context) {
 	ch := s.svc.Events.Subscribe()
 	defer s.svc.Events.Unsubscribe(ch)
@@ -70,7 +64,7 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	// First turn: cold-start with full supervisor hydration.
 	hydration, err := s.svc.ProjectHydrate(ctx, service.ProjectHydrateRequest{Mode: "supervisor"})
 	if err != nil {
-		s.log("error", fmt.Sprintf("failed to hydrate: %v", err))
+		s.log("error", fmt.Sprintf("hydrate failed: %v", err))
 		return
 	}
 	prompt := service.RenderProjectHydrateMarkdown(hydration)
@@ -84,129 +78,93 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 		Label:   "supervisor",
 	})
 	if err != nil {
-		s.log("error", fmt.Sprintf("failed to start supervisor session: %v", err))
+		s.log("error", fmt.Sprintf("failed to start: %v", err))
 		return
 	}
 	sessionID := result.Session.SessionID
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
 
-	// Wait for the first turn's job to complete, then enter the event loop.
-	// pendingInput carries events collected during waitForJob so they aren't lost.
-	pendingInput := s.waitForJob(ctx, ch, result.Job.JobID)
+	s.waitForJob(ctx, ch, result.Job.JobID)
 
 	for {
-		// Collect events and host messages until something interesting happens.
-		// If pendingInput has events from waitForJob, use those immediately
-		// instead of blocking for new ones.
-		var input turnInput
-		if len(pendingInput.events) > 0 || len(pendingInput.hostMessages) > 0 {
-			input = pendingInput
-			pendingInput = turnInput{}
-		} else {
-			input = s.collectInput(ctx, ch)
-		}
+		// Wait for something to happen: event or host message.
+		msg := s.waitForSignal(ctx, ch)
 		if ctx.Err() != nil {
 			return
 		}
 		if s.isPaused() {
-			pendingInput = turnInput{} // discard while paused
 			continue
 		}
 
-		// Send the next turn with events + host messages.
-		summary := formatTurnPrompt(input)
-		s.log("turn", fmt.Sprintf("session=%s events=%d host_msgs=%d", sessionID, len(input.events), len(input.hostMessages)))
+		s.log("turn", fmt.Sprintf("session=%s", sessionID))
 
 		sendResult, err := s.svc.Send(ctx, service.SendRequest{
 			SessionID: sessionID,
 			Adapter:   s.adapter,
-			Prompt:    summary,
+			Prompt:    msg,
 			Model:     s.model,
 		})
 		if err != nil {
-			s.log("error", fmt.Sprintf("send failed: %v — restarting session", err))
-			// Session may have died. Restart with fresh hydration.
+			s.log("error", fmt.Sprintf("send failed: %v — restarting", err))
 			s.restartAfterDelay(ctx, ch)
 			return
 		}
 
-		pendingInput = s.waitForJob(ctx, ch, sendResult.Job.JobID)
+		s.waitForJob(ctx, ch, sendResult.Job.JobID)
 	}
 }
 
-// waitForJob collects EventBus events until the given job reaches a terminal
-// state. Returns any relevant events collected during the wait so they can
-// be passed to the next supervisor turn (avoiding event loss).
-func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) turnInput {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
-
-	var collected turnInput
+// waitForSignal blocks until an event or host message arrives.
+// Returns a simple prompt — the LLM uses MCP tools to figure out what to do.
+func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.WorkEvent) string {
 	for {
 		select {
 		case <-ctx.Done():
-			return collected
-		case ev := <-ch:
-			if isRelevantEvent(ev) {
-				collected.events = append(collected.events, ev)
-			}
+			return ""
 		case msg := <-s.hostCh:
-			collected.hostMessages = append(collected.hostMessages, msg)
+			return fmt.Sprintf("Message from host: %s", msg)
+		case ev := <-ch:
+			switch ev.Kind {
+			case service.WorkEventCreated, service.WorkEventUpdated,
+				service.WorkEventAttested, service.WorkEventReleased:
+				// Debounce.
+				time.Sleep(2 * time.Second)
+				// Drain any burst.
+				for {
+					select {
+					case <-ch:
+					default:
+						goto done
+					}
+				}
+			done:
+				return "Queue state changed. Check ready_work and act."
+			}
+		}
+	}
+}
+
+// waitForJob polls until the supervisor's own turn job completes.
+func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) {
+	ticker := time.NewTicker(5 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ch:
+			// Discard — events during the supervisor's own turn are
+			// about the supervisor's job, not worker state changes.
+			// The LLM will call ready_work on its next turn anyway.
 		case <-ticker.C:
 			status, err := s.svc.Status(ctx, jobID)
 			if err != nil {
 				continue
 			}
 			if status.Job.State.Terminal() {
-				return collected
+				return
 			}
-		}
-	}
-}
-
-// turnInput holds events and host messages collected between turns.
-type turnInput struct {
-	events       []service.WorkEvent
-	hostMessages []string
-}
-
-// collectInput waits for at least one relevant event or host message, then
-// debounces and collects any additional input within 2 seconds.
-func (s *agenticSupervisor) collectInput(ctx context.Context, ch chan service.WorkEvent) turnInput {
-	var input turnInput
-
-	// Wait for the first signal.
-	for {
-		select {
-		case <-ctx.Done():
-			return input
-		case ev := <-ch:
-			if isRelevantEvent(ev) {
-				input.events = append(input.events, ev)
-				goto debounce
-			}
-		case msg := <-s.hostCh:
-			input.hostMessages = append(input.hostMessages, msg)
-			goto debounce
-		}
-	}
-
-debounce:
-	// Wait 2s, collecting any additional input.
-	timer := time.NewTimer(2 * time.Second)
-	defer timer.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return input
-		case ev := <-ch:
-			if isRelevantEvent(ev) {
-				input.events = append(input.events, ev)
-			}
-		case msg := <-s.hostCh:
-			input.hostMessages = append(input.hostMessages, msg)
-		case <-timer.C:
-			return input
 		}
 	}
 }
@@ -217,10 +175,8 @@ func (s *agenticSupervisor) restartAfterDelay(ctx context.Context, ch chan servi
 	select {
 	case <-ctx.Done():
 	case <-timer.C:
-		// Restart the supervisor loop.
 		go s.run(ctx)
 	}
-	// Drain events during the delay.
 	for {
 		select {
 		case <-ch:
@@ -233,59 +189,4 @@ func (s *agenticSupervisor) restartAfterDelay(ctx context.Context, ch chan servi
 func (s *agenticSupervisor) log(event, message string) {
 	s.hub.broadcast("supervisor_"+event, map[string]string{"message": message})
 	fmt.Printf("supervisor: %s %s\n", event, message)
-}
-
-func isRelevantEvent(ev service.WorkEvent) bool {
-	switch ev.Kind {
-	case service.WorkEventCreated, service.WorkEventUpdated,
-		service.WorkEventAttested, service.WorkEventReleased:
-		return true
-	}
-	return false
-}
-
-func formatTurnPrompt(input turnInput) string {
-	var b strings.Builder
-
-	if len(input.hostMessages) > 0 {
-		b.WriteString("Message from host:\n\n")
-		for _, msg := range input.hostMessages {
-			b.WriteString(msg)
-			b.WriteString("\n")
-		}
-		b.WriteString("\n")
-	}
-
-	if len(input.events) > 0 {
-		b.WriteString("Events since your last turn:\n\n")
-		for _, ev := range input.events {
-			title := ev.Title
-			if title == "" {
-				title = ev.WorkID
-			}
-			switch ev.Kind {
-			case service.WorkEventCreated:
-				fmt.Fprintf(&b, "- NEW: %s (%s) created\n", title, ev.WorkID)
-			case service.WorkEventUpdated:
-				if ev.PrevState != "" && ev.PrevState != ev.State {
-					fmt.Fprintf(&b, "- %s (%s): %s → %s\n", title, ev.WorkID, ev.PrevState, ev.State)
-				} else {
-					fmt.Fprintf(&b, "- %s (%s) updated (state: %s)\n", title, ev.WorkID, ev.State)
-				}
-			case service.WorkEventAttested:
-				fmt.Fprintf(&b, "- ATTESTED: %s (%s)\n", title, ev.WorkID)
-			case service.WorkEventReleased:
-				fmt.Fprintf(&b, "- RELEASED: %s (%s) — available for dispatch\n", title, ev.WorkID)
-			default:
-				fmt.Fprintf(&b, "- %s: %s (%s)\n", ev.Kind, title, ev.WorkID)
-			}
-		}
-	}
-
-	if len(input.events) == 0 && len(input.hostMessages) == 0 {
-		b.WriteString("No new events. Check the queue for any work that needs attention.")
-	}
-
-	b.WriteString("\nCheck the queue and take appropriate action (dispatch, attest, or wait).")
-	return b.String()
 }
