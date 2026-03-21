@@ -20,7 +20,7 @@ func NewAnthropicClient(provider Provider, httpClient HTTPDoer) (LLMClient, erro
 
 type anthropicRequest struct {
 	Model            string              `json:"model,omitempty"`
-	System           string              `json:"system,omitempty"`
+	System           any                 `json:"system,omitempty"`
 	Messages         []anthropicMessage  `json:"messages,omitempty"`
 	Tools            []anthropicTool     `json:"tools,omitempty"`
 	MaxTokens        int                 `json:"max_tokens"`
@@ -80,8 +80,17 @@ func (c *anthropicClient) Call(ctx context.Context, req LLMRequest) (*LLMRespons
 	if err != nil {
 		return nil, err
 	}
+	var systemPrompt any = req.System
+	// Bedrock: wrap system prompt with cache_control for prompt caching.
+	if c.provider.ModelInPath && req.System != "" {
+		systemPrompt = []map[string]any{{
+			"type":          "text",
+			"text":          req.System,
+			"cache_control": map[string]string{"type": "ephemeral"},
+		}}
+	}
 	payload := anthropicRequest{
-		System:           req.System,
+		System:           systemPrompt,
 		Messages:         anthropicMessages(req.Messages),
 		Tools:            anthropicTools(req.Tools),
 		MaxTokens:        65536,
@@ -132,6 +141,11 @@ func anthropicMessages(msgs []Message) []anthropicMessage {
 		item := anthropicMessage{Role: msg.Role, Content: make([]anthropicContentAny, 0, len(msg.Content))}
 		for _, block := range msg.Content {
 			switch block.Type {
+			case "thinking":
+				item.Content = append(item.Content, anthropicContentAny{
+					"type":     "thinking",
+					"thinking": block.Text,
+				})
 			case "text":
 				item.Content = append(item.Content, anthropicContentAny{
 					"type": "text",
@@ -187,6 +201,8 @@ func parseAnthropicResponse(resp *http.Response) (*LLMResponse, error) {
 		switch block.Type {
 		case "text":
 			result.TextBlocks = append(result.TextBlocks, block.Text)
+		case "thinking":
+			result.ThinkingBlocks = append(result.ThinkingBlocks, block.Text)
 		case "tool_use":
 			result.ToolCalls = append(result.ToolCalls, ToolCall{
 				ID:        block.ID,
@@ -206,6 +222,7 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 		args string
 	}
 	tools := map[int]*toolBuffer{}
+	thinkingBlocks := map[int]*strings.Builder{}
 	if err := readSSE(resp, func(evt sseEvent) error {
 		if len(evt.Data) == 0 || string(evt.Data) == "[DONE]" {
 			return nil
@@ -232,11 +249,15 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 			if block == nil {
 				return nil
 			}
-			if blockType, _ := block["type"].(string); blockType == "tool_use" {
+			blockType, _ := block["type"].(string)
+			switch blockType {
+			case "tool_use":
 				tools[index] = &toolBuffer{
 					id:   stringValue(block["id"]),
 					name: stringValue(block["name"]),
 				}
+			case "thinking":
+				thinkingBlocks[index] = &strings.Builder{}
 			}
 		case "content_block_delta":
 			index := int(numberValue(payload["index"]))
@@ -253,6 +274,10 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 					}
 					result.TextBlocks = appendTextBlock(result.TextBlocks, text)
 				}
+			case "thinking_delta":
+				if tb := thinkingBlocks[index]; tb != nil {
+					tb.WriteString(stringValue(delta["thinking"]))
+				}
 			case "input_json_delta":
 				if tools[index] == nil {
 					tools[index] = &toolBuffer{}
@@ -268,6 +293,12 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 					Arguments: canonicalJSON(json.RawMessage(tool.args)),
 				})
 				delete(tools, index)
+			}
+			if tb := thinkingBlocks[index]; tb != nil {
+				if s := tb.String(); s != "" {
+					result.ThinkingBlocks = append(result.ThinkingBlocks, s)
+				}
+				delete(thinkingBlocks, index)
 			}
 		case "message_delta":
 			if delta, ok := payload["delta"].(map[string]any); ok {

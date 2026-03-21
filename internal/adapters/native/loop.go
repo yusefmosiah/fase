@@ -134,7 +134,17 @@ func (s *nativeSession) recordResponseID(id string) {
 func responseToAssistantMessage(response *LLMResponse) Message {
 	msg := Message{
 		Role:    "assistant",
-		Content: make([]ContentBlock, 0, len(response.TextBlocks)+len(response.ToolCalls)),
+		Content: make([]ContentBlock, 0, len(response.ThinkingBlocks)+len(response.TextBlocks)+len(response.ToolCalls)),
+	}
+	// Thinking blocks must come first and be preserved for multi-turn context.
+	for _, thinking := range response.ThinkingBlocks {
+		if thinking == "" {
+			continue
+		}
+		msg.Content = append(msg.Content, ContentBlock{
+			Type: "thinking",
+			Text: thinking,
+		})
 	}
 	for _, text := range response.TextBlocks {
 		if text == "" {

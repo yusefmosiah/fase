@@ -38,11 +38,12 @@ type LLMRequest struct {
 }
 
 type LLMResponse struct {
-	ID         string
-	TextBlocks []string
-	ToolCalls  []ToolCall
-	StopReason string
-	Usage      Usage
+	ID             string
+	TextBlocks     []string
+	ThinkingBlocks []string // adaptive/extended thinking content
+	ToolCalls      []ToolCall
+	StopReason     string
+	Usage          Usage
 }
 
 type Message struct {
