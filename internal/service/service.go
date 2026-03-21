@@ -1699,6 +1699,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 			"fase dispatch [work-id]",
 		},
 		"rules": []string{
+			"Build: run 'make install' before running fase commands. Always use 'fase' (on PATH), never './fase'.",
 			"CLI routes through fase serve — serve must be running for all commands.",
 			"All persistent state belongs in the FASE work queue (notes, updates, conventions).",
 			"Do not use Claude memory system — all state in FASE work queue.",
