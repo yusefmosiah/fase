@@ -55,8 +55,11 @@ func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) 
 	return a.start(ctx, req.CWD, req.Model, req.Profile, req.Prompt)
 }
 
-func (a *Adapter) ContinueRun(context.Context, adapterapi.ContinueRunRequest) (*adapterapi.RunHandle, error) {
-	return nil, fmt.Errorf("native adapter does not support continuation")
+func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunRequest) (*adapterapi.RunHandle, error) {
+	// Continuation for native adapter: start a new turn with the prompt.
+	// The session history is not preserved across ContinueRun calls (each is
+	// a fresh session), but the supervisor uses this for multi-turn dispatch.
+	return a.start(ctx, req.CWD, req.Model, req.Profile, req.Prompt)
 }
 
 func (a *Adapter) start(ctx context.Context, cwd, model, profile, prompt string) (*adapterapi.RunHandle, error) {
@@ -254,15 +257,22 @@ func (a *LiveAdapter) startSession(ctx context.Context, id string, req adapterap
 		return nil, err
 	}
 
+	// Default reasoning effort: medium. Profile can override.
+	effort := "medium"
+	if req.Profile == "supervisor" {
+		effort = "high"
+	}
+
 	return newNativeSession(ctx, nativeSessionConfig{
-		id:       id,
-		provider: provider,
-		client:   client,
-		registry: registry,
-		steerCh:  req.SteerCh,
-		svc:      a.svc,
-		resumed:  resumed,
-		manager:  manager,
+		id:              id,
+		provider:        provider,
+		client:          client,
+		registry:        registry,
+		steerCh:         req.SteerCh,
+		svc:             a.svc,
+		resumed:         resumed,
+		manager:         manager,
+		reasoningEffort: effort,
 	}), nil
 }
 

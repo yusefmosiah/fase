@@ -11,14 +11,15 @@ import (
 )
 
 type nativeSessionConfig struct {
-	id       string
-	provider Provider
-	client   LLMClient
-	registry *ToolRegistry
-	steerCh  <-chan adapterapi.SteerEvent
-	svc      any
-	resumed  bool
-	manager  *coAgentManager
+	id              string
+	provider        Provider
+	client          LLMClient
+	registry        *ToolRegistry
+	steerCh         <-chan adapterapi.SteerEvent
+	svc             any
+	resumed         bool
+	manager         *coAgentManager
+	reasoningEffort string // "low", "medium", "high", "max"/"xhigh"
 }
 
 type nativeSession struct {
@@ -38,9 +39,10 @@ type nativeSession struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu          sync.Mutex
-	activeTurn  string
-	toolErrors  int
+	mu              sync.Mutex
+	activeTurn      string
+	toolErrors      int
+	reasoningEffort string
 	turnCancel  context.CancelFunc
 	turnDone    chan struct{}
 	closed      bool
@@ -57,7 +59,8 @@ func newNativeSession(ctx context.Context, cfg nativeSessionConfig) *nativeSessi
 		provider: cfg.provider,
 		client:   cfg.client,
 		registry: cfg.registry,
-		tools:    cfg.registry.CoreDefinitions(), // core tools upfront, rest on demand
+		tools:           cfg.registry.CoreDefinitions(), // core tools upfront, rest on demand
+		reasoningEffort: cfg.reasoningEffort,
 		eventCh:  make(chan adapterapi.Event, 256),
 		steerQ:   make(chan adapterapi.SteerEvent, 64),
 		svc:      cfg.svc,

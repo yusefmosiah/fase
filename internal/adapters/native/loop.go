@@ -16,7 +16,8 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			System:             s.systemPrompt(),
 			Messages:           s.snapshotHistory(),
 			Tools:              s.activeTools(),
-			Stream:             true,
+			Stream:             !s.provider.ForceNoStream,
+			ReasoningEffort:    s.reasoningEffort,
 			PreviousResponseID: s.previousResponseID(),
 			OnDelta: func(text string) {
 				s.emit(adapterapi.Event{
