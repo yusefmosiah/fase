@@ -59,11 +59,13 @@ type anthropicResponse struct {
 }
 
 type anthropicResponseBlock struct {
-	Type  string          `json:"type"`
-	Text  string          `json:"text,omitempty"`
-	ID    string          `json:"id,omitempty"`
-	Name  string          `json:"name,omitempty"`
-	Input json.RawMessage `json:"input,omitempty"`
+	Type      string          `json:"type"`
+	Text      string          `json:"text,omitempty"`
+	Thinking  string          `json:"thinking,omitempty"`
+	Signature string          `json:"signature,omitempty"`
+	ID        string          `json:"id,omitempty"`
+	Name      string          `json:"name,omitempty"`
+	Input     json.RawMessage `json:"input,omitempty"`
 }
 
 type anthropicUsage struct {
@@ -142,10 +144,14 @@ func anthropicMessages(msgs []Message) []anthropicMessage {
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "thinking":
-				item.Content = append(item.Content, anthropicContentAny{
+				tb := anthropicContentAny{
 					"type":     "thinking",
 					"thinking": block.Text,
-				})
+				}
+				if block.Signature != "" {
+					tb["signature"] = block.Signature
+				}
+				item.Content = append(item.Content, tb)
 			case "text":
 				item.Content = append(item.Content, anthropicContentAny{
 					"type": "text",
@@ -202,7 +208,10 @@ func parseAnthropicResponse(resp *http.Response) (*LLMResponse, error) {
 		case "text":
 			result.TextBlocks = append(result.TextBlocks, block.Text)
 		case "thinking":
-			result.ThinkingBlocks = append(result.ThinkingBlocks, block.Text)
+			result.ThinkingBlocks = append(result.ThinkingBlocks, ThinkingBlock{
+				Text:      block.Thinking,
+				Signature: block.Signature,
+			})
 		case "tool_use":
 			result.ToolCalls = append(result.ToolCalls, ToolCall{
 				ID:        block.ID,
@@ -222,7 +231,11 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 		args string
 	}
 	tools := map[int]*toolBuffer{}
-	thinkingBlocks := map[int]*strings.Builder{}
+	type thinkingBuffer struct {
+		text      strings.Builder
+		signature string
+	}
+	thinkingBlocks := map[int]*thinkingBuffer{}
 	if err := readSSE(resp, func(evt sseEvent) error {
 		if len(evt.Data) == 0 || string(evt.Data) == "[DONE]" {
 			return nil
@@ -257,7 +270,7 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 					name: stringValue(block["name"]),
 				}
 			case "thinking":
-				thinkingBlocks[index] = &strings.Builder{}
+				thinkingBlocks[index] = &thinkingBuffer{}
 			}
 		case "content_block_delta":
 			index := int(numberValue(payload["index"]))
@@ -276,7 +289,11 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 				}
 			case "thinking_delta":
 				if tb := thinkingBlocks[index]; tb != nil {
-					tb.WriteString(stringValue(delta["thinking"]))
+					tb.text.WriteString(stringValue(delta["thinking"]))
+				}
+			case "signature_delta":
+				if tb := thinkingBlocks[index]; tb != nil {
+					tb.signature += stringValue(delta["signature"])
 				}
 			case "input_json_delta":
 				if tools[index] == nil {
@@ -295,9 +312,10 @@ func parseAnthropicStream(resp *http.Response, onDelta func(string)) (*LLMRespon
 				delete(tools, index)
 			}
 			if tb := thinkingBlocks[index]; tb != nil {
-				if s := tb.String(); s != "" {
-					result.ThinkingBlocks = append(result.ThinkingBlocks, s)
-				}
+				result.ThinkingBlocks = append(result.ThinkingBlocks, ThinkingBlock{
+					Text:      tb.text.String(),
+					Signature: tb.signature,
+				})
 				delete(thinkingBlocks, index)
 			}
 		case "message_delta":

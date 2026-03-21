@@ -40,10 +40,15 @@ type LLMRequest struct {
 type LLMResponse struct {
 	ID             string
 	TextBlocks     []string
-	ThinkingBlocks []string // adaptive/extended thinking content
+	ThinkingBlocks []ThinkingBlock // adaptive/extended thinking content
 	ToolCalls      []ToolCall
 	StopReason     string
 	Usage          Usage
+}
+
+type ThinkingBlock struct {
+	Text      string // thinking content (may be summarized)
+	Signature string // encrypted full thinking — must be preserved for multi-turn
 }
 
 type Message struct {
@@ -54,6 +59,7 @@ type Message struct {
 type ContentBlock struct {
 	Type      string          `json:"type"`
 	Text      string          `json:"text,omitempty"`
+	Signature string          `json:"signature,omitempty"` // thinking block signature for multi-turn
 	ID        string          `json:"id,omitempty"`
 	Name      string          `json:"name,omitempty"`
 	Input     json.RawMessage `json:"input,omitempty"`

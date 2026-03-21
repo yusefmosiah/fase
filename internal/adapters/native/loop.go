@@ -137,13 +137,15 @@ func responseToAssistantMessage(response *LLMResponse) Message {
 		Content: make([]ContentBlock, 0, len(response.ThinkingBlocks)+len(response.TextBlocks)+len(response.ToolCalls)),
 	}
 	// Thinking blocks must come first and be preserved for multi-turn context.
-	for _, thinking := range response.ThinkingBlocks {
-		if thinking == "" {
+	// The signature field carries encrypted full thinking for continuity.
+	for _, tb := range response.ThinkingBlocks {
+		if tb.Text == "" && tb.Signature == "" {
 			continue
 		}
 		msg.Content = append(msg.Content, ContentBlock{
-			Type: "thinking",
-			Text: thinking,
+			Type:      "thinking",
+			Text:      tb.Text,
+			Signature: tb.Signature,
 		})
 	}
 	for _, text := range response.TextBlocks {
