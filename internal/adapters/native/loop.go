@@ -52,6 +52,8 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			return nil
 		case "max_tokens":
 			return fmt.Errorf("native session: model stopped at max_tokens")
+		case "model_context_window_exceeded":
+			return fmt.Errorf("native session: context window exceeded — prompt or history too large for this model")
 		default:
 			return fmt.Errorf("native session: unsupported stop reason %q", response.StopReason)
 		}
