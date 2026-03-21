@@ -133,7 +133,7 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 		case msg := <-s.hostCh:
 			return fmt.Sprintf("Message from host: %s", msg)
 		case ev := <-ch:
-			if !isRelevantEvent(ev) {
+			if !ev.RequiresSupervisorAttention() {
 				continue
 			}
 			events = append(events, ev)
@@ -143,7 +143,7 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 			for {
 				select {
 				case e := <-ch:
-					if isRelevantEvent(e) {
+					if e.RequiresSupervisorAttention() {
 						events = append(events, e)
 					}
 				case msg := <-s.hostCh:
@@ -156,15 +156,6 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 			return formatEvents(events)
 		}
 	}
-}
-
-func isRelevantEvent(ev service.WorkEvent) bool {
-	switch ev.Kind {
-	case service.WorkEventCreated, service.WorkEventUpdated,
-		service.WorkEventAttested, service.WorkEventReleased:
-		return true
-	}
-	return false
 }
 
 func formatEvents(events []service.WorkEvent) string {
@@ -221,7 +212,7 @@ func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.Work
 		case <-ctx.Done():
 			return collected
 		case ev := <-ch:
-			if isRelevantEvent(ev) {
+			if ev.RequiresSupervisorAttention() {
 				collected = append(collected, ev)
 			}
 		case <-ticker.C:

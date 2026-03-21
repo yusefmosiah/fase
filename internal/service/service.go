@@ -40,6 +40,8 @@ var (
 	ErrTimeout            = errors.New("timeout")
 )
 
+var osExecutable = os.Executable
+
 type Service struct {
 	Paths         core.Paths
 	Config        core.Config
@@ -1234,6 +1236,8 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		WorkID: work.WorkID,
 		Title:  work.Title,
 		State:  string(work.ExecutionState),
+		Actor:  ActorService,
+		Cause:  CauseWorkCreated,
 	})
 	return &work, nil
 }
@@ -2110,6 +2114,8 @@ func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.Wo
 		Title:     work.Title,
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
+		Actor:     actorFromClaimant(claimant),
+		Cause:     CauseClaimChanged,
 	})
 	return &work, nil
 }
@@ -2187,6 +2193,8 @@ func (s *Service) ReleaseWork(ctx context.Context, req WorkReleaseRequest) (*cor
 		Title:     work.Title,
 		State:     string(work.ExecutionState),
 		PrevState: string(before.ExecutionState),
+		Actor:     actorFromClaimant(claimant),
+		Cause:     CauseClaimChanged,
 	})
 	return &work, nil
 }
@@ -2232,6 +2240,8 @@ func (s *Service) RenewWorkLease(ctx context.Context, req WorkRenewLeaseRequest)
 		WorkID: work.WorkID,
 		Title:  work.Title,
 		State:  string(work.ExecutionState),
+		Actor:  actorFromClaimant(claimant),
+		Cause:  CauseLeaseReconcile,
 	})
 	return &work, nil
 }
@@ -2327,6 +2337,12 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
 		JobID:     work.CurrentJobID,
+		Actor:     actorFromCreatedBy(req.CreatedBy),
+	}
+	if work.ExecutionState.Terminal() {
+		ev.Cause = CauseWorkerTerminal
+	} else {
+		ev.Cause = CauseWorkerProgress
 	}
 	if req.Message != "" {
 		ev.Metadata = map[string]string{"message": req.Message}
@@ -2699,6 +2715,8 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 		Title:     work.Title,
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
+		Actor:     ActorService,
+		Cause:     CauseAttestationRecorded,
 		Metadata: map[string]string{
 			"result":  req.Result,
 			"summary": req.Summary,
@@ -4433,10 +4451,16 @@ func (s *Service) persistDebrief(ctx context.Context, job *core.JobRecord, messa
 }
 
 func detachedExecutablePath() (string, error) {
+	path, err := osExecutable()
+	if err == nil && path != "" {
+		lower := strings.ToLower(path)
+		if !strings.HasSuffix(lower, ".test") && !strings.Contains(lower, string(filepath.Separator)+"go-build"+string(filepath.Separator)) {
+			return path, nil
+		}
+	}
 	if explicit := os.Getenv("FASE_EXECUTABLE"); explicit != "" {
 		return explicit, nil
 	}
-	path, err := os.Executable()
 	if err != nil {
 		return "", fmt.Errorf("resolve fase executable: %w", err)
 	}
@@ -5446,6 +5470,9 @@ func diagnosticMessage(payload map[string]any) string {
 		return ""
 	}
 	if message := summaryString(payload, "message"); message != "" {
+		return message
+	}
+	if message, _ := payload["error"].(string); message != "" {
 		return message
 	}
 	if errValue, ok := payload["error"].(map[string]any); ok {

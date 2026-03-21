@@ -16,6 +16,36 @@ const (
 	WorkEventLeaseRenew WorkEventKind = "work_lease_renewed"
 )
 
+// EventActor identifies who caused the event.
+type EventActor string
+
+const (
+	ActorWorker      EventActor = "worker"
+	ActorSupervisor  EventActor = "supervisor"
+	ActorHousekeeping EventActor = "housekeeping"
+	ActorHost        EventActor = "host"
+	ActorService     EventActor = "service"
+	ActorReconciler  EventActor = "reconciler"
+)
+
+// EventCause classifies why the event was emitted.
+type EventCause string
+
+const (
+	CauseWorkCreated          EventCause = "work_created"
+	CauseWorkerProgress       EventCause = "worker_progress"
+	CauseWorkerTerminal       EventCause = "worker_terminal"
+	CauseAttestationRecorded  EventCause = "attestation_recorded"
+	CauseParentTransition     EventCause = "parent_transition"
+	CauseHousekeepingStall    EventCause = "housekeeping_stall"
+	CauseHousekeepingOrphan   EventCause = "housekeeping_orphan"
+	CauseSupervisorMutation   EventCause = "supervisor_mutation"
+	CauseLeaseReconcile       EventCause = "lease_reconcile"
+	CauseHostManual           EventCause = "host_manual"
+	CauseClaimChanged         EventCause = "claim_changed"
+	CauseJobLifecycle         EventCause = "job_lifecycle"
+)
+
 type WorkEvent struct {
 	Kind      WorkEventKind
 	WorkID    string
@@ -24,7 +54,27 @@ type WorkEvent struct {
 	PrevState string
 	JobID     string
 	Adapter   string
+	Actor     EventActor
+	Cause     EventCause
 	Metadata  map[string]string
+}
+
+// RequiresSupervisorAttention returns true if this event should wake the supervisor.
+func (ev WorkEvent) RequiresSupervisorAttention() bool {
+	// Supervisor's own mutations should not wake itself.
+	if ev.Actor == ActorSupervisor {
+		return false
+	}
+	// Housekeeping and lease maintenance are noise.
+	if ev.Actor == ActorHousekeeping || ev.Actor == ActorReconciler {
+		return false
+	}
+	if ev.Kind == WorkEventLeaseRenew {
+		return false
+	}
+	// Everything else is actionable: worker state changes, attestations,
+	// new work, host actions, claim releases from failures.
+	return true
 }
 
 type EventBus struct {
@@ -58,6 +108,32 @@ func (b *EventBus) Unsubscribe(ch chan WorkEvent) {
 			close(ch)
 			return
 		}
+	}
+}
+
+// actorFromClaimant maps a claimant string to an EventActor.
+func actorFromClaimant(claimant string) EventActor {
+	switch claimant {
+	case "supervisor":
+		return ActorSupervisor
+	case "housekeeping":
+		return ActorHousekeeping
+	default:
+		return ActorWorker
+	}
+}
+
+// actorFromCreatedBy maps a createdBy string to an EventActor.
+func actorFromCreatedBy(createdBy string) EventActor {
+	switch createdBy {
+	case "housekeeping":
+		return ActorHousekeeping
+	case "reconciler":
+		return ActorReconciler
+	case "supervisor":
+		return ActorSupervisor
+	default:
+		return ActorWorker
 	}
 }
 
