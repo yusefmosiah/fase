@@ -91,15 +91,25 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
 
 	// Wait for the first turn's job to complete, then enter the event loop.
-	s.waitForJob(ctx, ch, result.Job.JobID)
+	// pendingInput carries events collected during waitForJob so they aren't lost.
+	pendingInput := s.waitForJob(ctx, ch, result.Job.JobID)
 
 	for {
 		// Collect events and host messages until something interesting happens.
-		input := s.collectInput(ctx, ch)
+		// If pendingInput has events from waitForJob, use those immediately
+		// instead of blocking for new ones.
+		var input turnInput
+		if len(pendingInput.events) > 0 || len(pendingInput.hostMessages) > 0 {
+			input = pendingInput
+			pendingInput = turnInput{}
+		} else {
+			input = s.collectInput(ctx, ch)
+		}
 		if ctx.Err() != nil {
 			return
 		}
 		if s.isPaused() {
+			pendingInput = turnInput{} // discard while paused
 			continue
 		}
 
@@ -120,30 +130,35 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 			return
 		}
 
-		s.waitForJob(ctx, ch, sendResult.Job.JobID)
+		pendingInput = s.waitForJob(ctx, ch, sendResult.Job.JobID)
 	}
 }
 
-// waitForJob drains EventBus events until the given job reaches a terminal
-// state, or context is cancelled. Non-job events are discarded (they'll be
-// reflected in the next project_hydrate or ready_work call by the LLM).
-func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) {
+// waitForJob collects EventBus events until the given job reaches a terminal
+// state. Returns any relevant events collected during the wait so they can
+// be passed to the next supervisor turn (avoiding event loss).
+func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) turnInput {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	var collected turnInput
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ch:
-			// Drain events — we'll collect fresh ones after the job completes.
+			return collected
+		case ev := <-ch:
+			if isRelevantEvent(ev) {
+				collected.events = append(collected.events, ev)
+			}
+		case msg := <-s.hostCh:
+			collected.hostMessages = append(collected.hostMessages, msg)
 		case <-ticker.C:
 			status, err := s.svc.Status(ctx, jobID)
 			if err != nil {
 				continue
 			}
 			if status.Job.State.Terminal() {
-				return
+				return collected
 			}
 		}
 	}
