@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -84,11 +85,18 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	sessionID := result.Session.SessionID
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
 
-	s.waitForJob(ctx, ch, result.Job.JobID)
+	pending := s.waitForJob(ctx, ch, result.Job.JobID)
 
 	for {
-		// Wait for something to happen: event or host message.
-		msg := s.waitForSignal(ctx, ch)
+		// If events arrived during waitForJob, use them immediately.
+		// Otherwise block for the next signal.
+		var msg string
+		if len(pending) > 0 {
+			msg = formatEvents(pending)
+			pending = nil
+		} else {
+			msg = s.waitForSignal(ctx, ch)
+		}
 		if ctx.Err() != nil {
 			return
 		}
@@ -110,13 +118,14 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 			return
 		}
 
-		s.waitForJob(ctx, ch, sendResult.Job.JobID)
+		pending = s.waitForJob(ctx, ch, sendResult.Job.JobID)
 	}
 }
 
 // waitForSignal blocks until an event or host message arrives.
-// Returns a simple prompt — the LLM uses MCP tools to figure out what to do.
+// Collects events during debounce window and formats them into the prompt.
 func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.WorkEvent) string {
+	var events []service.WorkEvent
 	for {
 		select {
 		case <-ctx.Done():
@@ -124,46 +133,104 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 		case msg := <-s.hostCh:
 			return fmt.Sprintf("Message from host: %s", msg)
 		case ev := <-ch:
-			switch ev.Kind {
-			case service.WorkEventCreated, service.WorkEventUpdated,
-				service.WorkEventAttested, service.WorkEventReleased:
-				// Debounce.
-				time.Sleep(2 * time.Second)
-				// Drain any burst.
-				for {
-					select {
-					case <-ch:
-					default:
-						goto done
-					}
-				}
-			done:
-				return "Queue state changed. Check ready_work and act."
+			if !isRelevantEvent(ev) {
+				continue
 			}
+			events = append(events, ev)
+			// Debounce: collect burst events within 2s.
+			timer := time.NewTimer(2 * time.Second)
+		drain:
+			for {
+				select {
+				case e := <-ch:
+					if isRelevantEvent(e) {
+						events = append(events, e)
+					}
+				case msg := <-s.hostCh:
+					timer.Stop()
+					return fmt.Sprintf("Message from host: %s\n\n%s", msg, formatEvents(events))
+				case <-timer.C:
+					break drain
+				}
+			}
+			return formatEvents(events)
 		}
 	}
 }
 
+func isRelevantEvent(ev service.WorkEvent) bool {
+	switch ev.Kind {
+	case service.WorkEventCreated, service.WorkEventUpdated,
+		service.WorkEventAttested, service.WorkEventReleased:
+		return true
+	}
+	return false
+}
+
+func formatEvents(events []service.WorkEvent) string {
+	var b strings.Builder
+	for _, ev := range events {
+		title := ev.Title
+		if title == "" {
+			title = ev.WorkID
+		}
+		switch ev.Kind {
+		case service.WorkEventCreated:
+			fmt.Fprintf(&b, "[created] %s (%s)\n", title, ev.WorkID)
+		case service.WorkEventUpdated:
+			fmt.Fprintf(&b, "[%s→%s] %s (%s)", ev.PrevState, ev.State, title, ev.WorkID)
+			if msg := ev.Metadata["message"]; msg != "" {
+				if len(msg) > 200 {
+					fmt.Fprintf(&b, ": %s...", msg[:200])
+				} else {
+					fmt.Fprintf(&b, ": %s", msg)
+				}
+			}
+			if ev.JobID != "" {
+				fmt.Fprintf(&b, " [job %s]", ev.JobID)
+			}
+			b.WriteString("\n")
+		case service.WorkEventAttested:
+			result := ev.Metadata["result"]
+			summary := ev.Metadata["summary"]
+			fmt.Fprintf(&b, "[attested:%s] %s (%s)", result, title, ev.WorkID)
+			if summary != "" {
+				if len(summary) > 200 {
+					fmt.Fprintf(&b, ": %s...", summary[:200])
+				} else {
+					fmt.Fprintf(&b, ": %s", summary)
+				}
+			}
+			b.WriteString("\n")
+		case service.WorkEventReleased:
+			fmt.Fprintf(&b, "[released] %s (%s)\n", title, ev.WorkID)
+		}
+	}
+	return b.String()
+}
+
 // waitForJob polls until the supervisor's own turn job completes.
-func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) {
+// Collects events that arrive during the wait so they aren't lost.
+func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.WorkEvent, jobID string) []service.WorkEvent {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	var collected []service.WorkEvent
 	for {
 		select {
 		case <-ctx.Done():
-			return
-		case <-ch:
-			// Discard — events during the supervisor's own turn are
-			// about the supervisor's job, not worker state changes.
-			// The LLM will call ready_work on its next turn anyway.
+			return collected
+		case ev := <-ch:
+			if isRelevantEvent(ev) {
+				collected = append(collected, ev)
+			}
 		case <-ticker.C:
 			status, err := s.svc.Status(ctx, jobID)
 			if err != nil {
 				continue
 			}
 			if status.Job.State.Terminal() {
-				return
+				return collected
 			}
 		}
 	}

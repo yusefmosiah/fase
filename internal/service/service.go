@@ -2316,13 +2316,18 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	}); err != nil {
 		return nil, err
 	}
-	s.Events.publish(WorkEvent{
+	ev := WorkEvent{
 		Kind:      WorkEventUpdated,
 		WorkID:    work.WorkID,
 		Title:     work.Title,
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
-	})
+		JobID:     work.CurrentJobID,
+	}
+	if req.Message != "" {
+		ev.Metadata = map[string]string{"message": req.Message}
+	}
+	s.Events.publish(ev)
 	return &work, nil
 }
 
@@ -2690,6 +2695,10 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 		Title:     work.Title,
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
+		Metadata: map[string]string{
+			"result":  req.Result,
+			"summary": req.Summary,
+		},
 	})
 	if strings.EqualFold(work.Kind, "attest") && attestationTarget.WorkID != work.WorkID {
 		if err := s.refreshAttestationParentState(ctx, attestationTarget.WorkID); err != nil {
