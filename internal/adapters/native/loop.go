@@ -46,6 +46,10 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			}
 			s.appendHistory(toolResultMessage)
 		case "end_turn", "":
+			// Persist session history to disk after each completed turn.
+			if s.cwd != "" {
+				_ = s.saveSession(s.cwd)
+			}
 			s.emit(adapterapi.Event{
 				Kind:      adapterapi.EventKindTurnCompleted,
 				SessionID: s.id,

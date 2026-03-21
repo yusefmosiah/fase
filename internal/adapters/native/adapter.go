@@ -56,13 +56,27 @@ func (a *Adapter) StartRun(ctx context.Context, req adapterapi.StartRunRequest) 
 }
 
 func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunRequest) (*adapterapi.RunHandle, error) {
-	// Continuation for native adapter: start a new turn with the prompt.
-	// The session history is not preserved across ContinueRun calls (each is
-	// a fresh session), but the supervisor uses this for multi-turn dispatch.
-	return a.start(ctx, req.CWD, req.Model, req.Profile, req.Prompt)
+	// Load persisted session history from disk if available.
+	// The native adapter doesn't keep sessions in memory across processes —
+	// history is persisted to .fase/native-sessions/<id>.json after each turn.
+	var history []Message
+	if req.CanonicalSessionID != "" {
+		if state, err := loadSessionState(req.CWD, req.CanonicalSessionID); err == nil {
+			history = state.History
+		}
+	}
+	return a.startWithHistory(ctx, req.CWD, req.Model, req.Profile, req.Prompt, history)
+}
+
+func (a *Adapter) startWithHistory(ctx context.Context, cwd, model, profile, prompt string, history []Message) (*adapterapi.RunHandle, error) {
+	return a.startInternal(ctx, cwd, model, profile, prompt, history)
 }
 
 func (a *Adapter) start(ctx context.Context, cwd, model, profile, prompt string) (*adapterapi.RunHandle, error) {
+	return a.startInternal(ctx, cwd, model, profile, prompt, nil)
+}
+
+func (a *Adapter) startInternal(ctx context.Context, cwd, model, profile, prompt string, history []Message) (*adapterapi.RunHandle, error) {
 	if strings.TrimSpace(model) == "" {
 		return nil, fmt.Errorf("native adapter requires --model provider/model")
 	}
@@ -103,6 +117,15 @@ func (a *Adapter) start(ctx context.Context, cwd, model, profile, prompt string)
 			return
 		}
 		defer func() { _ = session.Close() }()
+
+		// Inject persisted history for continued sessions.
+		if len(history) > 0 {
+			if ns, ok := session.(*nativeSession); ok {
+				ns.mu.Lock()
+				ns.history = history
+				ns.mu.Unlock()
+			}
+		}
 
 		writeNativeEvent(stdoutW, map[string]any{
 			"type":       "session",
@@ -265,6 +288,7 @@ func (a *LiveAdapter) startSession(ctx context.Context, id string, req adapterap
 
 	return newNativeSession(ctx, nativeSessionConfig{
 		id:              id,
+		cwd:             req.CWD,
 		provider:        provider,
 		client:          client,
 		registry:        registry,

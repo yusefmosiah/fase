@@ -12,6 +12,7 @@ import (
 
 type nativeSessionConfig struct {
 	id              string
+	cwd             string
 	provider        Provider
 	client          LLMClient
 	registry        *ToolRegistry
@@ -20,10 +21,12 @@ type nativeSessionConfig struct {
 	resumed         bool
 	manager         *coAgentManager
 	reasoningEffort string // "low", "medium", "high", "max"/"xhigh"
+	history         []Message // pre-loaded history for resumed sessions
 }
 
 type nativeSession struct {
 	id       string
+	cwd      string
 	provider Provider
 	client   LLMClient
 	registry *ToolRegistry
@@ -54,12 +57,18 @@ type nativeSession struct {
 
 func newNativeSession(ctx context.Context, cfg nativeSessionConfig) *nativeSession {
 	sctx, cancel := context.WithCancel(ctx)
+	history := cfg.history
+	if history == nil {
+		history = []Message{}
+	}
 	s := &nativeSession{
-		id:       cfg.id,
-		provider: cfg.provider,
-		client:   cfg.client,
-		registry: cfg.registry,
-		tools:           cfg.registry.CoreDefinitions(), // core tools upfront, rest on demand
+		id:              cfg.id,
+		cwd:             cfg.cwd,
+		provider:        cfg.provider,
+		client:          cfg.client,
+		registry:        cfg.registry,
+		tools:           cfg.registry.CoreDefinitions(),
+		history:         history,
 		reasoningEffort: cfg.reasoningEffort,
 		eventCh:  make(chan adapterapi.Event, 256),
 		steerQ:   make(chan adapterapi.SteerEvent, 64),
