@@ -19,13 +19,18 @@ func NewOpenAIClient(provider Provider, httpClient HTTPDoer) (LLMClient, error) 
 }
 
 type openAIRequest struct {
-	Model              string       `json:"model"`
-	Instructions       string       `json:"instructions,omitempty"`
-	Input              []openAIItem `json:"input,omitempty"`
-	Tools              []openAITool `json:"tools,omitempty"`
-	Store              bool         `json:"store"`
-	Stream             bool         `json:"stream,omitempty"`
-	PreviousResponseID string       `json:"previous_response_id,omitempty"`
+	Model              string              `json:"model"`
+	Instructions       string              `json:"instructions,omitempty"`
+	Input              []openAIItem        `json:"input,omitempty"`
+	Tools              []openAITool        `json:"tools,omitempty"`
+	Store              bool                `json:"store"`
+	Stream             bool                `json:"stream,omitempty"`
+	Reasoning          *openAIReasoning    `json:"reasoning,omitempty"`
+	PreviousResponseID string              `json:"previous_response_id,omitempty"`
+}
+
+type openAIReasoning struct {
+	Effort string `json:"effort"` // "low", "medium", "high", "xhigh"
 }
 
 type openAIItem struct {
@@ -79,6 +84,9 @@ func (c *openAIClient) Call(ctx context.Context, req LLMRequest) (*LLMResponse, 
 		Tools:        openAITools(req.Tools),
 		Store:        false,
 		Stream:       req.Stream,
+	}
+	if req.ReasoningEffort != "" {
+		payload.Reasoning = &openAIReasoning{Effort: req.ReasoningEffort}
 	}
 	if c.provider.Name != providerChatGPT {
 		payload.PreviousResponseID = req.PreviousResponseID

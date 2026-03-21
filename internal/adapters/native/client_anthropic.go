@@ -19,13 +19,23 @@ func NewAnthropicClient(provider Provider, httpClient HTTPDoer) (LLMClient, erro
 }
 
 type anthropicRequest struct {
-	Model            string             `json:"model,omitempty"`
-	System           string             `json:"system,omitempty"`
-	Messages         []anthropicMessage `json:"messages,omitempty"`
-	Tools            []anthropicTool    `json:"tools,omitempty"`
-	MaxTokens        int                `json:"max_tokens"`
-	Stream           bool               `json:"stream,omitempty"`
-	AnthropicVersion string             `json:"anthropic_version,omitempty"`
+	Model            string              `json:"model,omitempty"`
+	System           string              `json:"system,omitempty"`
+	Messages         []anthropicMessage  `json:"messages,omitempty"`
+	Tools            []anthropicTool     `json:"tools,omitempty"`
+	MaxTokens        int                 `json:"max_tokens"`
+	Stream           bool                `json:"stream,omitempty"`
+	AnthropicVersion string              `json:"anthropic_version,omitempty"`
+	Thinking         *anthropicThinking  `json:"thinking,omitempty"`
+	OutputConfig     *anthropicOutputCfg `json:"output_config,omitempty"`
+}
+
+type anthropicThinking struct {
+	Type string `json:"type"` // "adaptive"
+}
+
+type anthropicOutputCfg struct {
+	Effort string `json:"effort"` // "low", "medium", "high", "max"
 }
 
 type anthropicMessage struct {
@@ -76,6 +86,10 @@ func (c *anthropicClient) Call(ctx context.Context, req LLMRequest) (*LLMRespons
 		Tools:            anthropicTools(req.Tools),
 		MaxTokens:        65536,
 		AnthropicVersion: c.provider.AnthropicVersion,
+	}
+	if req.ReasoningEffort != "" {
+		payload.Thinking = &anthropicThinking{Type: "adaptive"}
+		payload.OutputConfig = &anthropicOutputCfg{Effort: req.ReasoningEffort}
 	}
 	// Bedrock: model goes in URL path, not body. Stream flag not in body.
 	if !c.provider.ModelInPath {

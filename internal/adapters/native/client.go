@@ -32,6 +32,7 @@ type LLMRequest struct {
 	Messages           []Message
 	Tools              []ToolDef
 	Stream             bool
+	ReasoningEffort    string // "low", "medium", "high", "max" (Anthropic) or "xhigh" (OpenAI)
 	PreviousResponseID string
 	OnDelta            func(text string)
 }
