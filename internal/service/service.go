@@ -1420,13 +1420,17 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"fase work update <work-id>",
 		"fase work note-add <work-id>",
 	}
+	updateDoneCmd := fmt.Sprintf("fase work update %s --state done --message \"<summary of what you did>\"", workID)
+	updateFailCmd := fmt.Sprintf("fase work update %s --state failed --message \"<what went wrong>\"", workID)
 	contractRules := []string{
-		"Do the work, add updates and notes as you go, then EXIT.",
-		"An independent attestation agent will verify and attest your work after you exit.",
+		"Do the work, add notes as you go, then update the work item state before exiting.",
+		fmt.Sprintf("REQUIRED on success: %s", updateDoneCmd),
+		fmt.Sprintf("REQUIRED on failure: %s", updateFailCmd),
+		"You MUST call one of the above before exiting. The supervisor cannot see your work otherwise.",
 		"Record notes for findings, risks, and open questions.",
 		"Run verification (tests, builds) and report results as notes.",
 		"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
-		"Do NOT call fase work complete, fase work fail, or fase work attest.",
+		"Do NOT call fase work attest — an independent agent handles attestation.",
 		delegationNextAction(result.Work),
 	}
 
