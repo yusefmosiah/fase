@@ -5228,11 +5228,14 @@ func (s *Service) CountActiveRoots(ctx context.Context) (int, error) {
 func hydrationLimits(mode string) (updates, notes, attestations, artifacts, jobs int) {
 	switch mode {
 	case "thin":
-		return 5, 5, 5, 10, 5
+		// Minimal: just assignment + contract. No history.
+		return 0, 3, 0, 0, 0
 	case "deep":
+		// Full context: prior runs, artifacts, attestations. For debugging/review.
 		return 20, 20, 20, 25, 15
 	default:
-		return 10, 10, 10, 20, 10
+		// Standard: notes for context, no prior run artifacts or job history.
+		return 3, 5, 0, 0, 0
 	}
 }
 
@@ -6561,6 +6564,7 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		return err
 	}
 	now := time.Now().UTC()
+	prevState := string(work.ExecutionState)
 	work.CurrentJobID = job.JobID
 	work.CurrentSessionID = job.SessionID
 	work.UpdatedAt = now
@@ -6616,7 +6620,7 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 	if err := s.store.UpdateWorkItem(ctx, work); err != nil {
 		return err
 	}
-	return s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+	if err := s.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
 		UpdateID:       core.GenerateID("wup"),
 		WorkID:         work.WorkID,
 		ExecutionState: work.ExecutionState,
@@ -6627,7 +6631,25 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		CreatedBy:      "service",
 		CreatedAt:      now,
 		Metadata:       map[string]any{"job_state": string(job.State)},
-	})
+	}); err != nil {
+		return err
+	}
+	ev := WorkEvent{
+		Kind:      WorkEventUpdated,
+		WorkID:    work.WorkID,
+		Title:     work.Title,
+		State:     string(work.ExecutionState),
+		PrevState: prevState,
+		JobID:     job.JobID,
+		Actor:     ActorWorker,
+	}
+	if work.ExecutionState.Terminal() {
+		ev.Cause = CauseWorkerTerminal
+	} else {
+		ev.Cause = CauseWorkerProgress
+	}
+	s.Events.publish(ev)
+	return nil
 }
 
 func signalProcessGroup(pid int, sig syscall.Signal) error {
@@ -6770,6 +6792,7 @@ func (s *Service) refreshAttestationParentState(ctx context.Context, parentID st
 		}
 		return err
 	}
+	prevParentState := string(parent.ExecutionState)
 
 	children, err := s.store.ListWorkChildren(ctx, parentID, 200)
 	if err != nil {
@@ -6792,7 +6815,19 @@ func (s *Service) refreshAttestationParentState(ctx context.Context, parentID st
 			parent.ClaimedBy = ""
 			parent.ClaimedUntil = nil
 			parent.UpdatedAt = time.Now().UTC()
-			return s.store.UpdateWorkItem(ctx, parent)
+			if err := s.store.UpdateWorkItem(ctx, parent); err != nil {
+				return err
+			}
+			s.Events.publish(WorkEvent{
+				Kind:      WorkEventUpdated,
+				WorkID:    parent.WorkID,
+				Title:     parent.Title,
+				State:     string(parent.ExecutionState),
+				PrevState: prevParentState,
+				Actor:     ActorService,
+				Cause:     CauseParentTransition,
+			})
+			return nil
 		case core.WorkExecutionStateDone:
 		default:
 			return nil
@@ -6814,7 +6849,19 @@ func (s *Service) refreshAttestationParentState(ctx context.Context, parentID st
 	if shouldSetPendingApproval(parent) {
 		parent.ApprovalState = core.WorkApprovalStatePending
 	}
-	return s.store.UpdateWorkItem(ctx, parent)
+	if err := s.store.UpdateWorkItem(ctx, parent); err != nil {
+		return err
+	}
+	s.Events.publish(WorkEvent{
+		Kind:      WorkEventUpdated,
+		WorkID:    parent.WorkID,
+		Title:     parent.Title,
+		State:     string(parent.ExecutionState),
+		PrevState: prevParentState,
+		Actor:     ActorService,
+		Cause:     CauseParentTransition,
+	})
+	return nil
 }
 
 func (s *Service) emitEvent(
