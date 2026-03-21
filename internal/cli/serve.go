@@ -453,6 +453,15 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 				}
 
 				if isJobStalled(jobDir, 10*time.Minute) && !isTerminal(jobState) {
+					// Only fail the work item if this stalled job is still
+					// the current job. A newer dispatch may have replaced it.
+					workResult, wErr := svc.Work(ctx, workID)
+					if wErr != nil {
+						continue
+					}
+					if workResult.Work.CurrentJobID != "" && workResult.Work.CurrentJobID != jobID {
+						continue // newer job is active, skip stale one
+					}
 					_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
 						WorkID:         workID,
 						ExecutionState: core.WorkExecutionStateFailed,
