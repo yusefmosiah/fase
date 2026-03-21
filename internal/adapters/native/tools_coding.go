@@ -30,7 +30,7 @@ func NewCodingTools(cwd string) []Tool {
 	if strings.TrimSpace(base) == "" {
 		base = "."
 	}
-	return []Tool{
+	tools := []Tool{
 		newReadFileTool(base),
 		newWriteFileTool(base),
 		newEditFileTool(base),
@@ -41,6 +41,15 @@ func NewCodingTools(cwd string) []Tool {
 		newGitDiffTool(base),
 		newGitCommitTool(base),
 	}
+	// Mark core tools — these get full schemas on first call.
+	// Others are discoverable via the tool catalog in the system prompt.
+	core := map[string]bool{"read_file": true, "write_file": true, "bash": true}
+	for i := range tools {
+		if core[tools[i].Name] {
+			tools[i].Core = true
+		}
+	}
+	return tools
 }
 
 func newReadFileTool(cwd string) Tool {

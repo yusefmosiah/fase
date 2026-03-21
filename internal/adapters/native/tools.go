@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // ToolFunc is the common execution contract for native tools.
@@ -23,6 +24,7 @@ type Tool struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description,omitempty"`
 	Parameters  map[string]any `json:"parameters,omitempty"`
+	Core        bool           `json:"-"` // core tools get full schemas in first call
 	Func        ToolFunc       `json:"-"`
 }
 
@@ -132,6 +134,41 @@ func (r *ToolRegistry) Tools() []Tool {
 	out := make([]Tool, 0, len(r.order))
 	for _, name := range r.order {
 		out = append(out, r.tools[name])
+	}
+	return out
+}
+
+// Catalog returns a compact one-line-per-tool description suitable for
+// inclusion in the system prompt. No JSON schemas — just names and descriptions.
+// The LLM reads this to know what tools are available, then calls them by name.
+func (r *ToolRegistry) Catalog() string {
+	if r == nil {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("Available tools:\n")
+	for _, name := range r.order {
+		tool := r.tools[name]
+		desc := tool.Description
+		if len(desc) > 80 {
+			desc = desc[:80] + "..."
+		}
+		fmt.Fprintf(&b, "- %s — %s\n", name, desc)
+	}
+	return b.String()
+}
+
+// CoreDefinitions returns full schemas for core tools only.
+func (r *ToolRegistry) CoreDefinitions() []ToolDef {
+	if r == nil {
+		return nil
+	}
+	var out []ToolDef
+	for _, name := range r.order {
+		tool := r.tools[name]
+		if tool.Core {
+			out = append(out, tool.Definition())
+		}
 	}
 	return out
 }

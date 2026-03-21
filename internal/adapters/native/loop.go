@@ -12,9 +12,9 @@ import (
 func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 	for {
 		response, err := s.client.Call(ctx, LLMRequest{
-			System:             defaultSystemPrompt(),
+			System:             s.systemPrompt(),
 			Messages:           s.snapshotHistory(),
-			Tools:              s.tools,
+			Tools:              s.activeTools(),
 			Stream:             true,
 			PreviousResponseID: s.previousResponseID(),
 			OnDelta: func(text string) {
@@ -64,10 +64,43 @@ func defaultSystemPrompt() string {
 	return "You are the FASE native coding agent. Help with software tasks, use tools when needed, and keep responses concise and actionable."
 }
 
+func (s *nativeSession) systemPrompt() string {
+	catalog := s.registry.Catalog()
+	return defaultSystemPrompt() + "\n\n" + catalog + "\nCall any tool by name. Tool schemas are loaded automatically on first use."
+}
+
+// activeTools returns only the tool schemas for tools that have been used.
+// On the first call (no tools activated yet), returns an empty list.
+// The LLM discovers available tools via the catalog in the system prompt.
+func (s *nativeSession) activeTools() []ToolDef {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]ToolDef{}, s.tools...)
+}
+
+// activateTool adds a tool's full schema to the active set if not already present.
+func (s *nativeSession) activateTool(name string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range s.tools {
+		if t.Name == name {
+			return // already active
+		}
+	}
+	tool, ok := s.registry.Lookup(name)
+	if !ok {
+		return
+	}
+	s.tools = append(s.tools, tool.Definition())
+}
+
 func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Message, error) {
 	message := Message{Role: "user"}
 
 	for _, call := range calls {
+		// Activate tool schema on first use so it's sent in subsequent calls.
+		s.activateTool(call.Name)
+
 		output, err := s.registry.Execute(ctx, call.Name, call.Arguments)
 		if err != nil {
 			output = fmt.Sprintf("tool_error: %v", err)

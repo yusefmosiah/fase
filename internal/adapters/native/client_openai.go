@@ -135,12 +135,16 @@ func openAIInput(messages []Message) []openAIItem {
 			})
 			parts = nil
 		}
+		contentType := "input_text"
+		if msg.Role == "assistant" {
+			contentType = "output_text"
+		}
 		for _, block := range msg.Content {
 			switch block.Type {
 			case "text":
 				if block.Text != "" {
 					parts = append(parts, map[string]string{
-						"type": "input_text",
+						"type": contentType,
 						"text": block.Text,
 					})
 				}

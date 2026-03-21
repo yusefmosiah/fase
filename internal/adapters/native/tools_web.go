@@ -15,6 +15,7 @@ import (
 func WebSearchTool() Tool {
 	return Tool{
 		Name:        "web_search",
+		Core:        true,
 		Description: "Search the web for information. Returns titles, URLs, and text snippets from relevant pages.",
 		Parameters: map[string]any{
 			"type": "object",

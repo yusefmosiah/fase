@@ -56,7 +56,7 @@ func newNativeSession(ctx context.Context, cfg nativeSessionConfig) *nativeSessi
 		provider: cfg.provider,
 		client:   cfg.client,
 		registry: cfg.registry,
-		tools:    cfg.registry.Definitions(),
+		tools:    cfg.registry.CoreDefinitions(), // core tools upfront, rest on demand
 		eventCh:  make(chan adapterapi.Event, 256),
 		steerQ:   make(chan adapterapi.SteerEvent, 64),
 		svc:      cfg.svc,
