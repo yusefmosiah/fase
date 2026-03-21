@@ -1,11 +1,9 @@
 package cli
 
 import (
-	"context"
-	"fmt"
+	"net/url"
 
 	"github.com/spf13/cobra"
-	"github.com/yusefmosiah/fase/internal/service"
 )
 
 func newProjectCommand(root *rootOptions) *cobra.Command {
@@ -21,22 +19,19 @@ func newProjectCommand(root *rootOptions) *cobra.Command {
 		Use:   "hydrate",
 		Short: "Compile a project-scoped briefing for cold-starting any session",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.ProjectHydrate(context.Background(), service.ProjectHydrateRequest{
-				Mode:   hydrateMode,
-				Format: hydrateFormat,
-			})
+			params := url.Values{
+				"mode":   []string{hydrateMode},
+				"format": []string{hydrateFormat},
+			}
+			data, err := c.doGet("/api/project/hydrate", params)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			if hydrateFormat == "json" {
-				return writeJSON(cmd.OutOrStdout(), result)
-			}
-			_, err = fmt.Fprint(cmd.OutOrStdout(), service.RenderProjectHydrateMarkdown(result))
+			_, err = cmd.OutOrStdout().Write(data)
 			return err
 		},
 	}

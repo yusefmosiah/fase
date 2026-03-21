@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -923,12 +925,10 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			if err := checkCapability(core.CapWorkCreate); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
 			acceptance, err := parseJSONObjectFlag(createOpts.acceptance)
 			if err != nil {
 				return exitf(2, "invalid --acceptance JSON: %v", err)
@@ -937,7 +937,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			if err != nil {
 				return exitf(2, "invalid --required-attestations JSON: %v", err)
 			}
-			work, err := svc.CreateWork(context.Background(), service.WorkCreateRequest{
+			req := service.WorkCreateRequest{
 				Title:                createOpts.title,
 				Objective:            createOpts.objective,
 				Kind:                 createOpts.kind,
@@ -956,11 +956,16 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				HeadCommitOID:        createOpts.headCommitOID,
 				ConfigurationClass:   createOpts.configurationClass,
 				BudgetClass:          createOpts.budgetClass,
-			})
-			if err != nil {
-				return mapServiceError(err)
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			data, err := c.doPost("/api/work/create", req)
+			if err != nil {
+				return err
+			}
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	createCmd.Flags().StringVar(&createOpts.title, "title", "", "work title")
@@ -989,15 +994,17 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Show one work item and its related state",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doGet("/api/work/"+args[0], nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
+			}
+			var result service.WorkShowResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			if showOpts.limit > 0 {
 				if len(result.Children) > showOpts.limit {
@@ -1028,7 +1035,7 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 					result.Artifacts = result.Artifacts[:showOpts.limit]
 				}
 			}
-			return renderWorkShow(cmd, root.jsonOutput, result)
+			return renderWorkShow(cmd, root.jsonOutput, &result)
 		},
 	}
 	showCmd.Flags().IntVar(&showOpts.limit, "limit", 50, "maximum related records per section")
@@ -1037,21 +1044,33 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Use:   "list",
 		Short: "List work items",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			items, err := svc.ListWork(context.Background(), service.WorkListRequest{
-				Limit:           listOpts.limit,
-				Kind:            listOpts.kind,
-				ExecutionState:  listOpts.executionState,
-				ApprovalState:   listOpts.approvalState,
-				IncludeArchived: listOpts.includeArchived,
-			})
+			params := url.Values{}
+			if listOpts.limit > 0 {
+				params.Set("limit", strconv.Itoa(listOpts.limit))
+			}
+			if listOpts.kind != "" {
+				params.Set("kind", listOpts.kind)
+			}
+			if listOpts.executionState != "" {
+				params.Set("state", listOpts.executionState)
+			}
+			if listOpts.approvalState != "" {
+				params.Set("approval_state", listOpts.approvalState)
+			}
+			if listOpts.includeArchived {
+				params.Set("include_archived", "1")
+			}
+			data, err := c.doGet("/api/work/list", params)
 			if err != nil {
-				return mapServiceError(err)
+				return err
+			}
+			var items []core.WorkItemRecord
+			if err := json.Unmarshal(data, &items); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			return renderWorkItems(cmd, root.jsonOutput, items)
 		},
@@ -1066,18 +1085,24 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Use:   "ready",
 		Short: "List work items that are currently ready",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			// Self-heal: release only expired claims before listing ready work.
-			_, _ = svc.ReconcileExpiredLeases(context.Background())
-
-			items, err := svc.ReadyWork(context.Background(), readyOpts.limit, readyOpts.includeArchived)
+			params := url.Values{}
+			if readyOpts.limit > 0 {
+				params.Set("limit", strconv.Itoa(readyOpts.limit))
+			}
+			if readyOpts.includeArchived {
+				params.Set("include_archived", "1")
+			}
+			data, err := c.doGet("/api/work/ready", params)
 			if err != nil {
-				return mapServiceError(err)
+				return err
+			}
+			var items []core.WorkItemRecord
+			if err := json.Unmarshal(data, &items); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			return renderWorkItems(cmd, root.jsonOutput, items)
 		},
@@ -1090,21 +1115,22 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Claim a work item for a lease interval",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			work, err := svc.ClaimWork(context.Background(), service.WorkClaimRequest{
-				WorkID:        args[0],
+			data, err := c.doPost("/api/work/"+args[0]+"/claim", service.WorkClaimRequest{
 				Claimant:      claimOpts.claimant,
 				LeaseDuration: claimOpts.lease,
 			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	claimCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
@@ -1114,24 +1140,23 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Use:   "claim-next",
 		Short: "Claim the next compatible ready work item",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			// Self-heal: release only expired claims before claiming next.
-			_, _ = svc.ReconcileExpiredLeases(context.Background())
-
-			work, err := svc.ClaimNextWork(context.Background(), service.WorkClaimNextRequest{
+			data, err := c.doPost("/api/work/claim-next", service.WorkClaimNextRequest{
 				Claimant:      claimOpts.claimant,
 				LeaseDuration: claimOpts.lease,
 				Limit:         claimOpts.limit,
 			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	claimNextCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
@@ -1143,22 +1168,23 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Release a work claim",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			work, err := svc.ReleaseWork(context.Background(), service.WorkReleaseRequest{
-				WorkID:    args[0],
+			data, err := c.doPost("/api/work/"+args[0]+"/release", service.WorkReleaseRequest{
 				Claimant:  claimOpts.claimant,
 				CreatedBy: "cli",
 				Force:     claimOpts.force,
 			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	releaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime releasing the claim")
@@ -1169,21 +1195,22 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Extend the lease on a claimed work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			work, err := svc.RenewWorkLease(context.Background(), service.WorkRenewLeaseRequest{
-				WorkID:        args[0],
+			data, err := c.doPost("/api/work/"+args[0]+"/renew-lease", service.WorkRenewLeaseRequest{
 				Claimant:      claimOpts.claimant,
 				LeaseDuration: claimOpts.lease,
 			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	renewLeaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime renewing the lease")
@@ -1202,14 +1229,11 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 					return err
 				}
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-
-			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
-				WorkID:         args[0],
+			req := service.WorkUpdateRequest{
 				ExecutionState: core.WorkExecutionState(updateOpts.executionState),
 				ApprovalState:  core.WorkApprovalState(updateOpts.approvalState),
 				LockState:      core.WorkLockState(updateOpts.lockState),
@@ -1220,11 +1244,16 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				ArtifactID:     updateOpts.artifactID,
 				ForceDone:      updateOpts.force,
 				CreatedBy:      "cli",
-			})
-			if err != nil {
-				return mapServiceError(err)
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			data, err := c.doPost("/api/work/"+args[0]+"/update", req)
+			if err != nil {
+				return err
+			}
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	updateCmd.Flags().StringVar(&updateOpts.executionState, "execution-state", "", "new execution state")
@@ -1242,21 +1271,19 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Mark work blocked and append an update",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
-				WorkID:         args[0],
-				ExecutionState: core.WorkExecutionStateBlocked,
-				Message:        updateOpts.message,
-				CreatedBy:      "cli",
-			})
+			data, err := c.doPost("/api/work/"+args[0]+"/block", map[string]string{"message": updateOpts.message})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	blockCmd.Flags().StringVar(&updateOpts.message, "message", "", "blocker message")
@@ -1266,21 +1293,19 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Archive work and append an update",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
-				WorkID:         args[0],
-				ExecutionState: core.WorkExecutionStateArchived,
-				Message:        updateOpts.message,
-				CreatedBy:      "cli",
-			})
+			data, err := c.doPost("/api/work/"+args[0]+"/archive", map[string]string{"message": updateOpts.message})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	archiveCmd.Flags().StringVar(&updateOpts.message, "message", "", "archive message")
@@ -1290,29 +1315,19 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Reset a failed/cancelled work item to ready",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			// Verify the item is in a terminal state
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doPost("/api/work/"+args[0]+"/retry", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			if !result.Work.ExecutionState.Terminal() {
-				return fmt.Errorf("work %s is %s, not in a terminal state", args[0], result.Work.ExecutionState)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
-			work, err := svc.UpdateWork(context.Background(), service.WorkUpdateRequest{
-				WorkID:         args[0],
-				ExecutionState: core.WorkExecutionStateReady,
-				Message:        "retried from " + string(result.Work.ExecutionState),
-				CreatedBy:      "cli",
-			})
-			if err != nil {
-				return mapServiceError(err)
-			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 
@@ -1321,16 +1336,19 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "List notes for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doGet("/api/work/"+args[0]+"/notes", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkNotes(cmd, root.jsonOutput, result.Notes)
+			var notes []core.WorkNoteRecord
+			if err := json.Unmarshal(data, &notes); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkNotes(cmd, root.jsonOutput, notes)
 		},
 	}
 
@@ -1342,21 +1360,24 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 			if err := checkCapability(core.CapWorkNoteAdd); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			note, err := svc.AddWorkNote(context.Background(), service.WorkNoteRequest{
-				WorkID:    args[0],
+			req := service.WorkNoteRequest{
 				NoteType:  noteOpts.noteType,
 				Body:      noteOpts.text,
 				CreatedBy: "cli",
-			})
-			if err != nil {
-				return mapServiceError(err)
 			}
-			return renderWorkNote(cmd, root.jsonOutput, note)
+			data, err := c.doPost("/api/work/"+args[0]+"/note-add", req)
+			if err != nil {
+				return err
+			}
+			var note core.WorkNoteRecord
+			if err := json.Unmarshal(data, &note); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkNote(cmd, root.jsonOutput, &note)
 		},
 	}
 	noteAddCmd.Flags().StringVar(&noteOpts.noteType, "type", "", "note type")
@@ -1368,16 +1389,19 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 		Short: "Add a private note (stored in gitignored DB, never committed)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			note, err := svc.AddPrivateNote(context.Background(), args[0], noteOpts.noteType, noteOpts.text, "cli")
+			data, err := c.doPost("/api/work/"+args[0]+"/private-note", map[string]string{"note_type": noteOpts.noteType, "body": noteOpts.text})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkNote(cmd, root.jsonOutput, note)
+			var note core.WorkNoteRecord
+			if err := json.Unmarshal(data, &note); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkNote(cmd, root.jsonOutput, &note)
 		},
 	}
 	privateNoteCmd.Flags().StringVar(&noteOpts.noteType, "type", "private", "note type")
@@ -1395,11 +1419,10 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkCreate); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
 
 			docPath, _ := cmd.Flags().GetString("path")
 			docTitle, _ := cmd.Flags().GetString("title")
@@ -1408,11 +1431,11 @@ This guarantees every doc has a corresponding work item.`,
 
 			var body string
 			if docFile != "" {
-				data, err := os.ReadFile(docFile)
+				fileData, err := os.ReadFile(docFile)
 				if err != nil {
 					return fmt.Errorf("read file: %w", err)
 				}
-				body = string(data)
+				body = string(fileData)
 				if docPath == "" {
 					docPath = docFile
 				}
@@ -1426,18 +1449,27 @@ This guarantees every doc has a corresponding work item.`,
 				workID = args[0]
 			}
 
-			doc, resolvedWorkID, err := svc.SetDocContent(context.Background(), workID, docPath, docTitle, body, docFormat)
+			data, err := c.doPost("/api/work/"+workID+"/doc-set", map[string]string{
+				"path": docPath, "title": docTitle, "body": body, "format": docFormat,
+			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
 			if root.jsonOutput {
-				result := map[string]any{"doc": doc, "work_id": resolvedWorkID}
-				return writeJSON(cmd.OutOrStdout(), result)
+				_, err = cmd.OutOrStdout().Write(data)
+				return err
+			}
+			var resp struct {
+				Doc    struct{ DocID string `json:"doc_id"` } `json:"doc"`
+				WorkID string                                 `json:"work_id"`
+			}
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			if workID == "" {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s) → work item %s (auto-created)\n", doc.DocID, len(body), docPath, resolvedWorkID)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s) → work item %s (auto-created)\n", resp.Doc.DocID, len(body), docPath, resp.WorkID)
 			} else {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s)\n", doc.DocID, len(body), docPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s)\n", resp.Doc.DocID, len(body), docPath)
 			}
 			return nil
 		},
@@ -1453,16 +1485,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "List child work items",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doGet("/api/work/"+args[0]+"/children", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItems(cmd, root.jsonOutput, result.Children)
+			var items []core.WorkItemRecord
+			if err := json.Unmarshal(data, &items); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItems(cmd, root.jsonOutput, items)
 		},
 	}
 
@@ -1474,16 +1509,22 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkCreate); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			proposal, err := svc.DiscoverWork(context.Background(), args[0], discoverOpts.title, discoverOpts.objective, discoverOpts.kind, discoverOpts.rationale)
+			data, err := c.doPost("/api/work/"+args[0]+"/discover", map[string]string{
+				"title": discoverOpts.title, "objective": discoverOpts.objective,
+				"kind": discoverOpts.kind, "rationale": discoverOpts.rationale,
+			})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+			var proposal core.WorkProposalRecord
+			if err := json.Unmarshal(data, &proposal); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, &proposal, nil)
 		},
 	}
 	discoverCmd.Flags().StringVar(&discoverOpts.title, "title", "", "discovered work title")
@@ -1501,20 +1542,13 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkAttest); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
 			metadata, err := parseJSONObjectFlag(attestOpts.metadata)
 			if err != nil {
 				return exitf(2, "invalid --metadata JSON: %v", err)
-			}
-			nonce := strings.TrimSpace(attestOpts.nonce)
-			if nonce == "" {
-				if workRec, workErr := svc.Work(context.Background(), args[0]); workErr == nil && workRec != nil {
-					nonce = attestationNonceFromWorkShow(workRec)
-				}
 			}
 
 			// Phase 3: load agent credential for attestation signing.
@@ -1524,8 +1558,7 @@ This guarantees every doc has a corresponding work item.`,
 				signerPubkey = cred.Token.AgentPubkey
 			}
 
-			record, work, err := svc.AttestWork(context.Background(), service.WorkAttestRequest{
-				WorkID:                  args[0],
+			req := service.WorkAttestRequest{
 				Result:                  attestOpts.result,
 				Summary:                 attestOpts.summary,
 				JobID:                   attestOpts.jobID,
@@ -1539,24 +1572,33 @@ This guarantees every doc has a corresponding work item.`,
 				SupersedesAttestationID: attestOpts.supersedesAttestationID,
 				Metadata:                metadata,
 				CreatedBy:               "cli",
-				Nonce:                   nonce,
+				Nonce:                   strings.TrimSpace(attestOpts.nonce),
 				SignerPubkey:            signerPubkey,
-			})
+			}
+			data, err := c.doPost("/api/work/"+args[0]+"/attest", req)
 			if err != nil {
-				return mapServiceError(err)
+				return err
+			}
+			var resp struct {
+				Attestation *core.AttestationRecord `json:"attestation"`
+				Work        *core.WorkItemRecord    `json:"work"`
+			}
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 
 			// Phase 3: sign the attestation record with the agent's private key.
-			if agentPrivKey != nil && record != nil {
-				signable := record.Signable()
+			if agentPrivKey != nil && resp.Attestation != nil {
+				signable := resp.Attestation.Signable()
 				sig, signErr := core.SignJSON(signable, agentPrivKey)
 				if signErr == nil {
-					_ = svc.SignAttestationRecord(context.Background(), record.AttestationID, sig)
-					record.Signature = sig
+					// Sign via serve API
+					_, _ = c.doPost("/api/attestation/"+resp.Attestation.AttestationID+"/sign", map[string]string{"signature": sig})
+					resp.Attestation.Signature = sig
 				}
 			}
 
-			return renderAttestation(cmd, root.jsonOutput, record, work)
+			return renderAttestation(cmd, root.jsonOutput, resp.Attestation, resp.Work)
 		},
 	}
 	attestCmd.Flags().StringVar(&attestOpts.result, "result", "", "attestation result: passed, failed, blocked, inconclusive")
@@ -1584,16 +1626,19 @@ This guarantees every doc has a corresponding work item.`,
 				report := previewCapabilities()
 				return writeJSON(cmd.OutOrStdout(), report)
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.VerifyWork(context.Background(), args[0])
+			data, err := c.doPost("/api/work/"+args[0]+"/verify", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderVerification(cmd, root.jsonOutput, result)
+			var result service.WorkVerifyResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderVerification(cmd, root.jsonOutput, &result)
 		},
 	}
 
@@ -1604,16 +1649,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Apply a human lock to a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.SetWorkLock(context.Background(), args[0], core.WorkLockStateHumanLocked, "cli", "human lock applied")
+			data, err := c.doPost("/api/work/"+args[0]+"/lock", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 
@@ -1622,16 +1670,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Remove a human lock from a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.SetWorkLock(context.Background(), args[0], core.WorkLockStateUnlocked, "cli", "human lock released")
+			data, err := c.doPost("/api/work/"+args[0]+"/unlock", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 
@@ -1643,16 +1694,19 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkApprove); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.ApproveWork(context.Background(), args[0], "cli", approveOpts.message)
+			data, err := c.doPost("/api/work/"+args[0]+"/approve", map[string]string{"message": approveOpts.message})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	approveCmd.Flags().StringVar(&approveOpts.message, "message", "", "approval note")
@@ -1665,16 +1719,19 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkReject); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			work, err := svc.RejectWork(context.Background(), args[0], "cli", approveOpts.message)
+			data, err := c.doPost("/api/work/"+args[0]+"/reject", map[string]string{"message": approveOpts.message})
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkItem(cmd, root.jsonOutput, work)
+			var work core.WorkItemRecord
+			if err := json.Unmarshal(data, &work); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkItem(cmd, root.jsonOutput, &work)
 		},
 	}
 	rejectCmd.Flags().StringVar(&approveOpts.message, "message", "", "rejection note")
@@ -1684,22 +1741,28 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Record a promotion event for approved work",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			record, work, err := svc.PromoteWork(context.Background(), service.WorkPromoteRequest{
-				WorkID:      args[0],
+			req := service.WorkPromoteRequest{
 				Environment: promoteOpts.environment,
 				TargetRef:   promoteOpts.targetRef,
 				Message:     promoteOpts.message,
 				CreatedBy:   "cli",
-			})
-			if err != nil {
-				return mapServiceError(err)
 			}
-			return renderPromotion(cmd, root.jsonOutput, record, work)
+			data, err := c.doPost("/api/work/"+args[0]+"/promote", req)
+			if err != nil {
+				return err
+			}
+			var resp struct {
+				Promotion *core.PromotionRecord `json:"promotion"`
+				Work      *core.WorkItemRecord  `json:"work"`
+			}
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderPromotion(cmd, root.jsonOutput, resp.Promotion, resp.Work)
 		},
 	}
 	promoteCmd.Flags().StringVar(&promoteOpts.environment, "environment", "staging", "promotion environment")
@@ -1715,27 +1778,31 @@ This guarantees every doc has a corresponding work item.`,
 		Use:   "create",
 		Short: "Create a work proposal",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
 			patch, err := parseJSONObjectFlag(proposalCreateOpts.patch)
 			if err != nil {
 				return exitf(2, "invalid --patch JSON: %v", err)
 			}
-			proposal, err := svc.CreateWorkProposal(context.Background(), service.WorkProposalCreateRequest{
+			req := service.WorkProposalCreateRequest{
 				ProposalType: proposalCreateOpts.proposalType,
 				TargetWorkID: proposalCreateOpts.target,
 				SourceWorkID: proposalCreateOpts.source,
 				Rationale:    proposalCreateOpts.rationale,
 				Patch:        patch,
 				CreatedBy:    "cli",
-			})
-			if err != nil {
-				return mapServiceError(err)
 			}
-			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+			data, err := c.doPost("/api/proposal/create", req)
+			if err != nil {
+				return err
+			}
+			var proposal core.WorkProposalRecord
+			if err := json.Unmarshal(data, &proposal); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, &proposal, nil)
 		},
 	}
 	proposalCreateCmd.Flags().StringVar(&proposalCreateOpts.proposalType, "type", "", "proposal type")
@@ -1755,20 +1822,17 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Compile a deterministic worker briefing for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.HydrateWork(context.Background(), service.WorkHydrateRequest{
-				WorkID:  args[0],
-				Mode:    hydrateOpts.mode,
-				Debrief: hydrateOpts.debrief,
-			})
+			params := url.Values{"mode": []string{hydrateOpts.mode}}
+			data, err := c.doGet("/api/work/"+args[0]+"/hydrate", params)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return writeJSON(cmd.OutOrStdout(), result)
+			_, err = cmd.OutOrStdout().Write(data)
+			return err
 		},
 	}
 	hydrateCmd.Flags().StringVar(&hydrateOpts.mode, "mode", "standard", "hydration mode: thin, standard, or deep")
@@ -1778,19 +1842,30 @@ This guarantees every doc has a corresponding work item.`,
 		Use:   "list",
 		Short: "List work proposals",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			proposals, err := svc.ListWorkProposals(context.Background(), service.WorkProposalListRequest{
-				Limit:        proposalListOpts.limit,
-				State:        proposalListOpts.state,
-				TargetWorkID: proposalListOpts.target,
-				SourceWorkID: proposalListOpts.source,
-			})
+			params := url.Values{}
+			if proposalListOpts.limit > 0 {
+				params.Set("limit", strconv.Itoa(proposalListOpts.limit))
+			}
+			if proposalListOpts.state != "" {
+				params.Set("state", proposalListOpts.state)
+			}
+			if proposalListOpts.target != "" {
+				params.Set("target", proposalListOpts.target)
+			}
+			if proposalListOpts.source != "" {
+				params.Set("source", proposalListOpts.source)
+			}
+			data, err := c.doGet("/api/proposal/list", params)
 			if err != nil {
-				return mapServiceError(err)
+				return err
+			}
+			var proposals []core.WorkProposalRecord
+			if err := json.Unmarshal(data, &proposals); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			return renderWorkProposals(cmd, root.jsonOutput, proposals)
 		},
@@ -1805,16 +1880,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Show one work proposal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			proposal, err := svc.GetWorkProposal(context.Background(), args[0])
+			data, err := c.doGet("/api/proposal/"+args[0], nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+			var proposal core.WorkProposalRecord
+			if err := json.Unmarshal(data, &proposal); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, &proposal, nil)
 		},
 	}
 
@@ -1823,16 +1901,22 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Accept a work proposal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			proposal, created, err := svc.ReviewWorkProposal(context.Background(), args[0], "accept")
+			data, err := c.doPost("/api/proposal/"+args[0]+"/accept", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProposal(cmd, root.jsonOutput, proposal, created)
+			var resp struct {
+				Proposal *core.WorkProposalRecord `json:"proposal"`
+				Created  *core.WorkItemRecord     `json:"created"`
+			}
+			if err := json.Unmarshal(data, &resp); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, resp.Proposal, resp.Created)
 		},
 	}
 
@@ -1841,16 +1925,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Reject a work proposal",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			proposal, _, err := svc.ReviewWorkProposal(context.Background(), args[0], "reject")
+			data, err := c.doPost("/api/proposal/"+args[0]+"/reject", nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProposal(cmd, root.jsonOutput, proposal, nil)
+			var proposal core.WorkProposalRecord
+			if err := json.Unmarshal(data, &proposal); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProposal(cmd, root.jsonOutput, &proposal, nil)
 		},
 	}
 
@@ -1860,16 +1947,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Render a checklist projection for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doGet("/api/work/"+args[0], nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProjection(cmd, root.jsonOutput, "checklist", projectionOpts.format, result)
+			var result service.WorkShowResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProjection(cmd, root.jsonOutput, "checklist", projectionOpts.format, &result)
 		},
 	}
 	projectionChecklistCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
@@ -1879,16 +1969,19 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Render a status projection for a work item",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			result, err := svc.Work(context.Background(), args[0])
+			data, err := c.doGet("/api/work/"+args[0], nil)
 			if err != nil {
-				return mapServiceError(err)
+				return err
 			}
-			return renderWorkProjection(cmd, root.jsonOutput, "status", projectionOpts.format, result)
+			var result service.WorkShowResult
+			if err := json.Unmarshal(data, &result); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
+			}
+			return renderWorkProjection(cmd, root.jsonOutput, "status", projectionOpts.format, &result)
 		},
 	}
 	projectionStatusCmd.Flags().StringVar(&projectionOpts.format, "format", "markdown", "projection format")
@@ -1910,24 +2003,23 @@ This guarantees every doc has a corresponding work item.`,
 			if err := checkCapability(core.CapWorkEdgeAdd); err != nil {
 				return err
 			}
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			edge := core.WorkEdgeRecord{
-				EdgeID:     core.GenerateID("wedge"),
-				FromWorkID: args[0],
-				ToWorkID:   args[1],
-				EdgeType:   edgeType,
-				CreatedBy:  "cli",
-				CreatedAt:  time.Now().UTC(),
-			}
-			if err := svc.CreateEdge(context.Background(), edge); err != nil {
+			data, err := c.doPost("/api/work/edges/add", map[string]string{
+				"from": args[0], "to": args[1], "edge_type": edgeType,
+			})
+			if err != nil {
 				return err
 			}
 			if root.jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), edge)
+				_, err = cmd.OutOrStdout().Write(data)
+				return err
+			}
+			var edge core.WorkEdgeRecord
+			if err := json.Unmarshal(data, &edge); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "%s %s %s → %s\n", edge.EdgeID, edge.EdgeType, edge.FromWorkID, edge.ToWorkID)
 			return nil
@@ -1940,25 +2032,18 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "Remove an edge between two work items",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			edges, err := svc.ListEdges(context.Background(), 100, "", args[0], args[1])
+			_, err = c.doPost("/api/work/edges/rm", map[string]string{
+				"from": args[0], "to": args[1],
+			})
 			if err != nil {
 				return err
 			}
-			if len(edges) == 0 {
-				return fmt.Errorf("no edge found from %s to %s", args[0], args[1])
-			}
-			for _, e := range edges {
-				if err := svc.DeleteEdge(context.Background(), e.EdgeID); err != nil {
-					return err
-				}
-				if !root.jsonOutput {
-					fmt.Fprintf(cmd.OutOrStdout(), "removed %s (%s → %s)\n", e.EdgeID, e.FromWorkID, e.ToWorkID)
-				}
+			if !root.jsonOutput {
+				fmt.Fprintf(cmd.OutOrStdout(), "removed edges from %s to %s\n", args[0], args[1])
 			}
 			return nil
 		},
@@ -1969,21 +2054,25 @@ This guarantees every doc has a corresponding work item.`,
 		Short: "List edges, optionally filtered by work item",
 		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			svc, err := service.Open(context.Background(), root.configPath)
+			c, err := connectServe()
 			if err != nil {
 				return err
 			}
-			defer func() { _ = svc.Close() }()
-			var from, to string
+			params := url.Values{}
 			if len(args) == 1 {
-				from = args[0]
+				params.Set("work_id", args[0])
 			}
-			edges, err := svc.ListEdges(context.Background(), 200, "", from, to)
+			data, err := c.doGet("/api/work/edges", params)
 			if err != nil {
 				return err
 			}
 			if root.jsonOutput {
-				return writeJSON(cmd.OutOrStdout(), edges)
+				_, err = cmd.OutOrStdout().Write(data)
+				return err
+			}
+			var edges []core.WorkEdgeRecord
+			if err := json.Unmarshal(data, &edges); err != nil {
+				return fmt.Errorf("decoding response: %w", err)
 			}
 			for _, e := range edges {
 				fmt.Fprintf(cmd.OutOrStdout(), "%s\t%s\t%s → %s\n", e.EdgeID, e.EdgeType, e.FromWorkID, e.ToWorkID)
@@ -1997,7 +2086,7 @@ This guarantees every doc has a corresponding work item.`,
 
 	edgeCmd.AddCommand(edgeAddCmd, edgeRmCmd, edgeLsCmd)
 
-	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, verifyCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd)
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, verifyCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd)
 	return cmd
 }
 

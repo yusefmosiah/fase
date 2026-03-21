@@ -80,17 +80,6 @@ func (h *wsHub) Drops() int64 {
 	return h.drops.Load()
 }
 
-func supervisorAvailableSlots(inFlightCount, maxConcurrent int, spawnedCompletionJob bool) int {
-	availableSlots := maxConcurrent - inFlightCount
-	if spawnedCompletionJob {
-		availableSlots--
-	}
-	if availableSlots < 0 {
-		return 0
-	}
-	return availableSlots
-}
-
 // wsUpgrade performs the WebSocket HTTP upgrade handshake.
 func wsUpgrade(w http.ResponseWriter, r *http.Request) (net.Conn, *bufio.ReadWriter, error) {
 	key := r.Header.Get("Sec-WebSocket-Key")
@@ -193,8 +182,6 @@ func newServeCommand(root *rootOptions) *cobra.Command {
 	var auto bool
 	var noUI bool
 	var noBrowser bool
-	var maxConcurrent int
-	var defaultAdapter string
 	var devAssets string
 
 	cmd := &cobra.Command{
@@ -212,7 +199,7 @@ Examples:
   fase serve --host 0.0.0.0           # accessible via Tailscale/LAN
   fase serve --no-browser             # don't open browser on start`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runServe(cmd, root, port, host, auto, noUI, noBrowser, maxConcurrent, defaultAdapter, devAssets)
+			return runServe(cmd, root, port, host, auto, noUI, noBrowser, devAssets)
 		},
 	}
 
@@ -221,14 +208,12 @@ Examples:
 	cmd.Flags().BoolVar(&auto, "auto", false, "auto-dispatch ready work items")
 	cmd.Flags().BoolVar(&noUI, "no-ui", false, "skip web UI, run housekeeping only")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", true, "don't auto-open browser")
-	cmd.Flags().IntVar(&maxConcurrent, "max-concurrent", 1, "max simultaneous jobs (with --auto)")
-	cmd.Flags().StringVar(&defaultAdapter, "default-adapter", "codex", "fallback adapter (with --auto)")
 	cmd.Flags().StringVar(&devAssets, "dev-assets", "", "serve UI from filesystem instead of embedded (for development)")
 
 	return cmd
 }
 
-func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, maxConcurrent int, defaultAdapter, devAssets string) error {
+func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto, noUI, noBrowser bool, devAssets string) error {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
@@ -268,10 +253,8 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	// WebSocket hub — shared across all goroutines
 	hub := newWSHub()
 
-	// Set up HTTP handlers (supervisor loop is nil until --auto starts it)
-	var supLoop *supervisorLoop
 	mux := http.NewServeMux()
-	registerAPIHandlers(mux, svc, cwd, hub, &supLoop)
+	registerAPIHandlers(mux, svc, cwd, hub)
 
 	// MCP endpoint — same work graph tools as `fase mcp http`
 	mcpServer := mcpserver.New(svc)
@@ -321,13 +304,9 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 		runChangeWatcher(ctx, svc, hub)
 	}()
 
-	// Only auto-dispatch when --auto is set
+	// --auto: placeholder for agentic supervisor (ADR-0041)
 	if auto {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			runInProcessSupervisor(ctx, svc, cwd, root, maxConcurrent, defaultAdapter, hub, &supLoop)
-		}()
+		fmt.Fprintf(cmd.OutOrStdout(), "WARNING: --auto requires the agentic supervisor (ADR-0041, not yet implemented). Dispatch manually with 'fase dispatch'.\n")
 	}
 
 	// Start HTTP server
@@ -488,8 +467,8 @@ func runChangeWatcher(ctx context.Context, svc *service.Service, hub *wsHub) {
 	}
 }
 
-func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, hub *wsHub, supLoopPtr **supervisorLoop) {
-	// Work items list
+func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, hub *wsHub) {
+	// Work items list (legacy)
 	mux.HandleFunc("/api/work/items", func(w http.ResponseWriter, r *http.Request) {
 		includeArchived := r.URL.Query().Get("include_archived") == "1" || strings.EqualFold(r.URL.Query().Get("include_archived"), "true")
 		items, err := svc.ListWork(r.Context(), service.WorkListRequest{Limit: 500, IncludeArchived: includeArchived})
@@ -498,6 +477,391 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			return
 		}
 		writeJSONHTTP(w, 200, items)
+	})
+
+	// Work items list with full filters (CLI rewire target)
+	mux.HandleFunc("/api/work/list", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 50
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		includeArchived := q.Get("include_archived") == "1" || strings.EqualFold(q.Get("include_archived"), "true")
+		items, err := svc.ListWork(r.Context(), service.WorkListRequest{
+			Limit:           limit,
+			Kind:            q.Get("kind"),
+			ExecutionState:  q.Get("state"),
+			ApprovalState:   q.Get("approval_state"),
+			IncludeArchived: includeArchived,
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, items)
+	})
+
+	// Ready work items
+	mux.HandleFunc("/api/work/ready", func(w http.ResponseWriter, r *http.Request) {
+		limit := 50
+		if v := r.URL.Query().Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		includeArchived := r.URL.Query().Get("include_archived") == "1"
+		_, _ = svc.ReconcileExpiredLeases(r.Context())
+		items, err := svc.ReadyWork(r.Context(), limit, includeArchived)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, items)
+	})
+
+	// Project hydrate
+	mux.HandleFunc("/api/project/hydrate", func(w http.ResponseWriter, r *http.Request) {
+		mode := r.URL.Query().Get("mode")
+		if mode == "" {
+			mode = "standard"
+		}
+		format := r.URL.Query().Get("format")
+		if format == "" {
+			format = "markdown"
+		}
+		result, err := svc.ProjectHydrate(r.Context(), service.ProjectHydrateRequest{
+			Mode:   mode,
+			Format: format,
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if format == "markdown" {
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			w.WriteHeader(200)
+			fmt.Fprint(w, service.RenderProjectHydrateMarkdown(result))
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// Create work item
+	mux.HandleFunc("/api/work/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.WorkCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		work, err := svc.CreateWork(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, work)
+	})
+
+	// Claim next ready work item
+	mux.HandleFunc("/api/work/claim-next", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.WorkClaimNextRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		_, _ = svc.ReconcileExpiredLeases(r.Context())
+		work, err := svc.ClaimNextWork(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, work)
+	})
+
+	// Proposal endpoints
+	mux.HandleFunc("/api/proposal/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.WorkProposalCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		proposal, err := svc.CreateWorkProposal(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, proposal)
+	})
+
+	mux.HandleFunc("/api/proposal/list", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 50
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		proposals, err := svc.ListWorkProposals(r.Context(), service.WorkProposalListRequest{
+			Limit:        limit,
+			State:        q.Get("state"),
+			TargetWorkID: q.Get("target"),
+			SourceWorkID: q.Get("source"),
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, proposals)
+	})
+
+	mux.HandleFunc("/api/proposal/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/proposal/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeJSONHTTP(w, 404, map[string]string{"error": "missing proposal id"})
+			return
+		}
+		proposalID := parts[0]
+		if len(parts) == 1 {
+			// GET /api/proposal/{id}
+			proposal, err := svc.GetWorkProposal(r.Context(), proposalID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, proposal)
+			return
+		}
+		switch parts[1] {
+		case "accept":
+			proposal, created, err := svc.ReviewWorkProposal(r.Context(), proposalID, "accept")
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, map[string]any{"proposal": proposal, "created": created})
+		case "reject":
+			proposal, _, err := svc.ReviewWorkProposal(r.Context(), proposalID, "reject")
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, proposal)
+		default:
+			writeJSONHTTP(w, 404, map[string]string{"error": "unknown endpoint"})
+		}
+	})
+
+	// Edge endpoints (extend existing /api/work/edges)
+	mux.HandleFunc("/api/work/edges/add", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			From     string `json:"from"`
+			To       string `json:"to"`
+			EdgeType string `json:"edge_type"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		if req.EdgeType == "" {
+			req.EdgeType = "blocks"
+		}
+		edge := core.WorkEdgeRecord{
+			EdgeID:     core.GenerateID("wedge"),
+			FromWorkID: req.From,
+			ToWorkID:   req.To,
+			EdgeType:   req.EdgeType,
+			CreatedBy:  "cli",
+			CreatedAt:  time.Now().UTC(),
+		}
+		if err := svc.CreateEdge(r.Context(), edge); err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, edge)
+	})
+
+	mux.HandleFunc("/api/work/edges/rm", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			From string `json:"from"`
+			To   string `json:"to"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		edges, err := svc.ListEdges(r.Context(), 100, "", req.From, req.To)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if len(edges) == 0 {
+			writeJSONHTTP(w, 404, map[string]string{"error": fmt.Sprintf("no edge found from %s to %s", req.From, req.To)})
+			return
+		}
+		for _, e := range edges {
+			if err := svc.DeleteEdge(r.Context(), e.EdgeID); err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+		}
+		writeJSONHTTP(w, 200, map[string]any{"removed": len(edges)})
+	})
+
+	// Dispatch endpoint — claims work, hydrates, spawns worker
+	mux.HandleFunc("/api/dispatch", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			WorkID  string `json:"work_id"`
+			Adapter string `json:"adapter"`
+			Model   string `json:"model"`
+			Force   bool   `json:"force"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+
+		// Concurrency guard
+		if !req.Force {
+			inProgress, _ := svc.ListWork(r.Context(), service.WorkListRequest{
+				Limit:          10,
+				ExecutionState: string(core.WorkExecutionStateInProgress),
+			})
+			if len(inProgress) > 0 {
+				writeJSONHTTP(w, 409, map[string]string{"error": fmt.Sprintf("concurrency guard: %d work item(s) already in progress (use force to override)", len(inProgress))})
+				return
+			}
+		}
+
+		// Pick work item
+		workID := req.WorkID
+		var item *service.WorkShowResult
+		if workID == "" {
+			readyItems, err := svc.ReadyWork(r.Context(), 1, false)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if len(readyItems) == 0 {
+				writeJSONHTTP(w, 200, map[string]string{"message": "no ready work items"})
+				return
+			}
+			workID = readyItems[0].WorkID
+		}
+		result, err := svc.Work(r.Context(), workID)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if result.Work.ExecutionState != "ready" && req.WorkID != "" {
+			writeJSONHTTP(w, 400, map[string]string{"error": fmt.Sprintf("work %s is %s, not ready", workID, result.Work.ExecutionState)})
+			return
+		}
+		item = result
+
+		// Pick adapter+model
+		pickedAdapter, pickedModel := pickAdapterModel(item.Work, item.Jobs, nil)
+		adapter := req.Adapter
+		if adapter == "" {
+			adapter = pickedAdapter
+		}
+		model := req.Model
+		if model == "" {
+			model = pickedModel
+		}
+
+		// Hydrate briefing
+		briefing, err := svc.HydrateWork(r.Context(), service.WorkHydrateRequest{
+			WorkID:   workID,
+			Mode:     "standard",
+			Claimant: "dispatch",
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": fmt.Sprintf("hydrate work: %v", err)})
+			return
+		}
+		briefingJSON, _ := json.Marshal(briefing)
+
+		// Claim and run
+		_, _ = svc.ClaimWork(r.Context(), service.WorkClaimRequest{
+			WorkID:        workID,
+			Claimant:      "dispatch",
+			LeaseDuration: 30 * time.Minute,
+		})
+
+		runResult, runErr := svc.Run(r.Context(), service.RunRequest{
+			Adapter: adapter,
+			CWD:     cwd,
+			Prompt:  string(briefingJSON),
+			Model:   model,
+			WorkID:  workID,
+		})
+
+		if runErr != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": runErr.Error()})
+			return
+		}
+
+		resp := map[string]any{
+			"work_id": workID,
+			"title":   item.Work.Title,
+			"adapter": adapter,
+			"model":   model,
+		}
+		if runResult != nil {
+			resp["job_id"] = runResult.Job.JobID
+		}
+		writeJSONHTTP(w, 200, resp)
+	})
+
+	// Attestation signing
+	mux.HandleFunc("/api/attestation/", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/attestation/"), "/")
+		if len(parts) < 2 || parts[1] != "sign" {
+			writeJSONHTTP(w, 404, map[string]string{"error": "unknown endpoint"})
+			return
+		}
+		attestID := parts[0]
+		var req struct {
+			Signature string `json:"signature"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		if err := svc.SignAttestationRecord(r.Context(), attestID, req.Signature); err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, map[string]string{"status": "ok"})
 	})
 
 	// Recent job runs across all work items
@@ -582,6 +946,334 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 				return
 			}
 			writeJSONHTTP(w, 200, result)
+		case "notes":
+			result, err := svc.Work(r.Context(), workID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, result.Notes)
+		case "update":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkUpdateRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			work, err := svc.UpdateWork(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "note-add":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkNoteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			note, err := svc.AddWorkNote(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, note)
+		case "attest":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkAttestRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			// Auto-lookup nonce if not provided
+			if strings.TrimSpace(req.Nonce) == "" {
+				if workRec, workErr := svc.Work(r.Context(), workID); workErr == nil && workRec != nil {
+					req.Nonce = attestationNonceFromWorkShow(workRec)
+				}
+			}
+			record, work, err := svc.AttestWork(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, map[string]any{"attestation": record, "work": work})
+		case "block":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			work, err := svc.UpdateWork(r.Context(), service.WorkUpdateRequest{
+				WorkID:         workID,
+				ExecutionState: core.WorkExecutionStateBlocked,
+				Message:        req.Message,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "archive":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			work, err := svc.UpdateWork(r.Context(), service.WorkUpdateRequest{
+				WorkID:         workID,
+				ExecutionState: core.WorkExecutionStateArchived,
+				Message:        req.Message,
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "retry":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			result, err := svc.Work(r.Context(), workID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if !result.Work.ExecutionState.Terminal() {
+				writeJSONHTTP(w, 400, map[string]string{"error": fmt.Sprintf("work %s is %s, not in a terminal state", workID, result.Work.ExecutionState)})
+				return
+			}
+			work, err := svc.UpdateWork(r.Context(), service.WorkUpdateRequest{
+				WorkID:         workID,
+				ExecutionState: core.WorkExecutionStateReady,
+				Message:        "retried from " + string(result.Work.ExecutionState),
+				CreatedBy:      "cli",
+			})
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "lock":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			work, err := svc.SetWorkLock(r.Context(), workID, core.WorkLockStateHumanLocked, "cli", "human lock applied")
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "unlock":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			work, err := svc.SetWorkLock(r.Context(), workID, core.WorkLockStateUnlocked, "cli", "human lock released")
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "approve":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			work, err := svc.ApproveWork(r.Context(), workID, "cli", req.Message)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "reject":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Message string `json:"message"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			work, err := svc.RejectWork(r.Context(), workID, "cli", req.Message)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "promote":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkPromoteRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			record, work, err := svc.PromoteWork(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, map[string]any{"promotion": record, "work": work})
+		case "private-note":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				NoteType string `json:"note_type"`
+				Body     string `json:"body"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			note, err := svc.AddPrivateNote(r.Context(), workID, req.NoteType, req.Body, "cli")
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, note)
+		case "doc-set":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Path   string `json:"path"`
+				Title  string `json:"title"`
+				Body   string `json:"body"`
+				Format string `json:"format"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			doc, resolvedWorkID, err := svc.SetDocContent(r.Context(), workID, req.Path, req.Title, req.Body, req.Format)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, map[string]any{"doc": doc, "work_id": resolvedWorkID})
+		case "children":
+			result, err := svc.Work(r.Context(), workID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, result.Children)
+		case "discover":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req struct {
+				Title     string `json:"title"`
+				Objective string `json:"objective"`
+				Kind      string `json:"kind"`
+				Rationale string `json:"rationale"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			proposal, err := svc.DiscoverWork(r.Context(), workID, req.Title, req.Objective, req.Kind, req.Rationale)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, proposal)
+		case "claim":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkClaimRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			work, err := svc.ClaimWork(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "release":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkReleaseRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			work, err := svc.ReleaseWork(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "renew-lease":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			var req service.WorkRenewLeaseRequest
+			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+				return
+			}
+			req.WorkID = workID
+			work, err := svc.RenewWorkLease(r.Context(), req)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, work)
+		case "verify":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			result, err := svc.VerifyWork(r.Context(), workID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, result)
 		default:
 			writeJSONHTTP(w, 404, map[string]string{"error": "unknown endpoint"})
 		}
@@ -608,20 +1300,13 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 		})
 	})
 
-	// Supervisor pause / resume
+	// Supervisor pause / resume — placeholder for agentic supervisor (ADR-0041)
 	mux.HandleFunc("/api/supervisor/pause", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
 			return
 		}
-		loop := *supLoopPtr
-		if loop == nil {
-			writeJSONHTTP(w, 409, map[string]string{"error": "supervisor not running (start with --auto)"})
-			return
-		}
-		loop.Pause()
-		hub.broadcast("supervisor_paused", map[string]bool{"paused": true})
-		writeJSONHTTP(w, 200, map[string]any{"paused": true})
+		writeJSONHTTP(w, 409, map[string]string{"error": "agentic supervisor not yet implemented (ADR-0041)"})
 	})
 
 	mux.HandleFunc("/api/supervisor/resume", func(w http.ResponseWriter, r *http.Request) {
@@ -629,14 +1314,7 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
 			return
 		}
-		loop := *supLoopPtr
-		if loop == nil {
-			writeJSONHTTP(w, 409, map[string]string{"error": "supervisor not running (start with --auto)"})
-			return
-		}
-		loop.Resume()
-		hub.broadcast("supervisor_resumed", map[string]bool{"paused": false})
-		writeJSONHTTP(w, 200, map[string]any{"paused": false})
+		writeJSONHTTP(w, 409, map[string]string{"error": "agentic supervisor not yet implemented (ADR-0041)"})
 	})
 
 	// Full diff
@@ -1417,54 +2095,5 @@ func truncateText(text string, limit int) string {
 	return text[:limit]
 }
 
-// runInProcessSupervisor runs the autonomous dispatch loop using the shared Service instance.
-// Only active when --auto is set. Delegates to supervisorLoop for the core 5-step algorithm.
-// loopOut is set to the loop pointer before the first cycle so HTTP handlers can call Pause/Resume.
-func runInProcessSupervisor(ctx context.Context, svc *service.Service, cwd string, root *rootOptions, maxConcurrent int, defaultAdapter string, hub *wsHub, loopOut **supervisorLoop) {
-	selfBin, err := os.Executable()
-	if err != nil {
-		selfBin = "fase"
-	}
-
-	stateDir := core.ResolveRepoStateDirFrom(cwd)
-	if stateDir == "" {
-		stateDir = filepath.Join(cwd, ".fase")
-	}
-	ca, caErr := loadOrCreateCA(stateDir)
-	if caErr != nil {
-		fmt.Fprintf(os.Stderr, "supervisor: capability CA init failed (tokens disabled): %v\n", caErr)
-	}
-	if ca != nil {
-		sweepStaleTokenFiles(stateDir, 2*time.Hour)
-	}
-
-	cfg, _ := core.LoadConfig(root.configPath)
-	if len(cfg.Rotation.Entries) > 0 {
-		workRotation = rotationFromConfig(cfg)
-	}
-
-	edLoop := newEventDrivenLoop(maxConcurrent, cwd, selfBin, root.configPath)
-	edLoop.defaultAdapter = defaultAdapter
-	edLoop.ca = ca
-	if loopOut != nil {
-		*loopOut = &edLoop.supervisorLoop
-	}
-	edLoop.budget = newDailyUsage(stateDir)
-	edLoop.limits = buildLimitsMap(cfg)
-	edLoop.onJobStarted = func(workID, jobID, adapter string) {
-		hub.broadcast("job_started", map[string]string{"work_id": workID, "job_id": jobID, "adapter": adapter})
-	}
-	edLoop.onJobCompleted = func(workID, jobID, state string) {
-		if state == "failed" || state == "cancelled" || state == "stalled" {
-			hub.broadcast("work_updated", map[string]string{
-				"work_id": workID, "job_id": jobID, "state": state,
-				"message": fmt.Sprintf("supervisor: job %s %s", jobID, state),
-			})
-		} else {
-			hub.broadcast("job_completed", map[string]string{"work_id": workID, "job_id": jobID})
-			hub.broadcast("work_updated", map[string]string{"work_id": workID, "job_id": jobID, "state": "completed"})
-		}
-	}
-
-	edLoop.run(ctx, svc)
-}
+// runInProcessSupervisor is a placeholder for the agentic supervisor (ADR-0041).
+// The deterministic supervisor loop has been removed.

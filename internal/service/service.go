@@ -241,25 +241,25 @@ type HistorySearchResult struct {
 }
 
 type WorkCreateRequest struct {
-	Title                string
-	Objective            string
-	Kind                 string
-	ParentWorkID         string
-	LockState            core.WorkLockState
-	Priority             int
-	Position             int
-	ConfigurationClass   string
-	BudgetClass          string
-	RequiredCapabilities []string
-	RequiredModelTraits  []string
-	PreferredAdapters    []string
-	ForbiddenAdapters    []string
-	PreferredModels      []string
-	AvoidModels          []string
-	RequiredAttestations []core.RequiredAttestation
-	Acceptance           map[string]any
-	Metadata             map[string]any
-	HeadCommitOID        string
+	Title                string                    `json:"title"`
+	Objective            string                    `json:"objective"`
+	Kind                 string                    `json:"kind"`
+	ParentWorkID         string                    `json:"parent_work_id,omitempty"`
+	LockState            core.WorkLockState        `json:"lock_state,omitempty"`
+	Priority             int                       `json:"priority,omitempty"`
+	Position             int                       `json:"position,omitempty"`
+	ConfigurationClass   string                    `json:"configuration_class,omitempty"`
+	BudgetClass          string                    `json:"budget_class,omitempty"`
+	RequiredCapabilities []string                  `json:"required_capabilities,omitempty"`
+	RequiredModelTraits  []string                  `json:"required_model_traits,omitempty"`
+	PreferredAdapters    []string                  `json:"preferred_adapters,omitempty"`
+	ForbiddenAdapters    []string                  `json:"forbidden_adapters,omitempty"`
+	PreferredModels      []string                  `json:"preferred_models,omitempty"`
+	AvoidModels          []string                  `json:"avoid_models,omitempty"`
+	RequiredAttestations []core.RequiredAttestation `json:"required_attestations,omitempty"`
+	Acceptance           map[string]any            `json:"acceptance,omitempty"`
+	Metadata             map[string]any            `json:"metadata,omitempty"`
+	HeadCommitOID        string                    `json:"head_commit_oid,omitempty"`
 }
 
 type WorkListRequest struct {
@@ -271,36 +271,36 @@ type WorkListRequest struct {
 }
 
 type WorkUpdateRequest struct {
-	WorkID         string
-	ExecutionState core.WorkExecutionState
-	ApprovalState  core.WorkApprovalState
-	LockState      core.WorkLockState
-	Phase          string
-	Message        string
-	JobID          string
-	SessionID      string
-	ArtifactID     string
-	Metadata       map[string]any
-	CreatedBy      string
-	ForceDone      bool // bypass guardDoneTransition; requires work:force-done capability
+	WorkID         string                 `json:"work_id,omitempty"`
+	ExecutionState core.WorkExecutionState `json:"execution_state,omitempty"`
+	ApprovalState  core.WorkApprovalState  `json:"approval_state,omitempty"`
+	LockState      core.WorkLockState      `json:"lock_state,omitempty"`
+	Phase          string                 `json:"phase,omitempty"`
+	Message        string                 `json:"message,omitempty"`
+	JobID          string                 `json:"job_id,omitempty"`
+	SessionID      string                 `json:"session_id,omitempty"`
+	ArtifactID     string                 `json:"artifact_id,omitempty"`
+	Metadata       map[string]any         `json:"metadata,omitempty"`
+	CreatedBy      string                 `json:"created_by,omitempty"`
+	ForceDone      bool                   `json:"force_done,omitempty"`
 }
 
 type WorkNoteRequest struct {
-	WorkID    string
-	NoteType  string
-	Body      string
-	Metadata  map[string]any
-	CreatedBy string
+	WorkID    string         `json:"work_id,omitempty"`
+	NoteType  string         `json:"note_type,omitempty"`
+	Body      string         `json:"body"`
+	Metadata  map[string]any `json:"metadata,omitempty"`
+	CreatedBy string         `json:"created_by,omitempty"`
 }
 
 type WorkProposalCreateRequest struct {
-	ProposalType string
-	TargetWorkID string
-	SourceWorkID string
-	Rationale    string
-	Patch        map[string]any
-	Metadata     map[string]any
-	CreatedBy    string
+	ProposalType string         `json:"proposal_type"`
+	TargetWorkID string         `json:"target_work_id,omitempty"`
+	SourceWorkID string         `json:"source_work_id,omitempty"`
+	Rationale    string         `json:"rationale,omitempty"`
+	Patch        map[string]any `json:"patch,omitempty"`
+	Metadata     map[string]any `json:"metadata,omitempty"`
+	CreatedBy    string         `json:"created_by,omitempty"`
 }
 
 type WorkProposalListRequest struct {
@@ -311,22 +311,22 @@ type WorkProposalListRequest struct {
 }
 
 type WorkAttestRequest struct {
-	WorkID                  string
-	Result                  string
-	Summary                 string
-	ArtifactID              string
-	JobID                   string
-	SessionID               string
-	Method                  string
-	VerifierKind            string
-	VerifierIdentity        string
-	Confidence              float64
-	Blocking                bool
-	SupersedesAttestationID string
-	Metadata                map[string]any
-	CreatedBy               string
-	Nonce                   string // required for automated attestation — generated post-job-completion
-	SignerPubkey            string // base64 Ed25519 public key of the attestor agent (Phase 3)
+	WorkID                  string         `json:"work_id,omitempty"`
+	Result                  string         `json:"result"`
+	Summary                 string         `json:"summary,omitempty"`
+	ArtifactID              string         `json:"artifact_id,omitempty"`
+	JobID                   string         `json:"job_id,omitempty"`
+	SessionID               string         `json:"session_id,omitempty"`
+	Method                  string         `json:"method,omitempty"`
+	VerifierKind            string         `json:"verifier_kind,omitempty"`
+	VerifierIdentity        string         `json:"verifier_identity,omitempty"`
+	Confidence              float64        `json:"confidence,omitempty"`
+	Blocking                bool           `json:"blocking,omitempty"`
+	SupersedesAttestationID string         `json:"supersedes_attestation_id,omitempty"`
+	Metadata                map[string]any `json:"metadata,omitempty"`
+	CreatedBy               string         `json:"created_by,omitempty"`
+	Nonce                   string         `json:"nonce,omitempty"`
+	SignerPubkey            string         `json:"signer_pubkey,omitempty"`
 }
 
 type WorkShowResult struct {
@@ -344,28 +344,28 @@ type WorkShowResult struct {
 }
 
 type WorkClaimRequest struct {
-	WorkID        string
-	Claimant      string
-	LeaseDuration time.Duration
+	WorkID        string        `json:"work_id"`
+	Claimant      string        `json:"claimant,omitempty"`
+	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
 }
 
 type WorkClaimNextRequest struct {
-	Claimant      string
-	LeaseDuration time.Duration
-	Limit         int
+	Claimant      string        `json:"claimant,omitempty"`
+	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
+	Limit         int           `json:"limit,omitempty"`
 }
 
 type WorkReleaseRequest struct {
-	WorkID    string
-	Claimant  string
-	CreatedBy string
-	Force     bool
+	WorkID    string `json:"work_id,omitempty"`
+	Claimant  string `json:"claimant,omitempty"`
+	CreatedBy string `json:"created_by,omitempty"`
+	Force     bool   `json:"force,omitempty"`
 }
 
 type WorkRenewLeaseRequest struct {
-	WorkID        string
-	Claimant      string
-	LeaseDuration time.Duration
+	WorkID        string        `json:"work_id,omitempty"`
+	Claimant      string        `json:"claimant,omitempty"`
+	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
 }
 
 type WorkHydrateRequest struct {
@@ -385,11 +385,11 @@ type ProjectHydrateRequest struct {
 type ProjectHydrateResult map[string]any
 
 type WorkPromoteRequest struct {
-	WorkID      string
-	Environment string
-	TargetRef   string
-	Message     string
-	CreatedBy   string
+	WorkID      string `json:"work_id,omitempty"`
+	Environment string `json:"environment,omitempty"`
+	TargetRef   string `json:"target_ref,omitempty"`
+	Message     string `json:"message,omitempty"`
+	CreatedBy   string `json:"created_by,omitempty"`
 }
 
 type lineItem struct {
@@ -1569,7 +1569,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 		return nil, fmt.Errorf("list conventions: %w", err)
 	}
 
-	// Work graph summary — counts by execution state.
+	// Work queue summary — counts by execution state.
 	allWork, err := s.ListWork(ctx, WorkListRequest{Limit: 500, IncludeArchived: false})
 	if err != nil {
 		return nil, fmt.Errorf("list work: %w", err)
@@ -1658,7 +1658,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 			"state_dir":   s.Paths.StateDir,
 		},
 		"conventions": conventionEntries,
-		"graph_summary": map[string]any{
+		"queue_summary": map[string]any{
 			"total_items":  len(allWork),
 			"state_counts": stateCounts,
 		},
@@ -1681,15 +1681,20 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 				"fase work update <work-id>",
 				"fase work note-add <work-id>",
 				"fase work attest <work-id>",
+				"fase dispatch [work-id]",
 			},
 			"rules": []string{
-				"Build with 'make' to install fase to ~/.local/bin.",
-				"Use 'fase' (on PATH), not './fase'.",
-				"All persistent state belongs in the fase work graph (notes, updates, private-notes).",
+				"CLI routes through fase serve — serve must be running for all commands.",
+				"All persistent state belongs in the FASE work queue (notes, updates, conventions).",
+				"Do not use Claude memory system — all state in FASE work queue.",
 				"Do not create memory files, CLAUDE.md, or .claude hidden state files.",
+				"One code-writer per environment, unlimited readers — plan/research/attest tasks can run concurrently.",
 				"Host agent role: delegate and review, never write code directly.",
-				"No new work dispatches while completed work awaits attestation.",
-				"max-concurrent=1 until isolated environments exist.",
+			},
+			"available_adapters": []string{
+				"claude (claude-sonnet-4-6, claude-haiku-4-5)",
+				"codex (gpt-5.4, gpt-5.4-mini)",
+				"opencode (zai-coding-plan/glm-5-turbo)",
 			},
 		},
 	}
@@ -1726,8 +1731,8 @@ func RenderProjectHydrateMarkdown(r ProjectHydrateResult) string {
 		b.WriteString("\n")
 	}
 
-	if summary, ok := r["graph_summary"].(map[string]any); ok {
-		b.WriteString("## Work Graph Summary\n\n")
+	if summary, ok := r["queue_summary"].(map[string]any); ok {
+		b.WriteString("## Work Queue Summary\n\n")
 		if total, ok := summary["total_items"].(int); ok {
 			fmt.Fprintf(&b, "Total items: %d\n", total)
 		}
@@ -1819,6 +1824,14 @@ func RenderProjectHydrateMarkdown(r ProjectHydrateResult) string {
 			b.WriteString("\nRules:\n")
 			for _, rule := range rules {
 				if s, ok := rule.(string); ok {
+					fmt.Fprintf(&b, "  - %s\n", s)
+				}
+			}
+		}
+		if adapters := toSlice(contract["available_adapters"]); len(adapters) > 0 {
+			b.WriteString("\nAvailable adapters:\n")
+			for _, a := range adapters {
+				if s, ok := a.(string); ok {
 					fmt.Fprintf(&b, "  - %s\n", s)
 				}
 			}
