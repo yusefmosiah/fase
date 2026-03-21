@@ -419,6 +419,17 @@ type continuationRequest struct {
 }
 
 func Open(ctx context.Context, configPath string) (*Service, error) {
+	return openWithStateDirOverride(ctx, configPath, "")
+}
+
+// OpenWithStateDir opens the service using the given configPath for adapter/config
+// settings but overrides the database stateDir. This is used by commands like
+// `run --work` that need to share the database with a running `fase serve` instance.
+func OpenWithStateDir(ctx context.Context, configPath, stateDir string) (*Service, error) {
+	return openWithStateDirOverride(ctx, configPath, stateDir)
+}
+
+func openWithStateDirOverride(ctx context.Context, configPath, stateDirOverride string) (*Service, error) {
 	paths, err := core.ResolvePathsForRepo()
 	if err != nil {
 		return nil, fmt.Errorf("resolve runtime paths: %w", err)
@@ -439,7 +450,9 @@ func Open(ctx context.Context, configPath string) (*Service, error) {
 		return nil, fmt.Errorf("load config: %w", err)
 	}
 
-	if cfg.Store.StateDir != "" {
+	if stateDirOverride != "" {
+		paths = paths.WithStateDir(stateDirOverride)
+	} else if cfg.Store.StateDir != "" {
 		stateDir, err := core.ExpandPath(cfg.Store.StateDir)
 		if err != nil {
 			return nil, fmt.Errorf("expand state dir: %w", err)
@@ -1433,6 +1446,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"You MUST call one of the above before exiting. The supervisor cannot see your work otherwise.",
 		"Record notes for findings, risks, and open questions.",
 		"Run verification (tests, builds) and report results as notes.",
+		"If the work involves a web UI: you MUST add e2e tests (default: Playwright) covering all interactive features (buttons, drag, resize, navigation). Backend tests alone are insufficient — they cannot catch broken UI behavior.",
 		"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
 		"Do NOT call fase work attest — an independent agent handles attestation.",
 		delegationNextAction(result.Work),
@@ -1453,6 +1467,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		contractRules = []string{
 			"Review the parent work item thoroughly: inspect the code, diff, tests, notes, and evidence.",
 			"Record notes for your findings before attesting.",
+			"If the work involves a web UI: verify that Playwright e2e tests exist and pass. If no Playwright tests exist, FAIL the attestation — backend-only tests are insufficient for web UI work.",
 			fmt.Sprintf("REQUIRED: You MUST call 'fase work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
 			"Use --result passed if the work meets its objective; use --result failed if it does not.",
 			"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
@@ -1922,8 +1937,9 @@ func supervisorDispatchProtocol() map[string]any {
 		"attestation_flow": []string{
 			"1. When a work item reaches awaiting_attestation, review the worker's output.",
 			"2. Check the diff, test results, and any findings noted by the worker.",
-			"3. If the work meets the objective, attest it (fase work attest <work-id> --verdict approve).",
-			"4. If the work needs revision, update it back to ready with feedback.",
+			"3. For web UI work: verify that e2e tests (Playwright) exist and pass. Fail attestation if no e2e tests — backend tests alone are insufficient.",
+			"4. If the work meets the objective, attest it (fase work attest <work-id> --verdict approve).",
+			"5. If the work needs revision, update it back to ready with feedback.",
 		},
 		"error_handling": []string{
 			"If a worker fails, the item returns to ready state — it will be redispatched.",
@@ -2070,6 +2086,13 @@ func (s *Service) ReadyWork(ctx context.Context, limit int, includeArchived bool
 	if err != nil {
 		return nil, err
 	}
+	// Filter out work items whose required_model_traits can't be satisfied by any
+	// available catalog model. Work items with explicit preferred models/adapters
+	// that are in the catalog are considered satisfiable regardless of trait tags.
+	// Auto-syncs catalog if no snapshot exists so the filter is always applied.
+	if snapshot, snapErr := s.catalogSnapshotOrSync(ctx); snapErr == nil {
+		items = filterWorkByModelTraits(items, snapshot.Entries)
+	}
 	// ADR-0040: supervisor owns dispatch decisions. Runtime filtering
 	// is no longer applied here — the supervisor scores and selects
 	// adapters/models based on work item preferences and health.
@@ -2077,6 +2100,72 @@ func (s *Service) ReadyWork(ctx context.Context, limit int, includeArchived bool
 		items = items[:limit]
 	}
 	return items, nil
+}
+
+// filterWorkByModelTraits removes work items whose required_model_traits cannot
+// be satisfied by any available catalog entry. Work items with preferred
+// models or adapters available in the catalog are considered satisfiable even
+// if the catalog entries lack explicit trait tags.
+func filterWorkByModelTraits(items []core.WorkItemRecord, entries []core.CatalogEntry) []core.WorkItemRecord {
+	if len(entries) == 0 {
+		return items
+	}
+	availableTraits := map[string]struct{}{}
+	availableModels := map[string]struct{}{}
+	availableAdapters := map[string]struct{}{}
+	for _, e := range entries {
+		if !e.Available {
+			continue
+		}
+		for _, t := range e.Traits {
+			availableTraits[t] = struct{}{}
+		}
+		if e.Model != "" {
+			availableModels[e.Model] = struct{}{}
+		}
+		if e.Adapter != "" {
+			availableAdapters[e.Adapter] = struct{}{}
+		}
+	}
+	var result []core.WorkItemRecord
+	for _, item := range items {
+		if canSatisfyModelTraits(item, availableTraits, availableModels, availableAdapters) {
+			result = append(result, item)
+		}
+	}
+	return result
+}
+
+func canSatisfyModelTraits(item core.WorkItemRecord, availableTraits, availableModels, availableAdapters map[string]struct{}) bool {
+	if len(item.RequiredModelTraits) == 0 {
+		// If the item specifies preferred adapters and none are available in the
+		// catalog, exclude it — no available adapter can satisfy the request.
+		if len(item.PreferredAdapters) > 0 {
+			for _, a := range item.PreferredAdapters {
+				if _, ok := availableAdapters[a]; ok {
+					return true
+				}
+			}
+			return false
+		}
+		return true
+	}
+	for _, m := range item.PreferredModels {
+		if _, ok := availableModels[m]; ok {
+			return true
+		}
+	}
+	for _, a := range item.PreferredAdapters {
+		if _, ok := availableAdapters[a]; ok {
+			return true
+		}
+	}
+	for _, t := range item.RequiredModelTraits {
+		if _, ok := availableTraits[t]; !ok {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.WorkItemRecord, error) {
