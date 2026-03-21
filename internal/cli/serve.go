@@ -1363,16 +1363,43 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			_ = json.Unmarshal(supData, &sup)
 		}
 
-		// Git diff stat
+		// Git diff stat (tracked changes + untracked files)
 		diffStat := ""
 		if out, err := exec.CommandContext(r.Context(), "git", "diff", "--stat").Output(); err == nil {
 			diffStat = string(out)
+		}
+		if out, err := exec.CommandContext(r.Context(), "git", "ls-files", "--others", "--exclude-standard").Output(); err == nil {
+			untracked := strings.TrimSpace(string(out))
+			if untracked != "" {
+				for _, f := range strings.Split(untracked, "\n") {
+					diffStat += " " + f + " (new)\n"
+				}
+			}
 		}
 
 		writeJSONHTTP(w, 200, map[string]any{
 			"supervisor": sup,
 			"diff_stat":  diffStat,
 		})
+	})
+
+	// Git status — tracked changes + untracked files
+	mux.HandleFunc("/api/git/status", func(w http.ResponseWriter, r *http.Request) {
+		result := map[string]any{}
+
+		if out, err := exec.CommandContext(r.Context(), "git", "diff", "--stat").Output(); err == nil {
+			result["diff_stat"] = strings.TrimSpace(string(out))
+		}
+		if out, err := exec.CommandContext(r.Context(), "git", "status", "--short").Output(); err == nil {
+			result["status"] = strings.TrimSpace(string(out))
+		}
+		if out, err := exec.CommandContext(r.Context(), "git", "ls-files", "--others", "--exclude-standard").Output(); err == nil {
+			untracked := strings.TrimSpace(string(out))
+			if untracked != "" {
+				result["untracked"] = strings.Split(untracked, "\n")
+			}
+		}
+		writeJSONHTTP(w, 200, result)
 	})
 
 	// Supervisor pause / resume (ADR-0041)
