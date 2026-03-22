@@ -669,8 +669,9 @@ func (s *Service) Send(ctx context.Context, req SendRequest) (*RunResult, error)
 			return nil, err // original error
 		}
 		target = core.NativeSessionRecord{
-			Adapter:   adapterName,
-			Resumable: true,
+			NativeSessionID: req.SessionID, // use canonical session ID as lock key
+			Adapter:         adapterName,
+			Resumable:       true,
 		}
 	}
 
