@@ -4621,8 +4621,19 @@ func detachedExecutablePath() (string, error) {
 	return path, nil
 }
 
+// nativeServiceInjector is implemented by adapters that need a service reference.
+type nativeServiceInjector interface {
+	SetService(svc any)
+}
+
 func (s *Service) resolveAdapter(ctx context.Context, name string) (adapterapi.Adapter, adapters.Diagnosis, error) {
 	adapter, descriptor, ok := adapters.Resolve(ctx, s.Config, name)
+	if ok {
+		// Inject service into adapters that need it (native adapter for FASE tools).
+		if injector, ok := adapter.(nativeServiceInjector); ok {
+			injector.SetService(s)
+		}
+	}
 	if !ok {
 		for _, entry := range adapters.CatalogFromConfig(s.Config) {
 			if entry.Adapter == name {

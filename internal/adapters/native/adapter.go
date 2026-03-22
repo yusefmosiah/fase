@@ -20,10 +20,17 @@ import (
 type Adapter struct {
 	binary  string
 	enabled bool
+	svc     any // service instance for FASE tools (set via SetService)
 }
 
 func New(binary string, enabled bool) *Adapter {
 	return &Adapter{binary: binary, enabled: enabled}
+}
+
+// SetService injects the service instance so the native adapter can
+// register FASE tools (work_list, dispatch, etc.) in its sessions.
+func (a *Adapter) SetService(svc any) {
+	a.svc = svc
 }
 
 func (a *Adapter) Name() string { return "native" }
@@ -101,8 +108,8 @@ func (a *Adapter) startInternal(ctx context.Context, cwd, model, profile, prompt
 			_ = stderrW.Close()
 		}()
 
-		live := NewLiveAdapter(nil, nil)
-		live.SetCoAgents(defaultCoAgentAdapters(nil, a.binary))
+		live := NewLiveAdapter(a.svc, nil)
+		live.SetCoAgents(defaultCoAgentAdapters(a.svc, a.binary))
 
 		session, err := live.StartSession(ctx, adapterapi.StartSessionRequest{
 			CWD:     cwd,

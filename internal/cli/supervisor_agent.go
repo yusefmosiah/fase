@@ -99,6 +99,13 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 		// with no tool calls), back off exponentially.
 		if outcome.unproductive {
 			consecutiveEmpty++
+			// After 5 consecutive failures, restart with fresh session.
+			if consecutiveEmpty >= 5 {
+				s.log("error", fmt.Sprintf("5 consecutive failures (%s) — restarting with fresh session", outcome.reason))
+				s.notifyHost(fmt.Sprintf("Supervisor restarting after 5 consecutive failures: %s", outcome.reason), "escalation")
+				s.restartAfterDelay(ctx, ch)
+				return
+			}
 			backoff := time.Duration(1<<min(consecutiveEmpty, 8)) * time.Second
 			if backoff > maxBackoff {
 				backoff = maxBackoff
