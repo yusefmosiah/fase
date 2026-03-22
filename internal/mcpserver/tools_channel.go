@@ -8,8 +8,8 @@ import (
 )
 
 type notifyHostInput struct {
-	Message string `json:"message" jsonschema:"required,description=The message to send to the host"`
-	Type    string `json:"type" jsonschema:"description=Message type: status_update or question or escalation or info (default: info)"`
+	Message string `json:"message" jsonschema:"the message to send to the host"`
+	Type    string `json:"type,omitempty" jsonschema:"message type: status_update or question or escalation or info (default: info)"`
 }
 
 func registerChannelTools(server *mcp.Server, mcpSrv *Server) {
