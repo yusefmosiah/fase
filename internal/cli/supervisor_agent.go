@@ -92,7 +92,9 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 
 	// Backoff state: tracks consecutive unproductive turns.
 	consecutiveEmpty := 0
+	productiveTurns := 0
 	const maxBackoff = 5 * time.Minute
+	const maxProductiveTurns = 10 // restart with fresh hydration after this many
 
 	for {
 		// If the last turn was unproductive (error, rate-limited, or very fast
@@ -137,6 +139,14 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 			}
 		} else {
 			consecutiveEmpty = 0
+			productiveTurns++
+			// Proactive context management: restart with fresh hydration
+			// every N productive turns to prevent context overflow.
+			if productiveTurns >= maxProductiveTurns {
+				s.log("context", fmt.Sprintf("rotating session after %d productive turns", productiveTurns))
+				s.restartAfterDelay(ctx, ch)
+				return
+			}
 		}
 
 		// Collect pending events or wait for a signal.
