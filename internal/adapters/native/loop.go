@@ -119,6 +119,11 @@ func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Mes
 			if err != nil {
 				output = fmt.Sprintf("tool_error: %v", err)
 			}
+			// Cap tool output to prevent context overflow.
+			const maxToolOutput = 100 * 1024 // 100KB
+			if len(output) > maxToolOutput {
+				output = output[:maxToolOutput] + "\n\n[output truncated — " + fmt.Sprintf("%d", len(output)) + " bytes total, showing first 100KB]"
+			}
 			results[idx] = toolResult{callID: c.ID, output: output}
 		}(i, call)
 	}
@@ -184,6 +189,31 @@ func (s *nativeSession) appendHistory(msg Message) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.history = append(s.history, msg)
+	s.trimHistory()
+}
+
+// trimHistory drops old turns if total history size exceeds the limit.
+// Keeps the first message (system context) and the most recent turns.
+func (s *nativeSession) trimHistory() {
+	const maxHistoryBytes = 2 * 1024 * 1024 // 2MB total history
+	total := 0
+	for _, msg := range s.history {
+		for _, block := range msg.Content {
+			total += len(block.Text) + len(block.Input) + len(block.Signature)
+		}
+	}
+	if total <= maxHistoryBytes || len(s.history) <= 2 {
+		return
+	}
+	// Keep first message + last half of history.
+	keep := len(s.history) / 2
+	if keep < 2 {
+		keep = 2
+	}
+	trimmed := make([]Message, 0, keep+1)
+	trimmed = append(trimmed, s.history[0]) // keep first (often the user prompt with context)
+	trimmed = append(trimmed, s.history[len(s.history)-keep:]...)
+	s.history = trimmed
 }
 
 func (s *nativeSession) previousResponseID() string {
