@@ -357,11 +357,24 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	}()
 
 	// Start agentic supervisor goroutine (ADR-0041)
+	// Auto-restarts on exit (context overflow, errors) with backoff.
 	if sup != nil {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			sup.run(ctx)
+			restartDelay := 10 * time.Second
+			for {
+				sup.run(ctx)
+				if ctx.Err() != nil {
+					return // serve shutting down
+				}
+				sup.log("restart", fmt.Sprintf("supervisor exited — restarting in %s", restartDelay))
+				select {
+				case <-ctx.Done():
+					return
+				case <-time.After(restartDelay):
+				}
+			}
 		}()
 	}
 
