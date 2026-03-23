@@ -7,16 +7,25 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
 const ResendEmailURL = "https://api.resend.com/emails"
 
+// ResendEmailAttachment represents a file attachment for the Resend API.
+type ResendEmailAttachment struct {
+	Filename    string `json:"filename"`
+	Content     string `json:"content"`              // base64-encoded file content
+	ContentType string `json:"content_type,omitempty"` // e.g. "image/png"
+}
+
 type ResendEmailRequest struct {
-	From    string `json:"from"`
-	To      string `json:"to"`
-	Subject string `json:"subject"`
-	HTML    string `json:"html"`
+	From        string                  `json:"from"`
+	To          string                  `json:"to"`
+	Subject     string                  `json:"subject"`
+	HTML        string                  `json:"html"`
+	Attachments []ResendEmailAttachment `json:"attachments,omitempty"`
 }
 
 type ResendEmailResponse struct {
@@ -28,25 +37,31 @@ type ResendEmailResponse struct {
 
 // SendEmail sends an email via Resend API (fire and forget).
 // It logs errors but doesn't block or return errors — failures are non-critical.
-func SendEmail(ctx context.Context, apiKey, to, subject, htmlBody string) {
+func SendEmail(ctx context.Context, apiKey, to, subject, htmlBody string, attachments []ResendEmailAttachment) {
 	// Fire and forget — run in a goroutine
 	go func() {
-		if err := sendEmailInternal(ctx, apiKey, to, subject, htmlBody); err != nil {
+		if err := sendEmailInternal(ctx, apiKey, to, subject, htmlBody, attachments); err != nil {
 			fmt.Printf("[notify] error sending email: %v\n", err)
 		}
 	}()
 }
 
-func sendEmailInternal(ctx context.Context, apiKey, to, subject, htmlBody string) error {
+func sendEmailInternal(ctx context.Context, apiKey, to, subject, htmlBody string, attachments []ResendEmailAttachment) error {
 	if apiKey == "" || to == "" {
 		return fmt.Errorf("missing required email parameters (apiKey: %v, to: %v)", apiKey != "", to != "")
 	}
 
+	from := os.Getenv("EMAIL_FROM")
+	if from == "" {
+		from = "onboarding@resend.dev"
+	}
+
 	req := ResendEmailRequest{
-		From:    "onboarding@resend.dev",
-		To:      to,
-		Subject: subject,
-		HTML:    htmlBody,
+		From:        from,
+		To:          to,
+		Subject:     subject,
+		HTML:        htmlBody,
+		Attachments: attachments,
 	}
 
 	body, err := json.Marshal(req)

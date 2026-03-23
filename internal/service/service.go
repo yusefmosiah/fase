@@ -3,6 +3,7 @@ package service
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -496,7 +497,47 @@ func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRe
 <p><strong>Message:</strong> %s</p>`,
 		work.Title, status, work.WorkID, work.Kind, message)
 
-	notify.SendEmail(ctx, apiKey, to, subject, html)
+	attachments := s.collectPlaywrightAttachments(ctx, work.WorkID)
+	notify.SendEmail(ctx, apiKey, to, subject, html, attachments)
+}
+
+// collectPlaywrightAttachments looks up the job CWD for the work item and
+// returns any PNG screenshots found in mind-graph/test-results/.
+func (s *Service) collectPlaywrightAttachments(ctx context.Context, workID string) []notify.ResendEmailAttachment {
+	jobs, err := s.store.ListJobsByWork(ctx, workID, 10)
+	if err != nil || len(jobs) == 0 {
+		return nil
+	}
+	cwd := verifyRepoPath(jobs)
+	if cwd == "" || cwd == "." {
+		return nil
+	}
+	return collectScreenshots(filepath.Join(cwd, "mind-graph", "test-results"))
+}
+
+// collectScreenshots walks dir recursively and returns PNG files as base64 attachments.
+func collectScreenshots(dir string) []notify.ResendEmailAttachment {
+	var attachments []notify.ResendEmailAttachment
+	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		name := d.Name()
+		if !strings.HasSuffix(strings.ToLower(name), ".png") {
+			return nil
+		}
+		data, readErr := os.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		attachments = append(attachments, notify.ResendEmailAttachment{
+			Filename:    name,
+			Content:     base64.StdEncoding.EncodeToString(data),
+			ContentType: "image/png",
+		})
+		return nil
+	})
+	return attachments
 }
 
 func (s *Service) Close() error {
@@ -1532,7 +1573,8 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		contractRules = []string{
 			"Review the parent work item thoroughly: inspect the code, diff, tests, notes, and evidence.",
 			"Record notes for your findings before attesting.",
-			"If the work involves a web UI: verify that Playwright e2e tests exist and pass. If no Playwright tests exist, FAIL the attestation — backend-only tests are insufficient for web UI work.",
+			"If the work involves a web UI: run Playwright e2e tests with 'cd mind-graph && npx playwright test'. Screenshots and videos are saved to mind-graph/test-results/ and will be attached to the attestation email automatically.",
+			"If no Playwright tests exist for web UI work, FAIL the attestation — backend-only tests are insufficient for web UI work.",
 			fmt.Sprintf("REQUIRED: You MUST call 'fase work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
 			"Use --result passed if the work meets its objective; use --result failed if it does not.",
 			"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
