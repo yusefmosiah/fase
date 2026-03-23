@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"time"
 )
 
@@ -42,8 +43,16 @@ func sendEmailInternal(ctx context.Context, apiKey, to, subject, htmlBody string
 		return fmt.Errorf("missing required email parameters (apiKey: %v, to: %v)", apiKey != "", to != "")
 	}
 
+	from := os.Getenv("EMAIL_FROM")
+	if from == "" {
+		from = "onboarding@resend.dev"
+	}
+	if envTo := os.Getenv("EMAIL_TO"); envTo != "" {
+		to = envTo
+	}
+
 	req := ResendEmailRequest{
-		From:    "onboarding@resend.dev",
+		From:    from,
 		To:      to,
 		Subject: subject,
 		HTML:    htmlBody,
