@@ -72,6 +72,9 @@ func (a *Adapter) ContinueRun(ctx context.Context, req adapterapi.ContinueRunReq
 			history = state.History
 		}
 	}
+	// Inject persistent supervisor context if available.
+	// This file survives session restarts and provides cross-session memory.
+	history = injectSupervisorContext(req.CWD, history)
 	return a.startWithHistory(ctx, req.CWD, req.Model, req.Profile, req.Prompt, history)
 }
 

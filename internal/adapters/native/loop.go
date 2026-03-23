@@ -46,6 +46,11 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			}
 			s.appendHistory(toolResultMessage)
 		case "end_turn", "":
+			// Proactive history compression: after each completed turn,
+			// check if history is approaching the context window limit
+			// and compress old turns into a summary.
+			s.maybeCompressHistory(ctx)
+
 			// Persist session history to disk after each completed turn.
 			if s.cwd != "" {
 				_ = s.saveSession(s.cwd)
@@ -64,6 +69,45 @@ func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 			return fmt.Errorf("native session: unsupported stop reason %q", response.StopReason)
 		}
 	}
+}
+
+// maybeCompressHistory checks if the history is approaching the context
+// window limit and proactively compresses old turns into a summary.
+// This runs after each completed turn to prevent context overflow before
+// it happens (unlike reactive trimHistory which only kicks in at 2MB).
+func (s *nativeSession) maybeCompressHistory(ctx context.Context) {
+	s.mu.Lock()
+	history := s.history
+	modelID := s.provider.ModelID
+	apiFormat := s.provider.APIFormat
+	client := s.client
+	cwd := s.cwd
+	s.mu.Unlock()
+
+	if !needsCompression(history, modelID) {
+		return
+	}
+
+	compressed, err := compressHistory(ctx, client, apiFormat, modelID, history, cwd)
+	if err != nil {
+		// Compression failed — fall through to reactive trimming.
+		// Log the failure for diagnostics.
+		s.emit(adapterapi.Event{
+			Kind:      adapterapi.EventKindTurnCompleted,
+			SessionID: s.id,
+			Text:      fmt.Sprintf("[history compression skipped: %v]", err),
+		})
+		return
+	}
+
+	s.mu.Lock()
+	if len(compressed) < len(s.history) {
+		s.history = compressed
+		// Reset previousID since we're changing the conversation history.
+		// Response chaining only works with contiguous history.
+		s.previousID = ""
+	}
+	s.mu.Unlock()
 }
 
 func defaultSystemPrompt() string {
@@ -192,7 +236,9 @@ func (s *nativeSession) appendHistory(msg Message) {
 	s.trimHistory()
 }
 
-// trimHistory drops old turns if total history size exceeds the limit.
+// trimHistory is the reactive fallback that drops old turns if total
+// history size exceeds the byte limit. This serves as a safety net when
+// proactive compression (maybeCompressHistory) hasn't kicked in or failed.
 // Keeps the first message (system context) and the most recent turns.
 func (s *nativeSession) trimHistory() {
 	const maxHistoryBytes = 2 * 1024 * 1024 // 2MB total history

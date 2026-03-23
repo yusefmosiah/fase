@@ -1210,6 +1210,31 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 	if objective == "" {
 		return nil, fmt.Errorf("%w: objective must not be empty", ErrInvalidInput)
 	}
+
+	// DEDUP CHECK: Prevent MCP tool call retries from creating duplicate work items
+	// Check for recent duplicate work items with identical title and objective
+	// within the last 5 seconds (MCP retry window).
+	recentWork, _ := s.store.ListWorkItems(ctx, 100, "", "", "", true)
+	for _, existing := range recentWork {
+		if existing.Title == title && existing.Objective == objective {
+			if time.Since(existing.CreatedAt) < 5*time.Second {
+				// Return the existing work item instead of creating a duplicate
+				// This prevents MCP retries from creating multiple copies
+				s.Events.Publish(WorkEvent{
+					Kind:   WorkEventCreated,
+					WorkID: existing.WorkID,
+					Title:  existing.Title,
+					State:  string(existing.ExecutionState),
+					Actor:  ActorService,
+					Cause:  CauseWorkCreated,
+					Metadata: map[string]string{
+						"duplicate_suppressed": "true",
+					},
+				})
+				return &existing, nil
+			}
+		}
+	}
 	kind := strings.TrimSpace(req.Kind)
 	if kind == "" {
 		kind = "task"
