@@ -460,6 +460,59 @@ func loadDotEnv(paths ...string) {
 	}
 }
 
+// createWorktree creates a git worktree for isolated worker execution.
+// Returns the worktree path. Branch name: fase/work/<work-id>.
+func createWorktree(repoRoot, workID string) (string, error) {
+	worktreeDir := filepath.Join(repoRoot, ".fase", "worktrees", workID)
+	branch := "fase/work/" + workID
+
+	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreeDir)
+	cmd.Dir = repoRoot
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return worktreeDir, nil
+}
+
+// mergeWorktree merges a worktree branch back to main and cleans up.
+func mergeWorktree(repoRoot, workID string) error {
+	branch := "fase/work/" + workID
+	worktreeDir := filepath.Join(repoRoot, ".fase", "worktrees", workID)
+
+	// Merge branch into current HEAD (main).
+	mergeCmd := exec.Command("git", "merge", "--no-ff", "-m", fmt.Sprintf("fase: merge %s", workID), branch)
+	mergeCmd.Dir = repoRoot
+	if out, err := mergeCmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("git merge %s: %s: %w", branch, strings.TrimSpace(string(out)), err)
+	}
+
+	// Remove worktree.
+	rmCmd := exec.Command("git", "worktree", "remove", worktreeDir)
+	rmCmd.Dir = repoRoot
+	_ = rmCmd.Run() // best-effort
+
+	// Delete branch.
+	delCmd := exec.Command("git", "branch", "-d", branch)
+	delCmd.Dir = repoRoot
+	_ = delCmd.Run() // best-effort
+
+	return nil
+}
+
+// cleanupWorktree removes a worktree without merging (for failed work).
+func cleanupWorktree(repoRoot, workID string) {
+	worktreeDir := filepath.Join(repoRoot, ".fase", "worktrees", workID)
+	branch := "fase/work/" + workID
+
+	rmCmd := exec.Command("git", "worktree", "remove", "--force", worktreeDir)
+	rmCmd.Dir = repoRoot
+	_ = rmCmd.Run()
+
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = repoRoot
+	_ = delCmd.Run()
+}
+
 func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub, sup *agenticSupervisor, mcpServer *mcpserver.Server) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
@@ -957,9 +1010,23 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			LeaseDuration: 30 * time.Minute,
 		})
 
+		// Create worktree for isolated worker execution.
+		workerCWD := cwd
+		worktreePath := ""
+		if item.Work.Kind == "implement" {
+			wt, wtErr := createWorktree(cwd, workID)
+			if wtErr != nil {
+				// Log but don't fail — fall back to main.
+				fmt.Fprintf(os.Stderr, "worktree create failed for %s: %v (falling back to main)\n", workID, wtErr)
+			} else {
+				workerCWD = wt
+				worktreePath = wt
+			}
+		}
+
 		runResult, runErr := svc.Run(r.Context(), service.RunRequest{
 			Adapter: adapter,
-			CWD:     cwd,
+			CWD:     workerCWD,
 			Prompt:  string(briefingJSON),
 			Model:   model,
 			WorkID:  workID,
@@ -971,10 +1038,11 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 		}
 
 		resp := map[string]any{
-			"work_id": workID,
-			"title":   item.Work.Title,
-			"adapter": adapter,
-			"model":   model,
+			"work_id":  workID,
+			"title":    item.Work.Title,
+			"adapter":  adapter,
+			"model":    model,
+			"worktree": worktreePath,
 		}
 		if runResult != nil {
 			resp["job_id"] = runResult.Job.JobID

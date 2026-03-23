@@ -70,3 +70,4 @@ work_seed/
 .cagent/cagent-private.db-wal
 .env
 .fase/native-sessions/
+.fase/worktrees/
