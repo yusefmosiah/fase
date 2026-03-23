@@ -466,6 +466,14 @@ func createWorktree(repoRoot, workID string) (string, error) {
 	worktreeDir := filepath.Join(repoRoot, ".fase", "worktrees", workID)
 	branch := "fase/work/" + workID
 
+	// Clean up stale branch/worktree from previous failed dispatch.
+	rmCmd := exec.Command("git", "worktree", "remove", "--force", worktreeDir)
+	rmCmd.Dir = repoRoot
+	_ = rmCmd.Run()
+	delCmd := exec.Command("git", "branch", "-D", branch)
+	delCmd.Dir = repoRoot
+	_ = delCmd.Run()
+
 	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreeDir)
 	cmd.Dir = repoRoot
 	if out, err := cmd.CombinedOutput(); err != nil {
