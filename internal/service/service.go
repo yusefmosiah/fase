@@ -1548,7 +1548,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"fase work update <work-id>",
 		"fase work note-add <work-id>",
 	}
-	updateDoneCmd := fmt.Sprintf("fase work update %s --execution-state awaiting_attestation --message \"<summary of what you did>\"", workID)
+	updateDoneCmd := fmt.Sprintf("fase work update %s --execution-state checking --message \"<summary of what you did>\"", workID)
 	gitCommitCmd := fmt.Sprintf("git add -A && git commit -m \"fase(%s): <summary>\"", workID)
 	updateFailCmd := fmt.Sprintf("fase work update %s --execution-state failed --message \"<what went wrong>\"", workID)
 	contractRules := []string{
@@ -2606,6 +2606,11 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		s.sendWorkNotification(context.Background(), work, req.Message)
 	}
 
+	// Auto-dispatch checker when worker signals checking state.
+	if req.ExecutionState == core.WorkExecutionStateChecking {
+		go s.dispatchChecker(context.Background(), work)
+	}
+
 	return &work, nil
 }
 
@@ -2637,6 +2642,98 @@ func (s *Service) SetWorkLock(ctx context.Context, workID string, lockState core
 		return nil, err
 	}
 	return &work, nil
+}
+
+// checkerModels is the ordered pool of adapter+model pairs used for checker dispatch.
+// Checkers intentionally use a different model from the worker to provide independent verification.
+var checkerModels = []struct{ adapter, model string }{
+	{"claude", "claude-opus-4-6"},
+	{"claude", "claude-sonnet-4-6"},
+	{"native", "bedrock/claude-sonnet-4-6"},
+}
+
+// dispatchChecker spawns a checker job for the given work item.
+// It finds the worktree CWD from the work item's last job, picks a model
+// different from the worker, and runs the checker briefing.
+func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord) {
+	jobs, err := s.store.ListJobsByWork(ctx, work.WorkID, 5)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "dispatchChecker: list jobs for %s: %v\n", work.WorkID, err)
+		return
+	}
+
+	// Use the last job's CWD as the worktree path.
+	// Fallback: repo root derived from state dir (strip ".fase" suffix).
+	cwd := filepath.Dir(s.Paths.StateDir)
+	workerAdapter := ""
+	workerModel := ""
+	if len(jobs) > 0 {
+		lastJob := jobs[0]
+		if lastJob.CWD != "" {
+			cwd = lastJob.CWD
+		}
+		workerAdapter = lastJob.Adapter
+		if m, ok := lastJob.Summary["model"].(string); ok {
+			workerModel = m
+		}
+	}
+
+	// Pick a checker adapter+model that differs from the worker's last model.
+	checkerAdapter := checkerModels[0].adapter
+	checkerModel := checkerModels[0].model
+	for _, cm := range checkerModels {
+		if cm.adapter != workerAdapter && cm.model != workerModel {
+			checkerAdapter = cm.adapter
+			checkerModel = cm.model
+			break
+		}
+	}
+
+	briefing := s.buildCheckerBriefing(work)
+
+	_, runErr := s.Run(ctx, RunRequest{
+		Adapter: checkerAdapter,
+		CWD:     cwd,
+		Prompt:  briefing,
+		Model:   checkerModel,
+		WorkID:  work.WorkID,
+		Label:   "checker",
+	})
+	if runErr != nil {
+		fmt.Fprintf(os.Stderr, "dispatchChecker: run for %s: %v\n", work.WorkID, runErr)
+	}
+}
+
+// buildCheckerBriefing produces a prompt for the checker agent.
+func (s *Service) buildCheckerBriefing(work core.WorkItemRecord) string {
+	return fmt.Sprintf(`# Checker Assignment
+
+Work ID: %s
+Title: %s
+
+You are a checker. Your job is to verify the worker's output independently.
+
+## Your Tasks
+
+1. Run the test suite: go test ./...
+2. Check that the build is clean: go build ./...
+3. Review the diff: git diff main...HEAD --stat
+4. Note any issues, warnings, or test failures
+
+## Rules
+
+- You are read-only. Do NOT modify code.
+- Record your findings as work notes: fase work note-add %s --note-type finding --body "<your findings>"
+- After completing your review, update the work state:
+  - If tests pass and build is clean: fase work update %s --execution-state done --message "<summary>"
+  - If there are failures: fase work update %s --execution-state failed --message "<what failed>"
+- Do NOT call fase work attest.
+- Do NOT create new work items.
+
+## Work Objective
+
+%s
+`, work.WorkID, work.Title, work.WorkID, work.WorkID, work.WorkID, work.Objective)
 }
 
 func (s *Service) ApproveWork(ctx context.Context, workID, createdBy, message string) (*core.WorkItemRecord, error) {
