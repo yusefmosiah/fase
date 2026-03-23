@@ -2774,7 +2774,7 @@ func newDashboardCommand(root *rootOptions) *cobra.Command {
 			}
 
 			fmt.Fprintf(cmd.OutOrStdout(), "WORK: %d total", len(allWork))
-			for _, s := range []string{"ready", "claimed", "in_progress", "awaiting_attestation", "blocked", "done", "failed", "cancelled", "archived"} {
+			for _, s := range []string{"ready", "claimed", "in_progress", "checking", "awaiting_attestation", "blocked", "done", "failed", "cancelled", "archived"} {
 				if c, ok := states[s]; ok && c > 0 {
 					fmt.Fprintf(cmd.OutOrStdout(), ", %d %s", c, s)
 				}

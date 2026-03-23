@@ -290,7 +290,8 @@ const (
 	WorkExecutionStateReady               WorkExecutionState = "ready"
 	WorkExecutionStateClaimed             WorkExecutionState = "claimed"
 	WorkExecutionStateInProgress          WorkExecutionState = "in_progress"
-	WorkExecutionStateAwaitingAttestation WorkExecutionState = "awaiting_attestation"
+	WorkExecutionStateChecking            WorkExecutionState = "checking"
+	WorkExecutionStateAwaitingAttestation WorkExecutionState = "awaiting_attestation" // deprecated alias for checking
 	WorkExecutionStateBlocked             WorkExecutionState = "blocked"
 	WorkExecutionStateDone                WorkExecutionState = "done"
 	WorkExecutionStateFailed              WorkExecutionState = "failed"
@@ -301,7 +302,7 @@ const (
 func (s WorkExecutionState) Valid() bool {
 	switch s {
 	case WorkExecutionStateReady, WorkExecutionStateClaimed, WorkExecutionStateInProgress,
-		WorkExecutionStateAwaitingAttestation, WorkExecutionStateBlocked,
+		WorkExecutionStateChecking, WorkExecutionStateAwaitingAttestation, WorkExecutionStateBlocked,
 		WorkExecutionStateDone, WorkExecutionStateFailed, WorkExecutionStateCancelled,
 		WorkExecutionStateArchived:
 		return true
