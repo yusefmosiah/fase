@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/yusefmosiah/fase/internal/core"
 )
 
 func TestToolRegistryDefinitionsAndExecute(t *testing.T) {
@@ -140,6 +142,150 @@ func TestCodingToolsRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRegisterFASETools_NoServiceSkips(t *testing.T) {
+	t.Parallel()
+	registry := MustNewToolRegistry()
+	if err := RegisterFASETools(registry, nil); err != nil {
+		t.Fatalf("RegisterFASETools with nil svc returned error: %v", err)
+	}
+	if len(registry.Tools()) != 0 {
+		t.Fatalf("expected no tools registered when svc is nil, got %d", len(registry.Tools()))
+	}
+	// Non-faseBridge type also skips.
+	if err := RegisterFASETools(registry, "not-a-service"); err != nil {
+		t.Fatalf("RegisterFASETools with non-service returned error: %v", err)
+	}
+	if len(registry.Tools()) != 0 {
+		t.Fatalf("expected no tools registered for non-service, got %d", len(registry.Tools()))
+	}
+}
+
+func TestRegisterFASETools_WithService(t *testing.T) {
+	t.Parallel()
+	registry := MustNewToolRegistry()
+	svc := &fakeFaseBridge{}
+	if err := RegisterFASETools(registry, svc); err != nil {
+		t.Fatalf("RegisterFASETools returned error: %v", err)
+	}
+	want := []string{"check_record_create", "check_record_list", "check_record_show", "run_playwright", "run_tests"}
+	tools := registry.Tools()
+	if len(tools) != len(want) {
+		t.Fatalf("expected %d tools, got %d: %v", len(want), len(tools), toolNames(tools))
+	}
+	for i, name := range want {
+		if tools[i].Name != name {
+			t.Errorf("tool[%d]: expected %q, got %q", i, name, tools[i].Name)
+		}
+	}
+}
+
+func TestCheckRecordCreate_ValidatesResult(t *testing.T) {
+	t.Parallel()
+	registry := MustNewToolRegistry()
+	svc := &fakeFaseBridge{}
+	if err := RegisterFASETools(registry, svc); err != nil {
+		t.Fatalf("RegisterFASETools returned error: %v", err)
+	}
+	// Missing work_id and invalid result should propagate error from svc.
+	out, err := registry.Execute(context.Background(), "check_record_create", mustJSON(t, map[string]any{
+		"work_id": "wid_test",
+		"result":  "pass",
+	}))
+	if err != nil {
+		t.Fatalf("check_record_create returned error: %v", err)
+	}
+	if !strings.Contains(out, "chk_test") {
+		t.Fatalf("expected check_id in output, got: %s", out)
+	}
+}
+
+func TestCheckRecordList_ReturnsRecords(t *testing.T) {
+	t.Parallel()
+	registry := MustNewToolRegistry()
+	svc := &fakeFaseBridge{}
+	if err := RegisterFASETools(registry, svc); err != nil {
+		t.Fatalf("RegisterFASETools returned error: %v", err)
+	}
+	out, err := registry.Execute(context.Background(), "check_record_list", mustJSON(t, map[string]any{
+		"work_id": "wid_test",
+	}))
+	if err != nil {
+		t.Fatalf("check_record_list returned error: %v", err)
+	}
+	if !strings.Contains(out, "wid_test") {
+		t.Fatalf("expected work_id in output, got: %s", out)
+	}
+}
+
+func TestRunTests_ParsesCounts(t *testing.T) {
+	t.Parallel()
+	// Test parseGoTestCounts
+	output := "--- PASS: TestFoo (0.01s)\n--- PASS: TestBar (0.02s)\n--- FAIL: TestBaz (0.00s)"
+	passed, failed := parseGoTestCounts(output)
+	if passed != 2 {
+		t.Errorf("expected 2 passed, got %d", passed)
+	}
+	if failed != 1 {
+		t.Errorf("expected 1 failed, got %d", failed)
+	}
+}
+
+func TestRunPlaywright_ParsesCounts(t *testing.T) {
+	t.Parallel()
+	output := "  5 passed (10s)\n  2 failed\n  Running 7 tests using 1 worker"
+	passed, failed := parsePlaywrightCounts(output)
+	if passed != 5 {
+		t.Errorf("expected 5 passed, got %d", passed)
+	}
+	if failed != 2 {
+		t.Errorf("expected 2 failed, got %d", failed)
+	}
+}
+
+func TestCollectPlaywrightScreenshots(t *testing.T) {
+	t.Parallel()
+	output := "  screenshot saved at /tmp/test-results/screenshot-failed.png\n  attachment: /tmp/artifacts/screen.jpg"
+	shots := collectPlaywrightScreenshots(output)
+	if len(shots) < 1 {
+		t.Fatalf("expected at least 1 screenshot, got %v", shots)
+	}
+	found := false
+	for _, s := range shots {
+		if strings.Contains(s, ".png") || strings.Contains(s, ".jpg") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no screenshot paths found: %v", shots)
+	}
+}
+
+// fakeFaseBridge implements faseBridge for testing.
+type fakeFaseBridge struct{}
+
+func (f *fakeFaseBridge) CreateCheckRecordDirect(_ context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport) (core.CheckRecord, error) {
+	return core.CheckRecord{
+		CheckID: "chk_test",
+		WorkID:  workID,
+		Result:  result,
+		Report:  report,
+	}, nil
+}
+
+func (f *fakeFaseBridge) GetCheckRecord(_ context.Context, checkID string) (core.CheckRecord, error) {
+	return core.CheckRecord{
+		CheckID: checkID,
+		WorkID:  "wid_test",
+		Result:  "pass",
+	}, nil
+}
+
+func (f *fakeFaseBridge) ListCheckRecords(_ context.Context, workID string, limit int) ([]core.CheckRecord, error) {
+	return []core.CheckRecord{
+		{CheckID: "chk_1", WorkID: workID, Result: "pass"},
+	}, nil
+}
+
 func mustJSON(t *testing.T, v any) json.RawMessage {
 	t.Helper()
 	data, err := json.Marshal(v)
@@ -147,4 +293,12 @@ func mustJSON(t *testing.T, v any) json.RawMessage {
 		t.Fatalf("json.Marshal returned error: %v", err)
 	}
 	return data
+}
+
+func toolNames(tools []Tool) []string {
+	names := make([]string, len(tools))
+	for i, t := range tools {
+		names[i] = t.Name
+	}
+	return names
 }

@@ -689,6 +689,20 @@ func (s *Service) ListCheckRecords(ctx context.Context, workID string, limit int
 	return s.store.ListCheckRecords(ctx, workID, limit)
 }
 
+// CreateCheckRecordDirect is an acyclic bridge for the native adapter's in-process tool registration.
+// It accepts only core and primitive types so the native adapter can define a matching interface
+// without importing the service package (which would create an import cycle).
+func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport) (core.CheckRecord, error) {
+	return s.CreateCheckRecord(ctx, CheckRecordCreateRequest{
+		WorkID:       workID,
+		Result:       result,
+		CheckerModel: checkerModel,
+		WorkerModel:  workerModel,
+		Report:       report,
+		CreatedBy:    "worker",
+	})
+}
+
 // SendSpecEscalationEmail emails the human when a work item has failed checks 3+ times.
 func (s *Service) SendSpecEscalationEmail(ctx context.Context, workID, summary, recommendation string) {
 	apiKey := os.Getenv("RESEND_API_KEY")
