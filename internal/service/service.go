@@ -512,7 +512,14 @@ func (s *Service) collectPlaywrightAttachments(ctx context.Context, workID strin
 	if cwd == "" || cwd == "." {
 		return nil
 	}
-	return collectScreenshots(filepath.Join(cwd, "mind-graph", "test-results"))
+	// Check multiple possible locations for Playwright artifacts.
+	for _, subdir := range []string{"test-results", "tests/test-results", "mind-graph/test-results"} {
+		dir := filepath.Join(cwd, subdir)
+		if attachments := collectScreenshots(dir); len(attachments) > 0 {
+			return attachments
+		}
+	}
+	return nil
 }
 
 // collectScreenshots walks dir recursively and returns PNG files as base64 attachments.
@@ -2593,9 +2600,9 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	}
 	s.Events.Publish(ev)
 
-	// Send email notification only on successful completion.
-	// Failures should be retried/fixed automatically, not emailed.
-	if string(work.ExecutionState) == "done" {
+	// Send email notification only on first transition to done.
+	// Deduplicate: only send if previous state was NOT done.
+	if string(work.ExecutionState) == "done" && prevState != "done" {
 		s.sendWorkNotification(context.Background(), work, req.Message)
 	}
 
