@@ -23,6 +23,7 @@ import (
 	catalogpkg "github.com/yusefmosiah/fase/internal/catalog"
 	"github.com/yusefmosiah/fase/internal/core"
 	debriefpkg "github.com/yusefmosiah/fase/internal/debrief"
+	"github.com/yusefmosiah/fase/internal/notify"
 	"github.com/yusefmosiah/fase/internal/events"
 	"github.com/yusefmosiah/fase/internal/pricing"
 	"github.com/yusefmosiah/fase/internal/store"
@@ -476,6 +477,26 @@ func openWithStateDirOverride(ctx context.Context, configPath, stateDirOverride 
 		ConfigPresent: configPresent,
 		store:         db,
 	}, nil
+}
+
+// sendWorkNotification sends an email when work items reach terminal states.
+func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRecord, message string) {
+	apiKey := os.Getenv("RESEND_API_KEY")
+	to := os.Getenv("EMAIL_TO")
+	if apiKey == "" || to == "" {
+		return
+	}
+
+	status := string(work.ExecutionState)
+	subject := fmt.Sprintf("[FASE] %s: %s", status, work.Title)
+	html := fmt.Sprintf(`<h2>%s</h2>
+<p><strong>Status:</strong> %s</p>
+<p><strong>Work ID:</strong> %s</p>
+<p><strong>Kind:</strong> %s</p>
+<p><strong>Message:</strong> %s</p>`,
+		work.Title, status, work.WorkID, work.Kind, message)
+
+	notify.SendEmail(ctx, apiKey, to, subject, html)
 }
 
 func (s *Service) Close() error {
@@ -2529,6 +2550,12 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		ev.Metadata = map[string]string{"message": req.Message}
 	}
 	s.Events.Publish(ev)
+
+	// Send email notification on terminal state transitions.
+	if work.ExecutionState.Terminal() || string(work.ExecutionState) == "awaiting_attestation" {
+		s.sendWorkNotification(ctx, work, req.Message)
+	}
+
 	return &work, nil
 }
 
