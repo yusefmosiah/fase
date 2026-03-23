@@ -43,7 +43,7 @@ func sendEmailInternal(ctx context.Context, apiKey, to, subject, htmlBody string
 	}
 
 	req := ResendEmailRequest{
-		From:    "notifications@resend.dev",
+		From:    "onboarding@resend.dev",
 		To:      to,
 		Subject: subject,
 		HTML:    htmlBody,

@@ -2553,7 +2553,8 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 
 	// Send email notification on terminal state transitions.
 	// Use background context — the HTTP request context may be cancelled.
-	if work.ExecutionState.Terminal() || string(work.ExecutionState) == "awaiting_attestation" {
+	// Only send on done or failed — awaiting_attestation is too noisy.
+	if work.ExecutionState.Terminal() {
 		s.sendWorkNotification(context.Background(), work, req.Message)
 	}
 
