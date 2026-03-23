@@ -6858,12 +6858,8 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
 		JobID:     job.JobID,
-		Actor:     ActorWorker,
-	}
-	if work.ExecutionState.Terminal() {
-		ev.Cause = CauseWorkerTerminal
-	} else {
-		ev.Cause = CauseWorkerProgress
+		Actor:     ActorService,
+		Cause:     CauseJobLifecycle,
 	}
 	s.Events.Publish(ev)
 	return nil
