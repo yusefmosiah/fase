@@ -1455,9 +1455,11 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"fase work note-add <work-id>",
 	}
 	updateDoneCmd := fmt.Sprintf("fase work update %s --execution-state done --message \"<summary of what you did>\" --force", workID)
+	gitCommitCmd := fmt.Sprintf("git add -A && git commit -m \"fase(%s): <summary>\"", workID)
 	updateFailCmd := fmt.Sprintf("fase work update %s --execution-state failed --message \"<what went wrong>\"", workID)
 	contractRules := []string{
 		"Do the work, add notes as you go, then update the work item state before exiting.",
+		fmt.Sprintf("REQUIRED before exit: %s", gitCommitCmd),
 		fmt.Sprintf("REQUIRED on success: %s", updateDoneCmd),
 		fmt.Sprintf("REQUIRED on failure: %s", updateFailCmd),
 		"You MUST call one of the above before exiting. The supervisor cannot see your work otherwise.",
