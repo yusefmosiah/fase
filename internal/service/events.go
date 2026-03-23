@@ -20,30 +20,30 @@ const (
 type EventActor string
 
 const (
-	ActorWorker      EventActor = "worker"
-	ActorSupervisor  EventActor = "supervisor"
+	ActorWorker       EventActor = "worker"
+	ActorSupervisor   EventActor = "supervisor"
 	ActorHousekeeping EventActor = "housekeeping"
-	ActorHost        EventActor = "host"
-	ActorService     EventActor = "service"
-	ActorReconciler  EventActor = "reconciler"
+	ActorHost         EventActor = "host"
+	ActorService      EventActor = "service"
+	ActorReconciler   EventActor = "reconciler"
 )
 
 // EventCause classifies why the event was emitted.
 type EventCause string
 
 const (
-	CauseWorkCreated          EventCause = "work_created"
-	CauseWorkerProgress       EventCause = "worker_progress"
-	CauseWorkerTerminal       EventCause = "worker_terminal"
-	CauseAttestationRecorded  EventCause = "attestation_recorded"
-	CauseParentTransition     EventCause = "parent_transition"
-	CauseHousekeepingStall    EventCause = "housekeeping_stall"
-	CauseHousekeepingOrphan   EventCause = "housekeeping_orphan"
-	CauseSupervisorMutation   EventCause = "supervisor_mutation"
-	CauseLeaseReconcile       EventCause = "lease_reconcile"
-	CauseHostManual           EventCause = "host_manual"
-	CauseClaimChanged         EventCause = "claim_changed"
-	CauseJobLifecycle         EventCause = "job_lifecycle"
+	CauseWorkCreated         EventCause = "work_created"
+	CauseWorkerProgress      EventCause = "worker_progress"
+	CauseWorkerTerminal      EventCause = "worker_terminal"
+	CauseAttestationRecorded EventCause = "attestation_recorded"
+	CauseParentTransition    EventCause = "parent_transition"
+	CauseHousekeepingStall   EventCause = "housekeeping_stall"
+	CauseHousekeepingOrphan  EventCause = "housekeeping_orphan"
+	CauseSupervisorMutation  EventCause = "supervisor_mutation"
+	CauseLeaseReconcile      EventCause = "lease_reconcile"
+	CauseHostManual          EventCause = "host_manual"
+	CauseClaimChanged        EventCause = "claim_changed"
+	CauseJobLifecycle        EventCause = "job_lifecycle"
 )
 
 type WorkEvent struct {
@@ -65,7 +65,11 @@ func (ev WorkEvent) RequiresSupervisorAttention() bool {
 	if ev.Actor == ActorSupervisor {
 		return false
 	}
-	// Housekeeping and lease maintenance are noise.
+	// Stall events require supervisor attention (they don't auto-kill anymore).
+	if ev.Cause == CauseHousekeepingStall || ev.Cause == CauseHousekeepingOrphan {
+		return true
+	}
+	// Housekeeping and lease maintenance are noise (except stall/orphan above).
 	if ev.Actor == ActorHousekeeping || ev.Actor == ActorReconciler {
 		return false
 	}
@@ -138,6 +142,10 @@ func actorFromCreatedBy(createdBy string) EventActor {
 }
 
 func (b *EventBus) publish(ev WorkEvent) {
+	b.Publish(ev)
+}
+
+func (b *EventBus) Publish(ev WorkEvent) {
 	b.published.Add(1)
 	b.mu.Lock()
 	defer b.mu.Unlock()

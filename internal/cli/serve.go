@@ -346,7 +346,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runHousekeeping(ctx, svc, cwd, hub)
+		runHousekeeping(ctx, svc, cwd, hub, sup, mcpServer)
 	}()
 
 	// Always run change watcher — detects work/job/attestation changes and pushes via WebSocket
@@ -460,7 +460,7 @@ func loadDotEnv(paths ...string) {
 	}
 }
 
-func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub) {
+func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub, sup *agenticSupervisor, mcpServer *mcpserver.Server) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -497,8 +497,8 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 				}
 
 				if isJobStalled(jobDir, 30*time.Minute) && !isTerminal(jobState) {
-					// Only fail the work item if this stalled job is still
-					// the current job. A newer dispatch may have replaced it.
+					// Only process the stalled job if it's still the current job.
+					// A newer dispatch may have replaced it.
 					workResult, wErr := svc.Work(ctx, workID)
 					if wErr != nil {
 						continue
@@ -506,13 +506,31 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					if workResult.Work.CurrentJobID != "" && workResult.Work.CurrentJobID != jobID {
 						continue // newer job is active, skip stale one
 					}
-					_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-						WorkID:         workID,
-						ExecutionState: core.WorkExecutionStateFailed,
-						Message:        fmt.Sprintf("housekeeping: job %s stalled (no output for 10m)", jobID),
-						CreatedBy:      "housekeeping",
+
+					// Publish stall event instead of auto-killing.
+					// Supervisor will receive this and decide: check logs, steer worker, or kill+retry.
+					svc.Events.Publish(service.WorkEvent{
+						Kind:     service.WorkEventUpdated,
+						WorkID:   workID,
+						Title:    workResult.Work.Title,
+						State:    string(workResult.Work.ExecutionState),
+						JobID:    jobID,
+						Adapter:  statusResult.Job.Adapter,
+						Actor:    service.ActorHousekeeping,
+						Cause:    service.CauseHousekeepingStall,
+						Metadata: map[string]string{
+							"reason": fmt.Sprintf("no output for 30 minutes"),
+						},
 					})
 					hub.broadcast("work_updated", map[string]string{"work_id": workID})
+
+					// If no supervisor is running (one-off dispatch), send channel notification to host
+					if sup == nil && mcpServer != nil {
+						_ = mcpServer.SendChannelEvent(
+							fmt.Sprintf("⚠️ Stall detected: job %s has no output for 30 minutes. Work: %s (%s)", jobID, workResult.Work.Title, workID),
+							map[string]string{"type": "stall_warning", "work_id": workID, "job_id": jobID},
+						)
+					}
 					continue
 				}
 			}
@@ -532,13 +550,28 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					continue
 				}
 				if !isProcessAlive(rt.SupervisorPID) {
-					_, _ = svc.UpdateWork(ctx, service.WorkUpdateRequest{
-						WorkID:         item.WorkID,
-						ExecutionState: core.WorkExecutionStateFailed,
-						Message:        fmt.Sprintf("housekeeping: worker process (pid %d) for job %s is dead", rt.SupervisorPID, item.CurrentJobID),
-						CreatedBy:      "housekeeping",
+					// Publish orphan event for supervisor to handle
+					svc.Events.Publish(service.WorkEvent{
+						Kind:     service.WorkEventUpdated,
+						WorkID:   item.WorkID,
+						Title:    item.Title,
+						State:    string(item.ExecutionState),
+						JobID:    item.CurrentJobID,
+						Actor:    service.ActorHousekeeping,
+						Cause:    service.CauseHousekeepingOrphan,
+						Metadata: map[string]string{
+							"reason": fmt.Sprintf("worker process (pid %d) is dead", rt.SupervisorPID),
+						},
 					})
 					hub.broadcast("work_updated", map[string]string{"work_id": item.WorkID})
+
+					// If no supervisor is running, send channel notification
+					if sup == nil && mcpServer != nil {
+						_ = mcpServer.SendChannelEvent(
+							fmt.Sprintf("⚠️ Orphan worker detected: process %d for job %s is dead. Work: %s (%s)", rt.SupervisorPID, item.CurrentJobID, item.Title, item.WorkID),
+							map[string]string{"type": "orphan_warning", "work_id": item.WorkID, "job_id": item.CurrentJobID},
+						)
+					}
 				}
 			}
 		}

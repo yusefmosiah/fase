@@ -1261,7 +1261,7 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 			return nil, err
 		}
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:   WorkEventCreated,
 		WorkID: work.WorkID,
 		Title:  work.Title,
@@ -2264,7 +2264,7 @@ func (s *Service) ClaimWork(ctx context.Context, req WorkClaimRequest) (*core.Wo
 	}); err != nil {
 		return nil, err
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:      WorkEventClaimed,
 		WorkID:    work.WorkID,
 		Title:     work.Title,
@@ -2343,7 +2343,7 @@ func (s *Service) ReleaseWork(ctx context.Context, req WorkReleaseRequest) (*cor
 			return nil, err
 		}
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:      WorkEventReleased,
 		WorkID:    work.WorkID,
 		Title:     work.Title,
@@ -2391,7 +2391,7 @@ func (s *Service) RenewWorkLease(ctx context.Context, req WorkRenewLeaseRequest)
 	}); err != nil {
 		return nil, err
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:   WorkEventLeaseRenew,
 		WorkID: work.WorkID,
 		Title:  work.Title,
@@ -2503,7 +2503,7 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	if req.Message != "" {
 		ev.Metadata = map[string]string{"message": req.Message}
 	}
-	s.Events.publish(ev)
+	s.Events.Publish(ev)
 	return &work, nil
 }
 
@@ -2865,7 +2865,7 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 	}); err != nil {
 		return nil, nil, err
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:      WorkEventAttested,
 		WorkID:    work.WorkID,
 		Title:     work.Title,
@@ -6770,7 +6770,7 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 	} else {
 		ev.Cause = CauseWorkerProgress
 	}
-	s.Events.publish(ev)
+	s.Events.Publish(ev)
 	return nil
 }
 
@@ -6940,7 +6940,7 @@ func (s *Service) refreshAttestationParentState(ctx context.Context, parentID st
 			if err := s.store.UpdateWorkItem(ctx, parent); err != nil {
 				return err
 			}
-			s.Events.publish(WorkEvent{
+			s.Events.Publish(WorkEvent{
 				Kind:      WorkEventUpdated,
 				WorkID:    parent.WorkID,
 				Title:     parent.Title,
@@ -6974,7 +6974,7 @@ func (s *Service) refreshAttestationParentState(ctx context.Context, parentID st
 	if err := s.store.UpdateWorkItem(ctx, parent); err != nil {
 		return err
 	}
-	s.Events.publish(WorkEvent{
+	s.Events.Publish(WorkEvent{
 		Kind:      WorkEventUpdated,
 		WorkID:    parent.WorkID,
 		Title:     parent.Title,
