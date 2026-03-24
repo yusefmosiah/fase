@@ -42,8 +42,10 @@ func New(svc *service.Service) *Server {
 		},
 	)
 	s := &Server{MCP: mcpServer, svc: svc, w: os.Stdout}
-	registerTools(mcpServer, svc)
-	registerChannelTools(mcpServer, s)
+	// Tool registrations removed — MCP server is channels-only.
+	// Tools remain available via the HTTP API and native adapter.
+	// registerTools(mcpServer, svc)
+	// registerChannelTools(mcpServer, s)
 	return s
 }
 
