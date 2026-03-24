@@ -15,6 +15,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -46,6 +47,8 @@ var (
 )
 
 var osExecutable = os.Executable
+
+var checkerUIEvidencePattern = regexp.MustCompile(`(?i)(\bmind-graph/|\bplaywright\.config(?:\.[[:alnum:]]+)?\b|\bindex\.html\b|\.tsx\b|\.jsx\b|\.css\b|\.html\b|\bfrontend\b|\bfront-end\b|\bweb ui\b|\buser interface\b|\bbrowser ui\b)`)
 
 type Service struct {
 	Paths         core.Paths
@@ -749,10 +752,30 @@ func (s *Service) CreateCheckRecord(ctx context.Context, req CheckRecordCreateRe
 		return core.CheckRecord{}, fmt.Errorf("%w: result must be 'pass' or 'fail'", ErrInvalidInput)
 	}
 
-	// Persist screenshots from the check to the artifacts directory
-	// This ensures they remain available even after the worktree is cleaned
-	if len(req.Report.Screenshots) > 0 {
-		req.Report.Screenshots = s.persistCheckScreenshots(ctx, req.WorkID, req.Report.Screenshots)
+	work, err := s.store.GetWorkItem(ctx, req.WorkID)
+	if err != nil {
+		return core.CheckRecord{}, normalizeStoreError("work", req.WorkID, err)
+	}
+
+	// Persist screenshots and videos from the check to the artifacts directory.
+	// This ensures they remain available even after the worktree is cleaned.
+	if req.Report.Screenshots, err = s.prepareCheckArtifactPaths(ctx, req.WorkID, req.Report.Screenshots); err != nil {
+		return core.CheckRecord{}, err
+	}
+	if req.Report.Videos, err = s.prepareCheckArtifactPaths(ctx, req.WorkID, req.Report.Videos); err != nil {
+		return core.CheckRecord{}, err
+	}
+
+	if req.Result == "pass" {
+		if !req.Report.BuildOK {
+			return core.CheckRecord{}, fmt.Errorf("%w: passing check records must set build_ok=true", ErrInvalidInput)
+		}
+		if req.Report.TestsFailed > 0 {
+			return core.CheckRecord{}, fmt.Errorf("%w: passing check records cannot report failed tests", ErrInvalidInput)
+		}
+		if checkRecordNeedsUIEvidence(work, req.Report) && len(req.Report.Screenshots) == 0 {
+			return core.CheckRecord{}, fmt.Errorf("%w: passing UI checks must include at least one existing screenshot path", ErrInvalidInput)
+		}
 	}
 
 	rec := core.CheckRecord{
@@ -787,6 +810,36 @@ func (s *Service) GetCheckRecord(ctx context.Context, checkID string) (core.Chec
 		return core.CheckRecord{}, normalizeStoreError("check_record", checkID, err)
 	}
 	return rec, nil
+}
+
+func checkRecordNeedsUIEvidence(work core.WorkItemRecord, report core.CheckReport) bool {
+	haystack := strings.Join([]string{work.Title, work.Objective, report.DiffStat}, "\n")
+	return checkerUIEvidencePattern.MatchString(haystack)
+}
+
+func (s *Service) prepareCheckArtifactPaths(ctx context.Context, workID string, srcPaths []string) ([]string, error) {
+	if len(srcPaths) == 0 {
+		return nil, nil
+	}
+
+	paths := s.persistCheckScreenshots(ctx, workID, srcPaths)
+	var missing []string
+	var valid []string
+	for _, path := range paths {
+		path = strings.TrimSpace(path)
+		if path == "" {
+			continue
+		}
+		if _, err := os.Stat(path); err != nil {
+			missing = append(missing, path)
+			continue
+		}
+		valid = append(valid, path)
+	}
+	if len(missing) > 0 {
+		return nil, fmt.Errorf("%w: check artifact paths do not exist: %s", ErrInvalidInput, strings.Join(missing, ", "))
+	}
+	return valid, nil
 }
 
 func (s *Service) ListCheckRecords(ctx context.Context, workID string, limit int) ([]core.CheckRecord, error) {
@@ -3164,22 +3217,41 @@ You are a checker. Your job is to verify the worker's output independently and s
 
 ## Your Tasks
 
-1. Run the test suite: go test ./...
-2. Check that the build is clean: go build ./...
-3. Review the diff: git diff main...HEAD --stat
-4. Check for a web UI: look for mind-graph/, index.html, playwright.config.ts, or package.json with a test script.
-   - If a web UI exists, you MUST run Playwright: cd mind-graph && npx playwright test --screenshot=on
-   - Playwright screenshots are proof that the UI works. Without them, pass is not justified for UI work.
-   - Screenshots are saved to test-results/ inside the directory where you run Playwright.
-5. Note any issues, warnings, test failures, or visual regressions.
+1. Review the objective and diff first: git diff main...HEAD --stat
+2. Verify deliverables exist. Read the objective below, identify every explicit file path it mentions, and check each one with: test -e <path>
+   - If the objective says a file should exist and it is missing or empty, report FAIL.
+   - Record the verified paths, missing paths, and the commands you ran in checker_notes.
+3. Build check: run go build ./...
+   - If go build fails, report FAIL.
+   - A passing check record must only be submitted with build_ok=true.
+4. Run targeted tests for the files or behavior touched by the diff.
+   - Prefer focused commands first, then expand only as needed.
+   - Include the exact commands and key output in test_output or checker_notes.
+   - If targeted tests fail, report FAIL.
+5. Check for UI work by reviewing the objective and diff for browser-facing files such as mind-graph/, index.html, playwright.config.*, .tsx, .jsx, .css, or other web UI paths.
+   - If UI work is involved, you MUST run Playwright.
+   - Use the app-local command when available, for example: cd mind-graph && npx playwright test --screenshot=on
+   - After Playwright, persist screenshots and videos under .fase/artifacts/%s/screenshots/ and confirm they exist there before you pass the check.
+   - If UI work is involved and you do not have persisted screenshots, report FAIL.
+6. Note any issues, warnings, test failures, missing deliverables, or visual regressions.
 
 ## Collecting Screenshots
 
-After running Playwright (REQUIRED for UI work), collect screenshot paths from test-results/:
-  find . -path "*/test-results/*.png" -type f
+After running Playwright (REQUIRED for UI work), persist and verify artifacts:
+  mkdir -p .fase/artifacts/%s/screenshots
+  find . -path "*/test-results/*" \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.webm" \) -type f -exec cp {} .fase/artifacts/%s/screenshots/ \;
+  find "$(pwd)/.fase/artifacts/%s/screenshots" -type f
 
-Include ALL absolute paths in your check record via the screenshots parameter.
-If Playwright is present but you could not run it, report that as a failure with checker_notes explaining why.
+Include ALL absolute screenshot paths in your check record via the screenshots parameter, and include any videos via the videos parameter.
+If Playwright is present but you could not run it, or the persisted screenshot directory is empty, report that as a failure with checker_notes explaining why.
+
+## CRITICAL: Do NOT pass without evidence
+
+- If build fails → FAIL
+- If tests fail → FAIL
+- If the objective required code changes but only artifacts were committed → FAIL
+- If UI work but no persisted Playwright screenshots → FAIL
+- You must include checker_notes explaining what files you verified, what commands you ran, and what evidence you found.
 
 ## Submitting Your Check Record
 
@@ -3193,11 +3265,12 @@ Call the check_record_create MCP tool with:
   - tests_passed: <count>
   - tests_failed: <count>
   - screenshots: [<list of absolute paths to PNG/JPG files>] (REQUIRED if Playwright ran)
-  - checker_notes: "<your observations, including whether Playwright ran and screenshots were captured>"
+  - videos: [<list of absolute video paths>] (if any)
+  - checker_notes: "<your observations, including file verification, build/test commands, whether Playwright ran, and where screenshots were persisted>"
 
 ### Method B — CLI (for all adapters with bash access):
-  Pass:  fase check create %s --result pass  --build-ok --tests-passed <N> --notes "<summary>"
-  Fail:  fase check create %s --result fail           --tests-failed <N> --notes "<what failed>"
+  Pass:  fase check create %s --result pass  --build-ok --tests-passed <N> --test-output "<commands and output>" --screenshots "/abs/path/one.png,/abs/path/two.png" --videos "/abs/path/run.webm" --notes "<summary>"
+  Fail:  fase check create %s --result fail           --tests-failed <N> --test-output "<commands and output>" --notes "<what failed>"
 
 ## Rules
 
@@ -3209,7 +3282,7 @@ Call the check_record_create MCP tool with:
 ## Work Objective
 
 %s
-`, work.WorkID, work.Title, work.WorkID, work.WorkID, work.WorkID, work.Objective)
+`, work.WorkID, work.Title, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.Objective)
 }
 
 func (s *Service) ApproveWork(ctx context.Context, workID, createdBy, message string) (*core.WorkItemRecord, error) {
