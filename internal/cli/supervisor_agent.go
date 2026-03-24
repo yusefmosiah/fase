@@ -208,8 +208,9 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 				continue
 			}
 			events = append(events, ev)
-			// Debounce: collect burst events within 2s.
-			timer := time.NewTimer(2 * time.Second)
+			// Debounce: collect burst events within 30s to avoid firing
+			// a new Sonnet turn for every individual event.
+			timer := time.NewTimer(30 * time.Second)
 		drain:
 			for {
 				select {

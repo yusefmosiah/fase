@@ -71,15 +71,28 @@ func (ev WorkEvent) RequiresSupervisorAttention() bool {
 	if ev.Cause == CauseHousekeepingStall || ev.Cause == CauseHousekeepingOrphan {
 		return true
 	}
-	// Housekeeping and lease maintenance are noise (except stall/orphan above).
+	// Housekeeping, lease maintenance, and job lifecycle are noise.
 	if ev.Actor == ActorHousekeeping || ev.Actor == ActorReconciler {
 		return false
 	}
 	if ev.Kind == WorkEventLeaseRenew {
 		return false
 	}
-	// Everything else is actionable: worker state changes, attestations,
-	// new work, host actions, claim releases from failures.
+	// Worker progress without a state change is noise — supervisor only cares
+	// about terminal transitions (done, failed, checking), not mid-run updates.
+	if ev.Cause == CauseWorkerProgress && ev.State == ev.PrevState {
+		return false
+	}
+	// Job lifecycle events (started, running) are noise unless terminal.
+	if ev.Cause == CauseJobLifecycle && ev.State == "in_progress" {
+		return false
+	}
+	// Claim changes without state transition are noise.
+	if ev.Cause == CauseClaimChanged && ev.State == ev.PrevState {
+		return false
+	}
+	// Everything else is actionable: terminal state changes, attestations,
+	// check records, new work, host actions.
 	return true
 }
 
