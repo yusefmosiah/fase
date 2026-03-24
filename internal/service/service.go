@@ -859,6 +859,54 @@ func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, c
 	})
 }
 
+// sendAttestationNotification sends an email when a work item is attested (passed or failed).
+// It includes the attestation result, verifier details, check record summary, and Playwright artifacts.
+func (s *Service) sendAttestationNotification(ctx context.Context, work core.WorkItemRecord, attestation core.AttestationRecord) {
+	apiKey := os.Getenv("RESEND_API_KEY")
+	to := os.Getenv("EMAIL_TO")
+	if apiKey == "" || to == "" {
+		return
+	}
+
+	resultLabel := "failed"
+	if attestation.Result == "passed" {
+		resultLabel = "passed"
+	}
+	subject := fmt.Sprintf("[FASE] attestation %s: %s", resultLabel, work.Title)
+
+	// Find the most recent check record to include test results and diff stat.
+	var checkRecord *core.CheckRecord
+	checkRecords, err := s.store.ListCheckRecords(ctx, work.WorkID, 10)
+	if err == nil && len(checkRecords) > 0 {
+		// Prefer passing check record when attestation passed; otherwise use the most recent.
+		for i := range checkRecords {
+			cr := &checkRecords[i]
+			if attestation.Result == "passed" && cr.Result == "pass" {
+				cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, *cr)
+				checkRecord = cr
+				break
+			}
+		}
+		if checkRecord == nil {
+			cr := &checkRecords[0]
+			cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, *cr)
+			checkRecord = cr
+		}
+	}
+
+	html := notify.BuildAttestationEmail(&work, attestation, checkRecord)
+
+	var attachments []notify.ResendEmailAttachment
+	if checkRecord != nil {
+		attachments = s.collectCheckArtifacts(ctx, work.WorkID, *checkRecord)
+	}
+	if len(attachments) == 0 {
+		attachments = s.collectPlaywrightAttachments(ctx, work.WorkID)
+	}
+
+	notify.SendEmail(ctx, apiKey, to, subject, html, attachments)
+}
+
 // sendWorkFailureNotification sends an email when a work item transitions to failed.
 func (s *Service) sendWorkFailureNotification(ctx context.Context, work core.WorkItemRecord, message string) {
 	apiKey := os.Getenv("RESEND_API_KEY")
@@ -3472,6 +3520,11 @@ func (s *Service) AttestWork(ctx context.Context, req WorkAttestRequest) (*core.
 			"summary": req.Summary,
 		},
 	})
+	// Send email notification on attestation result (fire and forget).
+	// Notify about the attestation target (the actual work being attested, not the attest child).
+	if req.Result == "passed" || req.Result == "failed" {
+		s.sendAttestationNotification(context.Background(), attestationTarget, record)
+	}
 	if strings.EqualFold(work.Kind, "attest") && attestationTarget.WorkID != work.WorkID {
 		if err := s.refreshAttestationParentState(ctx, attestationTarget.WorkID); err != nil {
 			return nil, nil, err

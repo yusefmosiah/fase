@@ -326,6 +326,152 @@ func BuildSpecEscalationEmail(work *core.WorkItemRecord, checkRecords []core.Che
 	))
 }
 
+// BuildAttestationEmail builds an HTML email for attestation events (passed or failed).
+// It includes the attestation result, verifier details, check report summary, and screenshots.
+func BuildAttestationEmail(work *core.WorkItemRecord, attestation core.AttestationRecord, checkRecord *core.CheckRecord) string {
+	isPassed := attestation.Result == "passed"
+	statusLabel := "FAILED"
+	statusColor := "#dc2626"
+	icon := "✗"
+	if isPassed {
+		statusLabel = "PASSED"
+		statusColor = "#16a34a"
+		icon = "✓"
+	}
+
+	summarySection := ""
+	if attestation.Summary != "" {
+		summarySection = fmt.Sprintf(`<h3>Attestation Summary</h3><p style="white-space:pre-wrap">%s</p>`, escapeHTML(attestation.Summary))
+	}
+
+	verifierIdentity := attestation.VerifierIdentity
+	if verifierIdentity == "" {
+		verifierIdentity = attestation.CreatedBy
+	}
+
+	verifierSection := fmt.Sprintf(`
+		<div class="metadata">
+			<div><strong>Result:</strong> <span style="color:%s">%s %s</span></div>
+			<div><strong>Verifier:</strong> %s</div>
+			<div><strong>Method:</strong> %s</div>
+			<div><strong>Work ID:</strong> <code>%s</code></div>
+			<div><strong>Kind:</strong> %s</div>
+			<div><strong>Attested:</strong> %s</div>
+		</div>`,
+		statusColor, icon, statusLabel,
+		escapeHTML(attestation.VerifierKind),
+		escapeHTML(attestation.Method),
+		work.WorkID,
+		work.Kind,
+		attestation.CreatedAt.Format(time.RFC3339),
+	)
+
+	testStatusSection := ""
+	diffStatSection := ""
+	testOutputSection := ""
+	checkerNotesSection := ""
+	screenshotsSection := ""
+
+	if checkRecord != nil {
+		buildStatus := "✓ Build OK"
+		buildColor := "#16a34a"
+		if !checkRecord.Report.BuildOK {
+			buildStatus = "✗ Build failed"
+			buildColor = "#dc2626"
+		}
+
+		testStatus := "✓ All tests passed"
+		testColor := "#16a34a"
+		if checkRecord.Report.TestsFailed > 0 {
+			testStatus = fmt.Sprintf("✗ %d failed, %d passed", checkRecord.Report.TestsFailed, checkRecord.Report.TestsPassed)
+			testColor = "#dc2626"
+		} else if checkRecord.Report.TestsPassed > 0 {
+			testStatus = fmt.Sprintf("✓ %d passed", checkRecord.Report.TestsPassed)
+		}
+
+		testStatusSection = fmt.Sprintf(`
+		<h3>Test Results</h3>
+		<p>
+			<span class="stat"><strong style="color:%s">%s</strong></span>
+			<span class="stat"><strong style="color:%s">%s</strong></span>
+		</p>`, buildColor, buildStatus, testColor, testStatus)
+
+		if checkRecord.Report.DiffStat != "" {
+			diffStatSection = fmt.Sprintf(`<h3>Changes (git diff --stat)</h3><pre style="background:#f3f4f6;padding:10px;border-radius:4px;font-size:12px;overflow-x:auto">%s</pre>`, escapeHTML(checkRecord.Report.DiffStat))
+		}
+
+		if checkRecord.Report.TestOutput != "" {
+			out := checkRecord.Report.TestOutput
+			if len(out) > 4096 {
+				out = out[:4096] + "\n... (truncated)"
+			}
+			testOutputSection = fmt.Sprintf(`<h3>Test Output</h3><pre style="background:#f3f4f6;padding:10px;border-radius:4px;font-size:11px;overflow-x:auto;max-height:300px">%s</pre>`, escapeHTML(out))
+		}
+
+		if checkRecord.Report.CheckerNotes != "" {
+			checkerNotesSection = fmt.Sprintf(`<h3>Checker Notes</h3><p style="white-space:pre-wrap">%s</p>`, escapeHTML(checkRecord.Report.CheckerNotes))
+		}
+
+		screenshotsSection = buildInlineScreenshots(checkRecord.Report.Screenshots)
+	}
+
+	return strings.TrimSpace(fmt.Sprintf(`<!DOCTYPE html>
+<html>
+<head>
+	<meta charset="UTF-8">
+	<style>
+		body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; line-height: 1.6; color: #333; margin: 0; padding: 0; }
+		.container { max-width: 700px; margin: 0 auto; padding: 20px; }
+		.header { background: %s; color: white; padding: 20px; border-radius: 8px 8px 0 0; }
+		.header h1 { margin: 0; font-size: 24px; }
+		.header p { margin: 8px 0 0 0; opacity: 0.9; }
+		.content { background: #f9fafb; padding: 20px; border-radius: 0 0 8px 8px; }
+		.content h3 { color: #1f2937; margin-top: 20px; margin-bottom: 10px; }
+		.metadata { background: #ffffff; padding: 15px; border-left: 4px solid %s; margin: 15px 0; border-radius: 4px; font-size: 13px; }
+		.stat { display: inline-block; margin-right: 20px; }
+		.footer { text-align: center; margin-top: 20px; padding-top: 20px; border-top: 1px solid #e5e7eb; font-size: 12px; color: #6b7280; }
+		code { background: #f3f4f6; padding: 2px 6px; border-radius: 3px; font-family: "Monaco", "Courier New", monospace; }
+		img { max-width: 100%%; border-radius: 4px; margin: 8px 0; }
+	</style>
+</head>
+<body>
+	<div class="container">
+		<div class="header">
+			<h1>%s Attestation %s</h1>
+			<p>%s</p>
+		</div>
+		<div class="content">
+			%s
+			<h3>Objective</h3>
+			<p>%s</p>
+			%s
+			%s
+			%s
+			%s
+			%s
+			%s
+		</div>
+		<div class="footer">
+			<p>This is an automated notification from FASE work management system.</p>
+		</div>
+	</div>
+</body>
+</html>`,
+		statusColor,
+		statusColor,
+		icon, statusLabel,
+		escapeHTML(work.Title),
+		verifierSection,
+		escapeHTML(work.Objective),
+		summarySection,
+		testStatusSection,
+		diffStatSection,
+		testOutputSection,
+		checkerNotesSection,
+		screenshotsSection,
+	))
+}
+
 func escapeHTML(s string) string {
 	replacer := strings.NewReplacer(
 		"&", "&amp;",
