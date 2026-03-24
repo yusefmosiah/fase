@@ -1,0 +1,2 @@
+go build ./... => passed
+go test ./internal/service -run 'Test(CheckRecordFlow|PersistCheckScreenshots|GitMainRepoRoot|CheckerDispatchCWDUsesMainRepoRootForWorktreeJobs)' -count=1 => passed (ok github.com/yusefmosiah/fase/internal/service 1.7s)
