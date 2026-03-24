@@ -2379,11 +2379,13 @@ func supervisorDispatchProtocol() map[string]any {
 			"Use the report MCP tool or 'fase report \"message\"' CLI command.",
 		},
 		"model_preferences": []string{
-			"Workers: prefer zai/glm-5-turbo (fast, unlimited) or claude/claude-haiku-4-5 (quality). Use claude/claude-sonnet-4-6 for complex work.",
-			"Attestation: use claude-opus-4-6 or claude-sonnet-4-6 — strong models that can verify correctness.",
+			"Workers: prefer zai/glm-5-turbo (fast, unlimited, excellent at implementation including UI). claude/claude-haiku-4-5 as secondary. claude/claude-sonnet-4-6 for complex work.",
+			"GLM-5-turbo is preferred over haiku for both cost and quality.",
+			"Attestation/checking: use multimodal models — claude-opus-4-6, claude-sonnet-4-6, or chatgpt/gpt-5.4-mini. These can verify screenshots.",
+			"GLM is text-only: great for writing code but CANNOT verify visual output. Never use GLM for Playwright-based checking.",
+			"DIVERSITY: always use a different model for checking than was used for implementation. Avoid mode collapse — one model verifying another catches more bugs.",
 			"AVOID bedrock adapter unless explicitly requested — use claude adapter for Claude models instead.",
 			"AVOID codex/chatgpt for workers unless other adapters are unavailable.",
-			"For UI/Playwright work: must use a multimodal model (Claude or GPT, not GLM).",
 		},
 		"error_handling": []string{
 			"If a worker fails: the item returns to ready state. Do not immediately redispatch — let the queue settle first.",
@@ -7391,17 +7393,20 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 	}); err != nil {
 		return err
 	}
-	ev := WorkEvent{
-		Kind:      WorkEventUpdated,
-		WorkID:    work.WorkID,
-		Title:     work.Title,
-		State:     string(work.ExecutionState),
-		PrevState: prevState,
-		JobID:     job.JobID,
-		Actor:     ActorService,
-		Cause:     CauseJobLifecycle,
+	// Only publish if the state actually changed — prevents stale event replay
+	// when syncWorkStateFromJob is called repeatedly for the same terminal job.
+	if string(work.ExecutionState) != prevState {
+		s.Events.Publish(WorkEvent{
+			Kind:      WorkEventUpdated,
+			WorkID:    work.WorkID,
+			Title:     work.Title,
+			State:     string(work.ExecutionState),
+			PrevState: prevState,
+			JobID:     job.JobID,
+			Actor:     ActorService,
+			Cause:     CauseJobLifecycle,
+		})
 	}
-	s.Events.Publish(ev)
 	return nil
 }
 

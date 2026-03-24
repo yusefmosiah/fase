@@ -2278,3 +2278,147 @@ func TestAttestationGateNoAttestationsRequired(t *testing.T) {
 		}
 	}
 }
+
+func TestPersistCheckScreenshots(t *testing.T) {
+	// Create a temporary project structure
+	projectRoot := t.TempDir()
+	workID := "work_test123"
+
+	// Create a mock job with worktree
+	worktreeDir := filepath.Join(projectRoot, ".fase", "worktrees", workID)
+	if err := os.MkdirAll(worktreeDir, 0755); err != nil {
+		t.Fatalf("mkdir worktree: %v", err)
+	}
+
+	// Create test screenshot files in the worktree
+	testResultsDir := filepath.Join(worktreeDir, "test-results")
+	if err := os.MkdirAll(testResultsDir, 0755); err != nil {
+		t.Fatalf("mkdir test-results: %v", err)
+	}
+
+	// Create a test screenshot
+	srcScreenshot := filepath.Join(testResultsDir, "test-1.png")
+	testData := []byte("fake PNG data")
+	if err := os.WriteFile(srcScreenshot, testData, 0644); err != nil {
+		t.Fatalf("write screenshot: %v", err)
+	}
+
+	// Initialize a git repo at the project root
+	cmd := exec.Command("git", "init", projectRoot)
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("git init: %v", err)
+	}
+
+	// Set up service with the project root
+	stateDir := t.TempDir()
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	setTestExecutable(t)
+
+	configPath := filepath.Join(configDir, "config.toml")
+	configBody := []byte("[adapters.native]\n")
+	if err := os.WriteFile(configPath, configBody, 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	svc, err := Open(context.Background(), configPath)
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	defer func() { _ = svc.Close() }()
+
+	ctx := context.Background()
+
+	// Create a work item
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "test playwright screenshots",
+		Objective: "verify screenshot persistence",
+		Kind:      "implement",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	// Create a job record for this work pointing to the worktree
+	now := time.Now().UTC()
+	jobID := core.GenerateID("job")
+	sessionID := core.GenerateID("ses")
+
+	session := core.SessionRecord{
+		SessionID:     sessionID,
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Status:        "active",
+		OriginAdapter: "test",
+		OriginJobID:   jobID,
+		CWD:           worktreeDir,
+		LatestJobID:   jobID,
+		Tags:          []string{},
+		Metadata:      map[string]any{},
+	}
+	if err := svc.store.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+
+	job := core.JobRecord{
+		JobID:             jobID,
+		SessionID:         sessionID,
+		WorkID:            work.WorkID,
+		Adapter:           "native",
+		State:             core.JobStateCompleted,
+		NativeSessionID:   sessionID,
+		CWD:               worktreeDir,
+		CreatedAt:         now,
+		UpdatedAt:         now,
+		Summary:           map[string]any{},
+	}
+	if err := svc.store.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	// Now test the persistCheckScreenshots function
+	screenshots := []string{srcScreenshot}
+	newPaths := svc.persistCheckScreenshots(ctx, work.WorkID, screenshots)
+
+	if len(newPaths) != 1 {
+		t.Fatalf("expected 1 screenshot path, got %d", len(newPaths))
+	}
+
+	// Verify the file was copied to the artifacts directory
+	// Use realpath to handle symlinks on macOS
+	expectedPath := filepath.Join(projectRoot, ".fase", "artifacts", work.WorkID, "screenshots", "test-1.png")
+	realExpectedPath, err := filepath.EvalSymlinks(expectedPath)
+	if err == nil {
+		expectedPath = realExpectedPath
+	}
+	realNewPath, err := filepath.EvalSymlinks(newPaths[0])
+	if err == nil {
+		newPaths[0] = realNewPath
+	}
+	if newPaths[0] != expectedPath {
+		t.Fatalf("expected path %s, got %s", expectedPath, newPaths[0])
+	}
+
+	// Verify the file exists and has the correct content
+	copiedData, err := os.ReadFile(expectedPath)
+	if err != nil {
+		t.Fatalf("read copied file: %v", err)
+	}
+	if !bytes.Equal(copiedData, testData) {
+		t.Fatalf("copied file content mismatch: expected %q, got %q", testData, copiedData)
+	}
+
+	// Test that collectPlaywrightAttachments finds the persisted screenshots
+	attachments := svc.collectPlaywrightAttachments(ctx, work.WorkID)
+	if len(attachments) != 1 {
+		t.Fatalf("expected 1 attachment, got %d", len(attachments))
+	}
+
+	if !strings.Contains(attachments[0].Filename, "test-1.png") {
+		t.Fatalf("expected filename to contain 'test-1.png', got %s", attachments[0].Filename)
+	}
+}
