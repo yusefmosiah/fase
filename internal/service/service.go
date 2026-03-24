@@ -3086,7 +3086,7 @@ var checkerModels = []struct{ adapter, model string }{
 }
 
 // dispatchChecker spawns a checker job for the given work item.
-// It finds the worktree CWD from the work item's last job, picks a model
+// It resolves the main repo CWD from the work item's last job, picks a model
 // different from the worker, and runs the checker briefing.
 func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord) {
 	jobs, err := s.store.ListJobsByWork(ctx, work.WorkID, 5)
@@ -3095,15 +3095,10 @@ func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord)
 		return
 	}
 
-	// Use the last job's CWD as the worktree path.
-	// Fallback: repo root derived from state dir (strip ".fase" suffix).
-	cwd := filepath.Dir(s.Paths.StateDir)
+	cwd := s.checkerDispatchCWD(ctx, jobs)
 	workerModel := ""
 	if len(jobs) > 0 {
 		lastJob := jobs[0]
-		if lastJob.CWD != "" {
-			cwd = lastJob.CWD
-		}
 		_ = lastJob.Adapter // kept for future use
 		if m, ok := lastJob.Summary["model"].(string); ok {
 			workerModel = m
@@ -3136,6 +3131,26 @@ func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord)
 	if runErr != nil {
 		fmt.Fprintf(os.Stderr, "dispatchChecker: run for %s: %v\n", work.WorkID, runErr)
 	}
+}
+
+func (s *Service) checkerDispatchCWD(ctx context.Context, jobs []core.JobRecord) string {
+	// Default to the main repo root derived from the repository-local state dir.
+	cwd := filepath.Dir(s.Paths.StateDir)
+	if len(jobs) == 0 {
+		return cwd
+	}
+
+	workerCWD := strings.TrimSpace(jobs[0].CWD)
+	if workerCWD == "" {
+		return cwd
+	}
+
+	// Checkers should run from the main repo root so adapter auth/config resolves
+	// from the canonical repository location rather than a nested worktree path.
+	if repoRoot, err := gitMainRepoRoot(ctx, workerCWD); err == nil && repoRoot != "" {
+		return repoRoot
+	}
+	return cwd
 }
 
 // buildCheckerBriefing produces a prompt for the checker agent.

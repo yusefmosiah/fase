@@ -2528,3 +2528,56 @@ func TestGitMainRepoRoot(t *testing.T) {
 		t.Fatalf("gitMainRepoRoot returned %q, want main repo root %q", got, mainRepo)
 	}
 }
+
+func TestCheckerDispatchCWDUsesMainRepoRootForWorktreeJobs(t *testing.T) {
+	mainRepo := t.TempDir()
+	workID := "work_testcheckercwd"
+
+	for _, args := range [][]string{
+		{"init", mainRepo},
+		{"-C", mainRepo, "config", "user.email", "test@test.com"},
+		{"-C", mainRepo, "config", "user.name", "Test"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(mainRepo, "sentinel.txt"), []byte("hi"), 0o644); err != nil {
+		t.Fatalf("write sentinel: %v", err)
+	}
+	for _, args := range [][]string{
+		{"-C", mainRepo, "add", "sentinel.txt"},
+		{"-C", mainRepo, "commit", "-m", "init"},
+		{"-C", mainRepo, "branch", "-M", "main"},
+	} {
+		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
+			t.Fatalf("git %v: %v\n%s", args, err, out)
+		}
+	}
+
+	worktreeDir := filepath.Join(mainRepo, ".fase", "worktrees", workID)
+	branch := "fase/work/" + workID
+	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
+		t.Fatalf("mkdir worktrees dir: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", branch, worktreeDir).CombinedOutput(); err != nil {
+		t.Fatalf("git worktree add: %v\n%s", err, out)
+	}
+	t.Cleanup(func() {
+		_ = exec.Command("git", "-C", mainRepo, "worktree", "remove", "--force", worktreeDir).Run()
+	})
+
+	svc := &Service{
+		Paths: core.Paths{StateDir: filepath.Join(mainRepo, ".fase")},
+	}
+	got := svc.checkerDispatchCWD(context.Background(), []core.JobRecord{{CWD: worktreeDir}})
+
+	realCheckerCWD, _ := filepath.EvalSymlinks(got)
+	realMainRepo, _ := filepath.EvalSymlinks(mainRepo)
+	if realCheckerCWD != realMainRepo {
+		t.Fatalf("checker cwd = %q, want main repo root %q", got, mainRepo)
+	}
+	if strings.Contains(got, filepath.Join(".fase", "worktrees")) {
+		t.Fatalf("checker cwd should not point at a worktree path: %q", got)
+	}
+}
