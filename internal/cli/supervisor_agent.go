@@ -309,22 +309,14 @@ func (s *agenticSupervisor) waitForJob(ctx context.Context, ch chan service.Work
 }
 
 // classifyOutcome determines if the completed turn was productive.
-func (s *agenticSupervisor) classifyOutcome(status *service.StatusResult, events []service.WorkEvent, startTime time.Time) jobOutcome {
-	duration := time.Since(startTime)
+func (s *agenticSupervisor) classifyOutcome(status *service.StatusResult, events []service.WorkEvent, _ time.Time) jobOutcome {
 	out := jobOutcome{events: events}
 
-	// Check for failed job state.
+	// Only failed jobs are unproductive. Fast completion is fine —
+	// a supervisor dispatching work in 5s is productive.
 	if status.Job.State == core.JobStateFailed {
 		out.unproductive = true
 		out.reason = "job failed"
-		return out
-	}
-
-	// Very fast completion (< 10s) with no events suggests rate-limit or error.
-	// Normal supervisor turns take 15-30s as the LLM reads and calls tools.
-	if duration < 10*time.Second {
-		out.unproductive = true
-		out.reason = fmt.Sprintf("completed too fast (%s)", duration.Round(time.Second))
 		return out
 	}
 
