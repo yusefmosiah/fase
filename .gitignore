@@ -71,3 +71,5 @@ work_seed/
 .env
 .fase/native-sessions/
 .fase/worktrees/
+.fase/fase-corrupt*.db
+.fase/fase.db.corrupt-*
