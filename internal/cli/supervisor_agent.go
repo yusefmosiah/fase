@@ -273,8 +273,11 @@ func formatEvents(events []service.WorkEvent) string {
 		case service.WorkEventCheckRecorded:
 			result := ev.Metadata["result"]
 			checkID := ev.Metadata["check_id"]
-			fmt.Fprintf(&b, "[check:%s] %s (%s) check_id=%s — use check_record_show to read the report\n",
+			fmt.Fprintf(&b, "[check:%s] %s (%s) check_id=%s\n",
 				result, title, ev.WorkID, checkID)
+			fmt.Fprintf(&b, "  → Call check_record_show %s to read the report, then:\n", checkID)
+			fmt.Fprintf(&b, "     If result=pass: call 'fase work update %s --execution-state done'\n", ev.WorkID)
+			fmt.Fprintf(&b, "     If result=fail: call check_record_list %s to count failures, then send_back or escalate\n", ev.WorkID)
 		}
 	}
 	return b.String()

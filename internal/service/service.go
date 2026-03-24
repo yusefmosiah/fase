@@ -517,6 +517,9 @@ func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRe
 		// Find the most recent passing check record.
 		for _, cr := range checkRecords {
 			if cr.Result == "pass" {
+				// Ensure all screenshot paths (including fallback) are in the report for inlining.
+				// This handles cases where cr.Report.Screenshots might not have been populated fully.
+				cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, cr)
 				html = notify.BuildCheckReportEmail(&work, cr)
 				attachments = s.collectCheckArtifacts(ctx, work.WorkID, cr)
 				break
@@ -566,6 +569,45 @@ func (s *Service) collectCheckArtifacts(ctx context.Context, workID string, cr c
 
 	// Final fallback: Playwright test-results directories.
 	return s.collectPlaywrightAttachments(ctx, workID)
+}
+
+// collectScreenshotPaths gathers all screenshot file paths for a check record,
+// including both explicit paths and those from fallback directories.
+// This ensures all screenshots are available for inlining in the email HTML.
+func (s *Service) collectScreenshotPaths(ctx context.Context, workID string, cr core.CheckRecord) []string {
+	seen := make(map[string]bool)
+	var paths []string
+
+	// Start with explicit paths from the check report
+	for _, p := range cr.Report.Screenshots {
+		if p != "" && !seen[p] {
+			seen[p] = true
+			paths = append(paths, p)
+		}
+	}
+
+	// Try to find additional screenshots from the fallback directory
+	projectRoot := s.findProjectRoot(ctx, workID)
+	if projectRoot != "" {
+		screenshotDir := filepath.Join(projectRoot, ".fase", "artifacts", workID, "screenshots")
+		if err := filepath.WalkDir(screenshotDir, func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() {
+				return nil
+			}
+			name := strings.ToLower(d.Name())
+			if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
+				if !seen[path] {
+					seen[path] = true
+					paths = append(paths, path)
+				}
+			}
+			return nil
+		}); err != nil {
+			// Ignore walk errors; we'll use what we found
+		}
+	}
+
+	return paths
 }
 
 // findProjectRoot finds the git root from the job CWD for a work item.
@@ -2334,12 +2376,11 @@ func supervisorRolePrompt() string {
 	return `You are the FASE supervisor. Your job is to manage the work queue using SEQUENTIAL dispatch:
 1. NEVER dispatch multiple features in parallel. Complete one feature at a time.
 2. Dispatch a single ready work item to a worker agent (choosing the right adapter and model).
-3. Monitor worker progress until they reach awaiting_attestation state.
-4. Run attestation on the completed work (spawn a strong verifier model like claude-opus-4-6).
-5. Attestation must include: go test for backend code, Playwright for UI code. No UI tests = fail attestation.
-6. If attestation passes: mark work as done, then dispatch the next feature.
-7. If attestation fails: send the work back to ready with specific feedback; do NOT skip to next feature.
-8. Ensure one code-writing feature at a time per the FASE sequential model.
+3. Monitor worker progress. When a worker signals "checking", a checker is auto-dispatched.
+4. When [check:pass] or [check:fail] events arrive, use check_record_show to read the report.
+5. If check result is PASS: call work update <id> --execution-state done (emails automatically). Move to next item.
+6. If check result is FAIL: count failures with check_record_list. If < 3: use session_send to send feedback to original worker; do NOT mark done. If >= 3: use send_escalation_email to notify human; mark work failed.
+7. Ensure one code-writing feature at a time per the FASE sequential model.
 
 You are NOT a worker — you never write code directly. You delegate to worker agents
 via the dispatch system and verify their output before allowing the next feature.`
@@ -2349,30 +2390,26 @@ func supervisorDispatchProtocol() map[string]any {
 	return map[string]any{
 		"dispatch_flow": []string{
 			"SEQUENTIAL DISPATCH (not parallel): One feature at a time.",
-			"1. Check pending_attestations — if any exist, handle attestation first (never dispatch while attestations are pending).",
-			"2. Check active_work — if any item is in_progress or claimed, wait for it to complete.",
-			"3. Only when no active work and no pending attestations: select the next highest-priority ready item.",
-			"4. For the selected item, choose adapter+model based on preferred_adapters/preferred_models, or round-robin.",
-			"5. Claim the work item (fase work claim <work-id>).",
-			"6. Hydrate the worker briefing (fase work hydrate <work-id>).",
-			"7. Dispatch: spawn a worker session on the chosen adapter with the briefing as prompt.",
-			"8. Monitor the worker until completion (awaiting_attestation state).",
-			"9. After worker completion, proceed to attestation (do not skip to next dispatch).",
-			"CRITICAL: Do not dispatch the next feature until the current feature passes attestation.",
+			"1. Check active_work — if any item is in_progress or checking, wait for it to complete.",
+			"2. Only when no active work: select the next highest-priority ready item.",
+			"3. For the selected item, choose adapter+model based on preferred_adapters/preferred_models, or round-robin.",
+			"4. Claim the work item (fase work claim <work-id>).",
+			"5. Hydrate the worker briefing (fase work hydrate <work-id>).",
+			"6. Dispatch: spawn a worker session on the chosen adapter with the briefing as prompt.",
+			"7. Monitor the worker. When they signal 'checking', a checker is auto-dispatched.",
+			"8. Wait for [check:pass] or [check:fail] events.",
+			"CRITICAL: Do not dispatch the next feature until the current feature passes a check.",
 		},
-		"attestation_flow": []string{
-			"REQUIRED STEP: Attestation gates the next dispatch.",
-			"1. When a work item reaches awaiting_attestation, spawn a strong verifier model (claude-opus-4-6 or equivalent).",
-			"2. Verifier reads: the worker's diff, test output, findings, and objective.",
-			"3. Verifier MUST check ALL of the following:",
-			"   a. Run 'go test' in the relevant package(s) and verify all tests pass.",
-			"   b. If the work touches web UI: run Playwright tests and verify they pass. FAIL attestation if no e2e tests exist — backend tests alone cannot catch UI bugs.",
-			"   c. Review the diff for correctness, security, and alignment with the objective.",
-			"   d. Ensure the worker ran these tests and reported results in their output.",
-			"4. Verdict: if all checks pass, attest with 'approve'. If any check fails, attest with 'reject' and add specific feedback.",
-			"5. If rejected: the work returns to ready with feedback. The worker will be redispatched and must fix the issues.",
-			"6. If approved: the work is done. You can now dispatch the next feature.",
-			"RULE: Only dispatch the next work item after the current work item is attested and approved.",
+		"check_flow": []string{
+			"REQUIRED STEP: Checker produces evidence, supervisor makes decisions.",
+			"When you see [check:pass] or [check:fail] event:",
+			"1. Call check_record_show <check-id> to read the full report (it tells you the result, test counts, and notes).",
+			"2. If result is 'pass': call 'fase work update <work-id> --execution-state done'. This emails automatically with the report.",
+			"3. If result is 'fail': call check_record_list <work-id> to count how many checks have failed.",
+			"   - If failure count < 3: call session_send to send failure context back to the worker (they will fix and re-check).",
+			"   - If failure count >= 3: call send_escalation_email to notify the human (spec may need updating).",
+			"4. If you escalated or sent feedback, do NOT mark work as done — wait for next check or human action.",
+			"RULE: Only mark work as done when a check passes.",
 		},
 		"communication": []string{
 			"REQUIRED: After each action (dispatch, attest), call the report tool with a structured status update.",
