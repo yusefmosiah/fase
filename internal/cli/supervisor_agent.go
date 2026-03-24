@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -29,11 +31,18 @@ type agenticSupervisor struct {
 }
 
 func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string) *agenticSupervisor {
-	if adapter == "" {
-		adapter = "claude"
+	// Load adapter/model from .fase/supervisor-brief.md if not set via flags.
+	if adapter == "" || model == "" {
+		briefAdapter, briefModel := parseSupervisorBrief(svc.Paths.StateDir)
+		if adapter == "" {
+			adapter = briefAdapter
+		}
+		if model == "" {
+			model = briefModel
+		}
 	}
-	if model == "" {
-		model = "claude-sonnet-4-6"
+	if adapter == "" || model == "" {
+		fmt.Fprintf(os.Stderr, "supervisor: adapter=%q model=%q — set supervisor_adapter/supervisor_model in .fase/supervisor-brief.md\n", adapter, model)
 	}
 	return &agenticSupervisor{
 		svc:     svc,
@@ -360,4 +369,27 @@ func (s *agenticSupervisor) notifyHost(message, msgType string) {
 	if err == nil {
 		resp.Body.Close()
 	}
+}
+
+// parseSupervisorBrief reads supervisor_adapter and supervisor_model from
+// .fase/supervisor-brief.md. Format: "supervisor_adapter: claude" on its own line.
+func parseSupervisorBrief(stateDir string) (adapter, model string) {
+	data, err := os.ReadFile(filepath.Join(stateDir, "supervisor-brief.md"))
+	if err != nil {
+		return "", ""
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if k, v, ok := strings.Cut(line, ":"); ok {
+			k = strings.TrimSpace(k)
+			v = strings.TrimSpace(v)
+			switch k {
+			case "supervisor_adapter":
+				adapter = v
+			case "supervisor_model":
+				model = v
+			}
+		}
+	}
+	return adapter, model
 }

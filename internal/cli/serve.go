@@ -214,8 +214,8 @@ Examples:
 	cmd.Flags().BoolVar(&noUI, "no-ui", false, "skip web UI, run housekeeping only")
 	cmd.Flags().BoolVar(&noBrowser, "no-browser", true, "don't auto-open browser")
 	cmd.Flags().StringVar(&devAssets, "dev-assets", "", "serve UI from filesystem instead of embedded (for development)")
-	cmd.Flags().StringVar(&supAdapter, "supervisor-adapter", "claude", "adapter for the supervisor session (used with --auto)")
-	cmd.Flags().StringVar(&supModel, "supervisor-model", "claude-sonnet-4-6", "model for the supervisor session (used with --auto)")
+	cmd.Flags().StringVar(&supAdapter, "supervisor-adapter", "", "adapter for the supervisor session (used with --auto, env: FASE_SUPERVISOR_ADAPTER)")
+	cmd.Flags().StringVar(&supModel, "supervisor-model", "", "model for the supervisor session (used with --auto, env: FASE_SUPERVISOR_MODEL)")
 	cmd.Flags().StringVar(&envFile, "env", "", "path to .env file for API keys (default: .env in cwd)")
 
 	return cmd
