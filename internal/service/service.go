@@ -3155,6 +3155,7 @@ func (s *Service) checkerDispatchCWD(ctx context.Context, jobs []core.JobRecord)
 
 // buildCheckerBriefing produces a prompt for the checker agent.
 func (s *Service) buildCheckerBriefing(work core.WorkItemRecord) string {
+	screenshotDir := filepath.Join(s.Paths.StateDir, "artifacts", work.WorkID, "screenshots")
 	return fmt.Sprintf(`# Checker Assignment
 
 Work ID: %s
@@ -3162,23 +3163,40 @@ Title: %s
 
 You are a checker. Your job is to verify the worker's output independently and submit a check record.
 
+## CRITICAL: Verify Deliverables Exist Before Reporting Pass
+
+Before marking anything as pass, you MUST confirm that the expected files actually exist on disk.
+A "pass" without evidence is worthless. Follow the steps below and collect real proof.
+
 ## Your Tasks
 
-1. Run the test suite: go test ./...
-2. Check that the build is clean: go build ./...
-3. Review the diff: git diff main...HEAD --stat
-4. Check for a web UI: look for mind-graph/, index.html, playwright.config.ts, or package.json with a test script.
+1. Verify deliverables exist on disk: read the Work Objective below, identify any files, directories,
+   or artifacts the worker was supposed to produce, and confirm they exist with:
+     ls -la <expected-file-or-dir>
+   If a required deliverable is missing, report FAIL immediately.
+2. Run the test suite: go test ./...
+3. Check that the build is clean: go build ./...
+4. Review the diff: git diff main...HEAD --stat
+5. Check for a web UI: look for mind-graph/, index.html, playwright.config.ts, or package.json with a test script.
    - If a web UI exists, you MUST run Playwright: cd mind-graph && npx playwright test --screenshot=on
    - Playwright screenshots are proof that the UI works. Without them, pass is not justified for UI work.
-   - Screenshots are saved to test-results/ inside the directory where you run Playwright.
-5. Note any issues, warnings, test failures, or visual regressions.
+6. Note any issues, warnings, test failures, or visual regressions.
 
-## Collecting Screenshots
+## Collecting and Saving Screenshots
 
-After running Playwright (REQUIRED for UI work), collect screenshot paths from test-results/:
-  find . -path "*/test-results/*.png" -type f
+After running Playwright (REQUIRED for UI work):
 
-Include ALL absolute paths in your check record via the screenshots parameter.
+  # Create the artifacts directory
+  mkdir -p %s
+
+  # Copy screenshots to the artifacts directory
+  find . -path "*/test-results/*.png" -type f -exec cp {} %s/ \;
+
+  # List what was saved
+  ls %s/
+
+Include ALL absolute paths from the artifacts directory in your check record via the screenshots parameter.
+Screenshots MUST exist in %s for a pass on UI work.
 If Playwright is present but you could not run it, report that as a failure with checker_notes explaining why.
 
 ## Submitting Your Check Record
@@ -3192,7 +3210,7 @@ Call the check_record_create MCP tool with:
   - build_ok: true/false
   - tests_passed: <count>
   - tests_failed: <count>
-  - screenshots: [<list of absolute paths to PNG/JPG files>] (REQUIRED if Playwright ran)
+  - screenshots: [<list of absolute paths to PNG/JPG files in %s>] (REQUIRED if Playwright ran)
   - checker_notes: "<your observations, including whether Playwright ran and screenshots were captured>"
 
 ### Method B — CLI (for all adapters with bash access):
@@ -3205,11 +3223,16 @@ Call the check_record_create MCP tool with:
 - Do NOT call fase work attest.
 - Do NOT create new work items.
 - Do NOT call fase work update — use check_record_create or fase check create instead.
+- Do NOT report pass unless you have verified that deliverables exist on disk.
 
 ## Work Objective
 
 %s
-`, work.WorkID, work.Title, work.WorkID, work.WorkID, work.WorkID, work.Objective)
+`, work.WorkID, work.Title,
+		screenshotDir, screenshotDir, screenshotDir, screenshotDir,
+		work.WorkID, screenshotDir,
+		work.WorkID, work.WorkID,
+		work.Objective)
 }
 
 func (s *Service) ApproveWork(ctx context.Context, workID, createdBy, message string) (*core.WorkItemRecord, error) {
@@ -3592,6 +3615,12 @@ func (s *Service) WorkCheck(ctx context.Context, req WorkCheckRequest) (*WorkChe
 		req.Report.TestOutput = req.Report.TestOutput[:maxTestOutput] + "\n[truncated]"
 	}
 
+	// Reject pass on UI work when no screenshots were provided. A checker that
+	// reports pass without screenshots cannot have verified the UI works.
+	if req.Result == "pass" && isUIWork(work) && len(req.Report.Screenshots) == 0 {
+		return nil, fmt.Errorf("%w: UI work requires screenshots — run Playwright and include screenshot paths before reporting pass", ErrInvalidInput)
+	}
+
 	// Save artifacts to .fase/artifacts/<work-id>/
 	artifactDir := filepath.Join(s.Paths.StateDir, "artifacts", req.WorkID)
 	if err := os.MkdirAll(artifactDir, 0o755); err == nil {
@@ -3645,12 +3674,26 @@ func (s *Service) WorkCheck(ctx context.Context, req WorkCheckRequest) (*WorkChe
 	if err != nil {
 		return nil, fmt.Errorf("update work after check: %w", err)
 	}
-	_ = work
-
 	return &WorkCheckResult{
 		CheckRecord: rec,
 		Work:        *updatedWork,
 	}, nil
+}
+
+// isUIWork returns true when the work item involves a web UI that requires
+// Playwright screenshot evidence before a pass is accepted.
+func isUIWork(work core.WorkItemRecord) bool {
+	haystack := strings.ToLower(work.Objective + " " + work.Title)
+	uiIndicators := []string{
+		"mind-graph", "playwright", "index.html", "web ui", "frontend",
+		"ui ", " ui", "react", "svelte", "vue", "next.js", "nextjs",
+	}
+	for _, indicator := range uiIndicators {
+		if strings.Contains(haystack, indicator) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Service) AddWorkNote(ctx context.Context, req WorkNoteRequest) (*core.WorkNoteRecord, error) {
