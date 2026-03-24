@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -315,7 +317,7 @@ func newRunPlaywrightTool() Tool {
 				reporter = "list"
 			}
 
-			cmdArgs := []string{"playwright", "test", "--reporter", reporter}
+			cmdArgs := []string{"playwright", "test", "--screenshot", "on", "--reporter", reporter}
 			if strings.TrimSpace(in.TestFile) != "" {
 				cmdArgs = append(cmdArgs, in.TestFile)
 			}
@@ -352,6 +354,13 @@ func newRunPlaywrightTool() Tool {
 
 			// Collect screenshot paths from output (Playwright logs screenshot paths on failure).
 			screenshots := collectPlaywrightScreenshots(output)
+
+			// If output parsing found no screenshots, scan test-results/ directory.
+			if len(screenshots) == 0 {
+				if cwd, err := os.Getwd(); err == nil {
+					screenshots = scanForScreenshots(cwd)
+				}
+			}
 
 			return jsonString(map[string]any{
 				"exit_code":   exitCode,
@@ -421,5 +430,46 @@ func collectPlaywrightScreenshots(output string) []string {
 			}
 		}
 	}
+	return paths
+}
+
+// scanForScreenshots walks test-results directories and returns absolute paths to PNG files.
+// Scans <cwd>/test-results/ and <cwd>/tests/test-results/ and limits results to 20 files.
+func scanForScreenshots(cwd string) []string {
+	var paths []string
+	seen := map[string]bool{}
+	maxFiles := 20
+
+	dirsToScan := []string{
+		filepath.Join(cwd, "test-results"),
+		filepath.Join(cwd, "tests", "test-results"),
+	}
+
+	for _, dir := range dirsToScan {
+		if len(paths) >= maxFiles {
+			break
+		}
+
+		err := filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+			if err != nil || len(paths) >= maxFiles {
+				return nil
+			}
+
+			if !info.IsDir() && (strings.HasSuffix(path, ".png") || strings.HasSuffix(path, ".jpg") || strings.HasSuffix(path, ".jpeg") || strings.HasSuffix(path, ".webp")) {
+				absPath, _ := filepath.Abs(path)
+				if !seen[absPath] {
+					paths = append(paths, absPath)
+					seen[absPath] = true
+				}
+			}
+			return nil
+		})
+
+		if err != nil {
+			// Directory doesn't exist or can't be read, continue to next
+			continue
+		}
+	}
+
 	return paths
 }
