@@ -2296,11 +2296,16 @@ func TestPersistCheckScreenshots(t *testing.T) {
 		t.Fatalf("mkdir test-results: %v", err)
 	}
 
-	// Create a test screenshot
+	// Create test Playwright artifacts.
 	srcScreenshot := filepath.Join(testResultsDir, "test-1.png")
 	testData := []byte("fake PNG data")
 	if err := os.WriteFile(srcScreenshot, testData, 0644); err != nil {
 		t.Fatalf("write screenshot: %v", err)
+	}
+	srcVideo := filepath.Join(testResultsDir, "test-1.webm")
+	videoData := []byte("fake WEBM data")
+	if err := os.WriteFile(srcVideo, videoData, 0644); err != nil {
+		t.Fatalf("write video: %v", err)
 	}
 
 	// Initialize a git repo at the project root
@@ -2365,61 +2370,94 @@ func TestPersistCheckScreenshots(t *testing.T) {
 	}
 
 	job := core.JobRecord{
-		JobID:             jobID,
-		SessionID:         sessionID,
-		WorkID:            work.WorkID,
-		Adapter:           "native",
-		State:             core.JobStateCompleted,
-		NativeSessionID:   sessionID,
-		CWD:               worktreeDir,
-		CreatedAt:         now,
-		UpdatedAt:         now,
-		Summary:           map[string]any{},
+		JobID:           jobID,
+		SessionID:       sessionID,
+		WorkID:          work.WorkID,
+		Adapter:         "native",
+		State:           core.JobStateCompleted,
+		NativeSessionID: sessionID,
+		CWD:             worktreeDir,
+		CreatedAt:       now,
+		UpdatedAt:       now,
+		Summary:         map[string]any{},
 	}
 	if err := svc.store.CreateJob(ctx, job); err != nil {
 		t.Fatalf("CreateJob: %v", err)
 	}
 
 	// Now test the persistCheckScreenshots function
-	screenshots := []string{srcScreenshot}
+	screenshots := []string{srcScreenshot, srcVideo}
 	newPaths := svc.persistCheckScreenshots(ctx, work.WorkID, screenshots)
 
-	if len(newPaths) != 1 {
-		t.Fatalf("expected 1 screenshot path, got %d", len(newPaths))
+	if len(newPaths) != 2 {
+		t.Fatalf("expected 2 artifact paths, got %d", len(newPaths))
 	}
 
-	// Verify the file was copied to the artifacts directory
+	// Verify the files were copied to the artifacts directory.
 	// Use realpath to handle symlinks on macOS
-	expectedPath := filepath.Join(projectRoot, ".fase", "artifacts", work.WorkID, "screenshots", "test-1.png")
-	realExpectedPath, err := filepath.EvalSymlinks(expectedPath)
-	if err == nil {
-		expectedPath = realExpectedPath
+	expectedPaths := map[string][]byte{
+		filepath.Join(projectRoot, ".fase", "artifacts", work.WorkID, "screenshots", "test-1.png"):  testData,
+		filepath.Join(projectRoot, ".fase", "artifacts", work.WorkID, "screenshots", "test-1.webm"): videoData,
 	}
-	realNewPath, err := filepath.EvalSymlinks(newPaths[0])
-	if err == nil {
-		newPaths[0] = realNewPath
+	normalizedNewPaths := make(map[string]bool, len(newPaths))
+	for _, path := range newPaths {
+		realPath, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			path = realPath
+		}
+		normalizedNewPaths[path] = true
 	}
-	if newPaths[0] != expectedPath {
-		t.Fatalf("expected path %s, got %s", expectedPath, newPaths[0])
+	for expectedPath, expectedData := range expectedPaths {
+		realExpectedPath, err := filepath.EvalSymlinks(expectedPath)
+		if err == nil {
+			expectedPath = realExpectedPath
+		}
+		if !normalizedNewPaths[expectedPath] {
+			t.Fatalf("expected copied path %s in %v", expectedPath, newPaths)
+		}
+		copiedData, err := os.ReadFile(expectedPath)
+		if err != nil {
+			t.Fatalf("read copied file %s: %v", expectedPath, err)
+		}
+		if !bytes.Equal(copiedData, expectedData) {
+			t.Fatalf("copied file content mismatch for %s: expected %q, got %q", expectedPath, expectedData, copiedData)
+		}
 	}
 
-	// Verify the file exists and has the correct content
-	copiedData, err := os.ReadFile(expectedPath)
-	if err != nil {
-		t.Fatalf("read copied file: %v", err)
-	}
-	if !bytes.Equal(copiedData, testData) {
-		t.Fatalf("copied file content mismatch: expected %q, got %q", testData, copiedData)
+	collectedPaths := svc.collectScreenshotPaths(ctx, work.WorkID, core.CheckRecord{})
+	if len(collectedPaths) != 2 {
+		t.Fatalf("expected 2 collected artifact paths, got %d", len(collectedPaths))
 	}
 
-	// Test that collectPlaywrightAttachments finds the persisted screenshots
+	// Test that collectPlaywrightAttachments finds the persisted artifacts.
 	attachments := svc.collectPlaywrightAttachments(ctx, work.WorkID)
-	if len(attachments) != 1 {
-		t.Fatalf("expected 1 attachment, got %d", len(attachments))
+	if len(attachments) != 2 {
+		t.Fatalf("expected 2 attachments, got %d", len(attachments))
 	}
 
-	if !strings.Contains(attachments[0].Filename, "test-1.png") {
-		t.Fatalf("expected filename to contain 'test-1.png', got %s", attachments[0].Filename)
+	contentTypes := make(map[string]string, len(attachments))
+	for _, attachment := range attachments {
+		contentTypes[attachment.Filename] = attachment.ContentType
+	}
+	if contentTypes["test-1.png"] != "image/png" {
+		t.Fatalf("expected PNG attachment, got %q", contentTypes["test-1.png"])
+	}
+	if contentTypes["test-1.webm"] != "video/webm" {
+		t.Fatalf("expected WEBM attachment, got %q", contentTypes["test-1.webm"])
+	}
+
+	checkAttachments := svc.collectCheckArtifacts(ctx, work.WorkID, core.CheckRecord{
+		Report: core.CheckReport{Screenshots: collectedPaths},
+	})
+	if len(checkAttachments) != 2 {
+		t.Fatalf("expected 2 check attachments, got %d", len(checkAttachments))
+	}
+	checkContentTypes := make(map[string]string, len(checkAttachments))
+	for _, attachment := range checkAttachments {
+		checkContentTypes[attachment.Filename] = attachment.ContentType
+	}
+	if checkContentTypes["test-1.webm"] != "video/webm" {
+		t.Fatalf("expected WEBM check attachment, got %q", checkContentTypes["test-1.webm"])
 	}
 }
 
