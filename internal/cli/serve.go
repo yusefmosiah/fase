@@ -26,6 +26,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/yusefmosiah/fase/internal/adapters"
 	"github.com/yusefmosiah/fase/internal/core"
 	"github.com/yusefmosiah/fase/internal/mcpserver"
 	"github.com/yusefmosiah/fase/internal/service"
@@ -1700,6 +1701,539 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			"commands": commands,
 			"job_id":   jobID,
 		})
+	})
+
+	// --- Phase B: route remaining CLI commands through serve ---
+
+	// POST /api/job/run — queue a new background job
+	mux.HandleFunc("/api/job/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.RunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.Run(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/job/send — queue a continuation on a resumable session
+	mux.HandleFunc("/api/job/send", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.SendRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.Send(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// GET /api/job/list — list jobs
+	mux.HandleFunc("/api/job/list", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 50
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		jobs, err := svc.ListJobs(r.Context(), service.ListJobsRequest{
+			Limit:     limit,
+			Adapter:   q.Get("adapter"),
+			State:     q.Get("state"),
+			SessionID: q.Get("session"),
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if jobs == nil {
+			jobs = []core.JobRecord{}
+		}
+		writeJSONHTTP(w, 200, jobs)
+	})
+
+	// GET/POST /api/job/{id}/... — per-job operations
+	mux.HandleFunc("/api/job/", func(w http.ResponseWriter, r *http.Request) {
+		parts := strings.Split(strings.TrimPrefix(r.URL.Path, "/api/job/"), "/")
+		if len(parts) == 0 || parts[0] == "" {
+			writeJSONHTTP(w, 404, map[string]string{"error": "missing job id"})
+			return
+		}
+		jobID := parts[0]
+		action := ""
+		if len(parts) > 1 {
+			action = parts[1]
+		}
+		switch action {
+		case "status":
+			result, err := svc.Status(r.Context(), jobID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, result)
+		case "logs":
+			q := r.URL.Query()
+			limit := 200
+			if v := q.Get("limit"); v != "" {
+				if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			events, err := svc.Logs(r.Context(), jobID, limit)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if events == nil {
+				events = []core.EventRecord{}
+			}
+			writeJSONHTTP(w, 200, events)
+		case "logs-after":
+			q := r.URL.Query()
+			limit := 200
+			if v := q.Get("limit"); v != "" {
+				if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			var afterSeq int64
+			if v := q.Get("after"); v != "" {
+				afterSeq, _ = strconv.ParseInt(v, 10, 64)
+			}
+			events, err := svc.LogsAfter(r.Context(), jobID, afterSeq, limit)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if events == nil {
+				events = []core.EventRecord{}
+			}
+			writeJSONHTTP(w, 200, events)
+		case "logs-raw":
+			q := r.URL.Query()
+			limit := 200
+			if v := q.Get("limit"); v != "" {
+				if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			logs, err := svc.RawLogs(r.Context(), jobID, limit)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			if logs == nil {
+				logs = []service.RawLogEntry{}
+			}
+			writeJSONHTTP(w, 200, logs)
+		case "logs-raw-after":
+			q := r.URL.Query()
+			limit := 200
+			if v := q.Get("limit"); v != "" {
+				if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+					limit = parsed
+				}
+			}
+			var afterSeq int64
+			if v := q.Get("after"); v != "" {
+				afterSeq, _ = strconv.ParseInt(v, 10, 64)
+			}
+			rawLogs, events, err := svc.RawLogsAfter(r.Context(), jobID, afterSeq, limit)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, map[string]any{"logs": rawLogs, "events": events})
+		case "cancel":
+			if r.Method != http.MethodPost {
+				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+				return
+			}
+			job, err := svc.Cancel(r.Context(), jobID)
+			if err != nil {
+				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+				return
+			}
+			writeJSONHTTP(w, 200, job)
+		default:
+			writeJSONHTTP(w, 404, map[string]string{"error": "unknown job endpoint"})
+		}
+	})
+
+	// POST /api/debrief — queue a model-authored session debrief
+	mux.HandleFunc("/api/debrief", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.DebriefRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.Debrief(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// GET /api/session/list — list sessions
+	mux.HandleFunc("/api/session/list", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 50
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		sessions, err := svc.ListSessions(r.Context(), service.ListSessionsRequest{
+			Limit:   limit,
+			Adapter: q.Get("adapter"),
+			Status:  q.Get("status"),
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if sessions == nil {
+			sessions = []core.SessionRecord{}
+		}
+		writeJSONHTTP(w, 200, sessions)
+	})
+
+	// GET /api/session/{id} — inspect a canonical session
+	mux.HandleFunc("/api/session/", func(w http.ResponseWriter, r *http.Request) {
+		sessionID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/session/"), "/")
+		if sessionID == "" {
+			writeJSONHTTP(w, 404, map[string]string{"error": "missing session id"})
+			return
+		}
+		result, err := svc.Session(r.Context(), sessionID)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// GET /api/artifact/list — list artifacts
+	mux.HandleFunc("/api/artifact/list", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 20
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		artifacts, err := svc.ListArtifacts(r.Context(), service.ArtifactsRequest{
+			JobID:     q.Get("job"),
+			SessionID: q.Get("session"),
+			WorkID:    q.Get("work"),
+			Kind:      q.Get("kind"),
+			Limit:     limit,
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if artifacts == nil {
+			artifacts = []core.ArtifactRecord{}
+		}
+		writeJSONHTTP(w, 200, artifacts)
+	})
+
+	// POST /api/artifact/attach — attach a file as a persisted artifact
+	mux.HandleFunc("/api/artifact/attach", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.AttachArtifactRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		artifact, err := svc.AttachArtifact(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, artifact)
+	})
+
+	// GET /api/artifact/{id} — show one artifact and its content
+	mux.HandleFunc("/api/artifact/", func(w http.ResponseWriter, r *http.Request) {
+		artifactID := strings.Trim(strings.TrimPrefix(r.URL.Path, "/api/artifact/"), "/")
+		if artifactID == "" {
+			writeJSONHTTP(w, 404, map[string]string{"error": "missing artifact id"})
+			return
+		}
+		result, err := svc.ReadArtifact(r.Context(), artifactID)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// GET /api/history/search — search canonical local fase history
+	mux.HandleFunc("/api/history/search", func(w http.ResponseWriter, r *http.Request) {
+		q := r.URL.Query()
+		limit := 20
+		if v := q.Get("limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				limit = parsed
+			}
+		}
+		scanLimit := 500
+		if v := q.Get("scan_limit"); v != "" {
+			if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+				scanLimit = parsed
+			}
+		}
+		result, err := svc.SearchHistory(r.Context(), service.HistorySearchRequest{
+			Query:     q.Get("query"),
+			Adapter:   q.Get("adapter"),
+			Model:     q.Get("model"),
+			CWD:       q.Get("cwd"),
+			SessionID: q.Get("session"),
+			Kinds:     splitCSV(q.Get("kinds")),
+			Limit:     limit,
+			ScanLimit: scanLimit,
+		})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/internal/run-job — execute a detached job in the serve process
+	// This eliminates the concurrent-writer problem: __run-job subprocess POSTs here
+	// and serve executes the job using its existing DB connection.
+	mux.HandleFunc("/api/internal/run-job", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			JobID  string `json:"job_id"`
+			TurnID string `json:"turn_id"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		if req.JobID == "" || req.TurnID == "" {
+			writeJSONHTTP(w, 400, map[string]string{"error": "job_id and turn_id are required"})
+			return
+		}
+		// Return 202 immediately — execution happens in a goroutine using serve's DB connection.
+		writeJSONHTTP(w, 202, map[string]string{"status": "accepted"})
+		go func() {
+			if err := svc.ExecuteDetachedJob(context.Background(), req.JobID, req.TurnID); err != nil {
+				fmt.Fprintf(os.Stderr, "run-job %s error: %v\n", req.JobID, err)
+			}
+		}()
+	})
+
+	// GET /api/adapters — list adapter availability and capability flags
+	mux.HandleFunc("/api/adapters", func(w http.ResponseWriter, r *http.Request) {
+		catalog := adapters.CatalogFromConfig(svc.Config)
+		writeJSONHTTP(w, 200, catalog)
+	})
+
+	// GET /api/runtime — show the current host-agent runtime inventory
+	mux.HandleFunc("/api/runtime", func(w http.ResponseWriter, r *http.Request) {
+		result, err := svc.Runtime(r.Context(), r.URL.Query().Get("adapter"))
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/catalog/sync — refresh the discovered provider/model catalog
+	mux.HandleFunc("/api/catalog/sync", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		result, err := svc.SyncCatalog(r.Context())
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// GET /api/catalog/show — show the latest discovered provider/model catalog
+	mux.HandleFunc("/api/catalog/show", func(w http.ResponseWriter, r *http.Request) {
+		result, err := svc.Catalog(r.Context())
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/catalog/probe — run short entitlement probes against catalog entries
+	mux.HandleFunc("/api/catalog/probe", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.ProbeCatalogRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.ProbeCatalog(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/transfer/export — export a structured transfer bundle
+	mux.HandleFunc("/api/transfer/export", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.TransferExportRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.ExportTransfer(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/transfer/run — queue a job from a transfer bundle
+	mux.HandleFunc("/api/transfer/run", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.TransferRunRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.RunTransfer(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/reconcile — release orphaned work items with expired leases
+	mux.HandleFunc("/api/reconcile", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		ids, err := svc.ReconcileOnStartup(r.Context())
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		if ids == nil {
+			ids = []string{}
+		}
+		writeJSONHTTP(w, 200, map[string]any{"reconciled_work_ids": ids, "count": len(ids)})
+	})
+
+	// GET /api/dashboard — show live supervisor and work graph status
+	mux.HandleFunc("/api/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		supPath := filepath.Join(cwd, ".fase", "supervisor.json")
+		supData, _ := os.ReadFile(supPath)
+
+		allWork, err := svc.ListWork(r.Context(), service.WorkListRequest{Limit: 500})
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		states := map[string]int{}
+		for _, wk := range allWork {
+			states[string(wk.ExecutionState)]++
+		}
+		result := map[string]any{
+			"work_states": states,
+			"total_items": len(allWork),
+			"work":        allWork,
+		}
+		if len(supData) > 0 {
+			var sup map[string]any
+			if json.Unmarshal(supData, &sup) == nil {
+				result["supervisor"] = sup
+			}
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/bootstrap/inspect — assess whether paths are work-graph-native
+	mux.HandleFunc("/api/bootstrap/inspect", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.BootstrapInspectRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.InspectBootstrap(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
+	})
+
+	// POST /api/bootstrap/create — create a root work item from discovered entrypoints
+	mux.HandleFunc("/api/bootstrap/create", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req service.BootstrapCreateRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		result, err := svc.BootstrapCreate(r.Context(), req)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, result)
 	})
 }
 
