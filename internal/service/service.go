@@ -817,6 +817,14 @@ func checkRecordNeedsUIEvidence(work core.WorkItemRecord, report core.CheckRepor
 	return checkerUIEvidencePattern.MatchString(haystack)
 }
 
+// workIsUI returns true when the work item's title or objective mentions
+// browser-facing paths or UI keywords.  Used to gate strong-model attestation
+// and Playwright-aware attestation briefings.
+func workIsUI(work core.WorkItemRecord) bool {
+	haystack := work.Title + "\n" + work.Objective
+	return checkerUIEvidencePattern.MatchString(haystack)
+}
+
 func (s *Service) prepareCheckArtifactPaths(ctx context.Context, workID string, srcPaths []string) ([]string, error) {
 	if len(srcPaths) == 0 {
 		return nil, nil
@@ -5806,6 +5814,12 @@ func (s *Service) spawnAttestationChildren(ctx context.Context, parent core.Work
 }
 
 func (s *Service) attestationChildRuntime(parent core.WorkItemRecord, workerAdapter string, slotIndex int) ([]string, string) {
+	// UI work requires a strong multimodal model that can run Playwright
+	// and verify screenshots.  Force claude/sonnet so attestation is meaningful.
+	if workIsUI(parent) {
+		return []string{"claude"}, "claude-sonnet-4-6"
+	}
+
 	adapters := attestationPreferredAdapters(s.Config, parent, slotIndex)
 	if len(adapters) > 0 {
 		return adapters[:1], ""
@@ -5890,6 +5904,19 @@ func attestationChildTitle(parent core.WorkItemRecord, slotIndex int, slot core.
 
 func attestationChildObjective(parent core.WorkItemRecord, job core.JobRecord, slotIndex int, slot core.RequiredAttestation, nonce, workerFindings string) string {
 	workerModel := summaryString(job.Summary, "model")
+
+	// For UI work, inject Playwright e2e verification steps into the procedure.
+	uiSteps := ""
+	if workIsUI(parent) {
+		uiSteps = `
+4. Start the service if needed (e.g. make serve or the relevant dev server).
+5. Run Playwright e2e tests: cd mind-graph && npx playwright test --screenshot=on
+6. Review the screenshots saved to mind-graph/test-results/.
+7. Compare results against the acceptance criteria in the objective.
+8. FAIL if: UI is broken (broken filters, duplicate sections, fallback data, non-functional buttons, layout issues).
+`
+	}
+
 	return fmt.Sprintf(`You are an attestation agent reviewing work item %s.
 
 ## Work item
@@ -5906,10 +5933,12 @@ Slot: %d (%s/%s)
 ## Attestation procedure
 1. Inspect the parent work item and its diff.
 2. Decide whether the work matches the objective and evidence.
-3. Record exactly one attestation on the parent:
+3. Run go build ./... and go test for changed packages to verify correctness.
+%s
+After verification, record exactly one attestation on the parent:
    fase work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
 
-Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
+Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, uiSteps, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
 }
 
 func metadataInt(metadata map[string]any, key string) (int, bool) {
