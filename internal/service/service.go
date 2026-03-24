@@ -854,6 +854,19 @@ func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, c
 	})
 }
 
+// sendWorkFailureNotification sends an email when a work item transitions to failed.
+func (s *Service) sendWorkFailureNotification(ctx context.Context, work core.WorkItemRecord, message string) {
+	apiKey := os.Getenv("RESEND_API_KEY")
+	to := os.Getenv("EMAIL_TO")
+	if apiKey == "" || to == "" {
+		return
+	}
+	subject := fmt.Sprintf("[FASE] failed: %s", work.Title)
+	attestations, _ := s.store.ListAttestationRecords(ctx, "work", work.WorkID, 10)
+	html := notify.BuildWorkCompletionEmail(&work, message, attestations, false)
+	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
+}
+
 // SendSpecEscalationEmail emails the human when a work item has failed checks 3+ times.
 func (s *Service) SendSpecEscalationEmail(ctx context.Context, workID, summary, recommendation string) {
 	apiKey := os.Getenv("RESEND_API_KEY")
@@ -2948,10 +2961,12 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 	}
 	s.Events.Publish(ev)
 
-	// Send email notification only on first transition to done.
-	// Deduplicate: only send if previous state was NOT done.
+	// Send email notification on first transition to a terminal state.
+	// Deduplicate: only send if previous state was not already that terminal state.
 	if string(work.ExecutionState) == "done" && prevState != "done" {
 		s.sendWorkNotification(context.Background(), work, req.Message)
+	} else if string(work.ExecutionState) == "failed" && prevState != "failed" {
+		s.sendWorkFailureNotification(context.Background(), work, req.Message)
 	}
 
 	// Auto-dispatch checker when worker signals checking state.
