@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -2752,5 +2753,393 @@ func TestCheckerDispatchCWDUsesMainRepoRootForWorktreeJobs(t *testing.T) {
 	}
 	if strings.Contains(got, filepath.Join(".fase", "worktrees")) {
 		t.Fatalf("checker cwd should not point at a worktree path: %q", got)
+	}
+}
+
+// TestIsStricterContract tests the isStricterContract function which validates
+// that proposed attestation changes are stricter than existing ones.
+// Per ADR-0036: a stricter contract adds more required attestations or makes
+// non-blocking ones blocking.
+func TestIsStricterContract(t *testing.T) {
+	existing := []core.RequiredAttestation{
+		{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		{VerifierKind: "attestation", Method: "human_review", Blocking: false},
+	}
+
+	// Test case 1: Adding new requirement should be stricter
+	t.Run("adds new requirement", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+			{VerifierKind: "attestation", Method: "human_review", Blocking: false},
+			{VerifierKind: "attestation", Method: "security_scan", Blocking: true},
+		}
+		if !isStricterContract(existing, proposed) {
+			t.Error("expected adding new requirement to be stricter")
+		}
+	})
+
+	// Test case 2: Tightening blocking flag (non-blocking -> blocking) should be stricter
+	t.Run("tightens blocking flag", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+			{VerifierKind: "attestation", Method: "human_review", Blocking: true}, // was false, now true
+		}
+		if !isStricterContract(existing, proposed) {
+			t.Error("expected blocking-flag tightening to be stricter")
+		}
+	})
+
+	// Test case 3: Weakening blocking flag (blocking -> non-blocking) should NOT be stricter
+	t.Run("weakens blocking flag", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: false}, // was true, now false
+			{VerifierKind: "attestation", Method: "human_review", Blocking: false},
+		}
+		if isStricterContract(existing, proposed) {
+			t.Error("expected blocking-flag weakening to NOT be stricter")
+		}
+	})
+
+	// Test case 4: Same contract with no changes should NOT be stricter
+	t.Run("same contract no change", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+			{VerifierKind: "attestation", Method: "human_review", Blocking: false},
+		}
+		if isStricterContract(existing, proposed) {
+			t.Error("expected identical contract to NOT be stricter")
+		}
+	})
+
+	// Test case 5: Removing requirements should NOT be stricter
+	t.Run("removes requirement", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		}
+		if isStricterContract(existing, proposed) {
+			t.Error("expected removal to NOT be stricter")
+		}
+	})
+
+	// Test case 6: Same contract with different order (same length, same items) should NOT be stricter
+	t.Run("same contract different order", func(t *testing.T) {
+		proposed := []core.RequiredAttestation{
+			// Same items, same blocking status, just different order
+			{VerifierKind: "attestation", Method: "human_review", Blocking: false},
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		}
+		// Same length, same items, no new requirements, no blocking tightening - should be false
+		if isStricterContract(existing, proposed) {
+			t.Error("expected re-ordered contract to NOT be stricter")
+		}
+	})
+}
+
+// TestApplyEscalateContractProposal tests the explicit escalation path for frozen contracts.
+// This tests VAL-CONTRACT-003: post-freeze changes may only make the contract stricter
+// and must flow through the explicit escalate_contract path.
+func TestApplyEscalateContractProposal(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+	now := time.Now()
+
+	// Create a work item and start execution to trigger attestation freeze
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "escalation test work",
+		Objective: "test contract escalation",
+		RequiredAttestations: []core.RequiredAttestation{
+			{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	// To freeze the contract, we need to either run a job or transition to AwaitingAttestation.
+	// For testing, we manually set AttestationFrozenAt to simulate the frozen state.
+	// IMPORTANT: Must fetch the work first and update all fields, not create a new record
+	frozenTime := time.Now().UTC()
+	workToUpdate := *work
+	workToUpdate.AttestationFrozenAt = &frozenTime
+	err = svc.store.UpdateWorkItem(ctx, workToUpdate)
+	if err != nil {
+		t.Fatalf("UpdateWorkItem to set frozen: %v", err)
+	}
+
+	// Get the work to verify AttestationFrozenAt is set
+	updatedWork, err := svc.store.GetWorkItem(ctx, work.WorkID)
+	if err != nil {
+		t.Fatalf("GetWorkItem: %v", err)
+	}
+	if updatedWork.AttestationFrozenAt == nil {
+		t.Fatal("expected AttestationFrozenAt to be set")
+	}
+
+	// Helper to convert attestations to []any with map[string]any elements
+	// summaryAttestations expects each element to be a map, not a struct
+	attToMapSlice := func(att []core.RequiredAttestation) []any {
+		result := make([]any, len(att))
+		for i, a := range att {
+			result[i] = map[string]any{
+				"verifier_kind": a.VerifierKind,
+				"method":        a.Method,
+				"blocking":      a.Blocking,
+			}
+		}
+		return result
+	}
+
+	// Test case 1: Successful escalation with new requirements
+	t.Run("successful escalation with new requirements", func(t *testing.T) {
+		proposal := core.WorkProposalRecord{
+			ProposalID:     core.GenerateID("proposal"),
+			ProposalType:   "escalate_contract",
+			TargetWorkID:   updatedWork.WorkID,
+			CreatedBy:      "test-user",
+			Rationale:      "Adding security requirements due to new threat model",
+			CreatedAt:      now,
+			ProposedPatch: map[string]any{
+				"required_attestations": attToMapSlice([]core.RequiredAttestation{
+					{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+					{VerifierKind: "attestation", Method: "security_scan", Blocking: true},
+				}),
+			},
+		}
+
+		err := svc.applyEscalateContractProposal(ctx, proposal, now)
+		if err != nil {
+			t.Fatalf("applyEscalateContractProposal: %v", err)
+		}
+
+		// Verify the work was updated with new attestation requirements
+		updated, err := svc.store.GetWorkItem(ctx, work.WorkID)
+		if err != nil {
+			t.Fatalf("GetWorkItem after escalation: %v", err)
+		}
+
+		// Verify we now have 2 attestations
+		if len(updated.RequiredAttestations) != 2 {
+			t.Fatalf("expected 2 attestations after escalation, got %d", len(updated.RequiredAttestations))
+		}
+
+		// Verify escalation fields are set on the NEW attestation (security_scan)
+		var foundNewWithFields bool
+		for _, att := range updated.RequiredAttestations {
+			if att.Method == "security_scan" {
+				if att.EscalatedAt == nil {
+					t.Error("expected EscalatedAt to be set on new attestation")
+				}
+				if att.EscalationBy == "" {
+					t.Error("expected EscalationBy to be set on new attestation")
+				}
+				if att.EscalationReason == "" {
+					t.Error("expected EscalationReason to be set on new attestation")
+				}
+				if att.EscalationBy != "test-user" {
+					t.Errorf("expected EscalationBy to be 'test-user', got %q", att.EscalationBy)
+				}
+				if att.EscalationReason != "Adding security requirements due to new threat model" {
+					t.Errorf("expected EscalationReason to match, got %q", att.EscalationReason)
+				}
+				foundNewWithFields = true
+			}
+		}
+		if !foundNewWithFields {
+			t.Error("did not find new attestation with escalation fields")
+		}
+
+		// Verify original attestation still has nil escalation fields
+		for _, att := range updated.RequiredAttestations {
+			if att.Method == "automated_review" {
+				if att.EscalatedAt != nil {
+					t.Error("expected original attestation to have nil EscalatedAt")
+				}
+			}
+		}
+
+		// Verify metadata is recorded
+		if updated.Metadata["contract_escalated_at"] == nil {
+			t.Error("expected contract_escalated_at in metadata")
+		}
+		if updated.Metadata["contract_escalation_proposal"] == nil {
+			t.Error("expected contract_escalation_proposal in metadata")
+		}
+	})
+
+	// Test case 2: Rejection of weakening (blocking -> non-blocking)
+	t.Run("rejects weakening", func(t *testing.T) {
+		proposal := core.WorkProposalRecord{
+			ProposalID:     core.GenerateID("proposal"),
+			ProposalType:   "escalate_contract",
+			TargetWorkID:   updatedWork.WorkID,
+			CreatedBy:      "test-user",
+			Rationale:      "Attempt to weaken contract",
+			CreatedAt:      now,
+			ProposedPatch: map[string]any{
+				"required_attestations": attToMapSlice([]core.RequiredAttestation{
+					// Try to change automated_review from blocking to non-blocking
+					{VerifierKind: "attestation", Method: "automated_review", Blocking: false},
+				}),
+			},
+		}
+
+		err := svc.applyEscalateContractProposal(ctx, proposal, now)
+		if err == nil {
+			t.Error("expected error when trying to weaken contract")
+		}
+		if !strings.Contains(err.Error(), "stricter requirements") {
+			t.Errorf("expected error about stricter requirements, got: %v", err)
+		}
+	})
+
+	// Test case 3: Rejection of no stricter changes (same contract)
+	t.Run("rejects same contract", func(t *testing.T) {
+		proposal := core.WorkProposalRecord{
+			ProposalID:     core.GenerateID("proposal"),
+			ProposalType:   "escalate_contract",
+			TargetWorkID:   updatedWork.WorkID,
+			CreatedBy:      "test-user",
+			Rationale:      "No changes",
+			CreatedAt:      now,
+			ProposedPatch: map[string]any{
+				"required_attestations": attToMapSlice([]core.RequiredAttestation{
+					{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+				}),
+			},
+		}
+
+		err := svc.applyEscalateContractProposal(ctx, proposal, now)
+		if err == nil {
+			t.Error("expected error when proposing same contract")
+		}
+	})
+
+	// Test case 4: Rejection when contract is not frozen
+	t.Run("rejects unfrozen contract", func(t *testing.T) {
+		// Create a new work without starting execution
+		freshWork, err := svc.CreateWork(ctx, WorkCreateRequest{
+			Title:     "unfrozen work",
+			Objective: "test unfrozen rejection",
+			RequiredAttestations: []core.RequiredAttestation{
+				{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+			},
+		})
+		if err != nil {
+			t.Fatalf("CreateWork: %v", err)
+		}
+
+		proposal := core.WorkProposalRecord{
+			ProposalID:     core.GenerateID("proposal"),
+			ProposalType:   "escalate_contract",
+			TargetWorkID:   freshWork.WorkID,
+			CreatedBy:      "test-user",
+			Rationale:      "Try escalation before freeze",
+			CreatedAt:      now,
+			ProposedPatch: map[string]any{
+				"required_attestations": attToMapSlice([]core.RequiredAttestation{
+					{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+					{VerifierKind: "attestation", Method: "security_scan", Blocking: true},
+				}),
+			},
+		}
+
+		err = svc.applyEscalateContractProposal(ctx, proposal, now)
+		if err == nil {
+			t.Error("expected error when escalating unfrozen contract")
+		}
+		if !strings.Contains(err.Error(), "started execution first") {
+			t.Errorf("expected error about execution requirement, got: %v", err)
+		}
+	})
+}
+
+// TestSummaryAttestations tests the summaryAttestations helper function
+// that extracts attestation requirements from proposal patches.
+func TestSummaryAttestations(t *testing.T) {
+	// Test extracting attestations from a valid patch - must use []any (not concrete type)
+	patch := map[string]any{
+		"required_attestations": []any{
+			map[string]any{
+				"verifier_kind": "attestation",
+				"method":        "automated_review",
+				"blocking":      true,
+			},
+			map[string]any{
+				"verifier_kind": "attestation",
+				"method":        "security_scan",
+				"blocking":      false,
+			},
+		},
+	}
+
+	attestations := summaryAttestations(patch, "required_attestations")
+	if len(attestations) != 2 {
+		t.Fatalf("expected 2 attestations, got %d", len(attestations))
+	}
+	if attestations[0].VerifierKind != "attestation" || attestations[0].Method != "automated_review" {
+		t.Error("first attestation does not match expected")
+	}
+	if attestations[1].VerifierKind != "attestation" || attestations[1].Method != "security_scan" {
+		t.Error("second attestation does not match expected")
+	}
+
+	// Test with missing key
+	emptyPatch := map[string]any{}
+	result := summaryAttestations(emptyPatch, "required_attestations")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 attestations for missing key, got %d", len(result))
+	}
+
+	// Test with wrong type
+	wrongTypePatch := map[string]any{
+		"required_attestations": "not-an-array",
+	}
+	result = summaryAttestations(wrongTypePatch, "required_attestations")
+	if len(result) != 0 {
+		t.Fatalf("expected 0 attestations for wrong type, got %d", len(result))
+	}
+}
+
+// TestEscalationFieldsRoundTrip tests that escalation fields round-trip correctly
+// through JSON serialization (simulating storage/persistence).
+func TestEscalationFieldsRoundTrip(t *testing.T) {
+	original := []core.RequiredAttestation{
+		{VerifierKind: "attestation", Method: "automated_review", Blocking: true},
+		{
+			VerifierKind:      "attestation",
+			Method:            "security_scan",
+			Blocking:          true,
+			EscalatedAt:       func() *time.Time { t := time.Now(); return &t }(),
+			EscalationBy:      "test-user",
+			EscalationReason:  "Critical security fix required",
+		},
+	}
+
+	// Serialize to JSON (simulating storage)
+	data, err := json.Marshal(original)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	// Deserialize back (simulating retrieval)
+	var restored []core.RequiredAttestation
+	if err := json.Unmarshal(data, &restored); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	// Verify original unchanged
+	if restored[0].EscalatedAt != nil || restored[0].EscalationBy != "" {
+		t.Error("original attestation should have nil escalation fields")
+	}
+
+	// Verify escalated attestation restored correctly
+	if restored[1].EscalatedAt == nil {
+		t.Error("expected EscalatedAt to be restored")
+	}
+	if restored[1].EscalationBy != "test-user" {
+		t.Errorf("expected EscalationBy 'test-user', got %q", restored[1].EscalationBy)
+	}
+	if restored[1].EscalationReason != "Critical security fix required" {
+		t.Errorf("expected EscalationReason, got %q", restored[1].EscalationReason)
 	}
 }
