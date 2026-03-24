@@ -567,6 +567,23 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 				}
 
 				if isJobStalled(jobDir, 30*time.Minute) && !isTerminal(jobState) {
+					// Check process liveness before declaring a stall.
+					// Adapters like codex/gpt-5.4 can think for 15+ minutes without
+					// producing output; killing them wastes quota. Only fire a stall
+					// event if the worker process is also dead (option 4).
+					rt, rtErr := svc.GetJobRuntime(ctx, jobID)
+					if rtErr == nil && rt.CompletedAt == nil {
+						// Prefer VendorPID (the adapter/codex process); fall back to
+						// SupervisorPID if no vendor PID was recorded.
+						checkPID := rt.VendorPID
+						if checkPID == 0 {
+							checkPID = rt.SupervisorPID
+						}
+						if checkPID > 0 && isProcessAlive(checkPID) {
+							continue // Process is alive and thinking; not stalled.
+						}
+					}
+
 					// Only process the stalled job if it's still the current job.
 					// A newer dispatch may have replaced it.
 					workResult, wErr := svc.Work(ctx, workID)
@@ -589,7 +606,7 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 						Actor:    service.ActorHousekeeping,
 						Cause:    service.CauseHousekeepingStall,
 						Metadata: map[string]string{
-							"reason": fmt.Sprintf("no output for 30 minutes"),
+							"reason": fmt.Sprintf("no output for 30 minutes and worker process is dead"),
 						},
 					})
 					hub.broadcast("work_updated", map[string]string{"work_id": workID})
@@ -597,7 +614,7 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					// If no supervisor is running (one-off dispatch), send channel notification to host
 					if sup == nil && mcpServer != nil {
 						_ = mcpServer.SendChannelEvent(
-							fmt.Sprintf("⚠️ Stall detected: job %s has no output for 30 minutes. Work: %s (%s)", jobID, workResult.Work.Title, workID),
+							fmt.Sprintf("⚠️ Stall detected: job %s has no output for 30 minutes and worker is dead. Work: %s (%s)", jobID, workResult.Work.Title, workID),
 							map[string]string{"type": "stall_warning", "work_id": workID, "job_id": jobID},
 						)
 					}
