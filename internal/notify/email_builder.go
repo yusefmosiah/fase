@@ -226,6 +226,9 @@ func buildInlineScreenshots(paths []string) string {
 			continue
 		}
 		ext := strings.ToLower(filepath.Ext(p))
+		if ext == ".webm" || ext == ".mp4" || ext == ".mov" {
+			continue
+		}
 		contentType := "image/png"
 		if ext == ".jpg" || ext == ".jpeg" {
 			contentType = "image/jpeg"

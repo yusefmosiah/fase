@@ -544,6 +544,10 @@ func (s *Service) collectCheckArtifacts(ctx context.Context, workID string, cr c
 
 	// Collect screenshots referenced directly in the check report.
 	for _, screenshotPath := range cr.Report.Screenshots {
+		contentType, ok := playwrightArtifactContentType(screenshotPath)
+		if !ok {
+			continue
+		}
 		data, err := os.ReadFile(screenshotPath)
 		if err != nil {
 			continue
@@ -551,7 +555,7 @@ func (s *Service) collectCheckArtifacts(ctx context.Context, workID string, cr c
 		attachments = append(attachments, notify.ResendEmailAttachment{
 			Filename:    filepath.Base(screenshotPath),
 			Content:     base64.StdEncoding.EncodeToString(data),
-			ContentType: "image/png",
+			ContentType: contentType,
 		})
 	}
 	if len(attachments) > 0 {
@@ -571,9 +575,9 @@ func (s *Service) collectCheckArtifacts(ctx context.Context, workID string, cr c
 	return s.collectPlaywrightAttachments(ctx, workID)
 }
 
-// collectScreenshotPaths gathers all screenshot file paths for a check record,
+// collectScreenshotPaths gathers Playwright artifact paths for a check record,
 // including both explicit paths and those from fallback directories.
-// This ensures all screenshots are available for inlining in the email HTML.
+// This ensures screenshots are available for inline HTML and videos for attachments.
 func (s *Service) collectScreenshotPaths(ctx context.Context, workID string, cr core.CheckRecord) []string {
 	seen := make(map[string]bool)
 	var paths []string
@@ -594,8 +598,7 @@ func (s *Service) collectScreenshotPaths(ctx context.Context, workID string, cr 
 			if err != nil || d.IsDir() {
 				return nil
 			}
-			name := strings.ToLower(d.Name())
-			if strings.HasSuffix(name, ".png") || strings.HasSuffix(name, ".jpg") || strings.HasSuffix(name, ".jpeg") {
+			if _, ok := playwrightArtifactContentType(path); ok {
 				if !seen[path] {
 					seen[path] = true
 					paths = append(paths, path)
@@ -677,15 +680,15 @@ func (s *Service) collectPlaywrightAttachments(ctx context.Context, workID strin
 	return nil
 }
 
-// collectScreenshots walks dir recursively and returns PNG files as base64 attachments.
+// collectScreenshots walks dir recursively and returns Playwright screenshots/videos as base64 attachments.
 func collectScreenshots(dir string) []notify.ResendEmailAttachment {
 	var attachments []notify.ResendEmailAttachment
 	_ = filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return nil
 		}
-		name := d.Name()
-		if !strings.HasSuffix(strings.ToLower(name), ".png") {
+		contentType, ok := playwrightArtifactContentType(path)
+		if !ok {
 			return nil
 		}
 		data, readErr := os.ReadFile(path)
@@ -693,13 +696,28 @@ func collectScreenshots(dir string) []notify.ResendEmailAttachment {
 			return nil
 		}
 		attachments = append(attachments, notify.ResendEmailAttachment{
-			Filename:    name,
+			Filename:    d.Name(),
 			Content:     base64.StdEncoding.EncodeToString(data),
-			ContentType: "image/png",
+			ContentType: contentType,
 		})
 		return nil
 	})
 	return attachments
+}
+
+func playwrightArtifactContentType(path string) (string, bool) {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png", true
+	case ".jpg", ".jpeg":
+		return "image/jpeg", true
+	case ".webm":
+		return "video/webm", true
+	case ".mp4", ".mov":
+		return "video/mp4", true
+	default:
+		return "", false
+	}
 }
 
 func (s *Service) Close() error {
