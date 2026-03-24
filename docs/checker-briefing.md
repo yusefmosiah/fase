@@ -9,8 +9,8 @@ Checkers exist to collect evidence, verify deliverables, and submit a structured
 2. Verify any file paths named in the objective actually exist on disk with `test -e <path>`.
 3. Run `go build ./...`.
 4. Run targeted tests for the files or behavior touched by the diff.
-5. If the work touches UI files or browser-facing paths such as `mind-graph/`, `index.html`, `playwright.config.*`, `.tsx`, `.jsx`, `.css`, or `.html`, run Playwright.
-6. Persist Playwright screenshots and videos to `.fase/artifacts/<work-id>/screenshots/` and verify those files exist before passing the check.
+5. If the work is UI-tagged or touches browser-facing paths such as `mind-graph/`, `index.html`, `playwright.config.*`, `.tsx`, `.jsx`, `.css`, or `.html`, run Playwright with a strong multimodal model (Claude Sonnet/Opus).
+6. Persist Playwright screenshots and videos to `.fase/artifacts/<work-id>/screenshots/`, verify those files exist before passing the check, and fail on broken filters, duplicate sections, or fallback/placeholder data.
 7. Include the commands run, verified paths, and evidence locations in `checker_notes` or `test_output`.
 
 ## Check Record Submission

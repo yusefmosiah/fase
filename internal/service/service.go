@@ -50,6 +50,73 @@ var osExecutable = os.Executable
 
 var checkerUIEvidencePattern = regexp.MustCompile(`(?i)(\bmind-graph/|\bplaywright\.config(?:\.[[:alnum:]]+)?\b|\bindex\.html\b|\.tsx\b|\.jsx\b|\.css\b|\.html\b|\bfrontend\b|\bfront-end\b|\bweb ui\b|\buser interface\b|\bbrowser ui\b)`)
 
+var uiCheckerModels = []struct{ adapter, model string }{
+	{"claude", "claude-opus-4-6"},
+	{"claude", "claude-sonnet-4-6"},
+}
+
+func workNeedsUIVerification(work core.WorkItemRecord) bool {
+	if workHasUITag(work.Metadata) {
+		return true
+	}
+	haystack := strings.Join([]string{work.Title, work.Objective}, "\n")
+	return checkerUIEvidencePattern.MatchString(haystack)
+}
+
+func workHasUITag(metadata map[string]any) bool {
+	if len(metadata) == 0 {
+		return false
+	}
+	tags := metadataStringSlice(metadata["tags"])
+	for _, tag := range tags {
+		switch strings.ToLower(strings.TrimSpace(tag)) {
+		case "ui", "frontend", "front-end", "web ui", "web-ui", "webui", "browser", "browser ui", "browser-ui":
+			return true
+		}
+	}
+	for _, key := range []string{"ui", "frontend", "front_end", "web_ui", "browser_ui"} {
+		switch v := metadata[key].(type) {
+		case bool:
+			if v {
+				return true
+			}
+		case string:
+			if strings.EqualFold(strings.TrimSpace(v), "true") || strings.EqualFold(strings.TrimSpace(v), "yes") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func metadataStringSlice(value any) []string {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case []string:
+		return append([]string(nil), v...)
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		parts := strings.Split(v, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			if trimmed := strings.TrimSpace(part); trimmed != "" {
+				out = append(out, trimmed)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
 type Service struct {
 	Paths         core.Paths
 	Config        core.Config
@@ -813,8 +880,10 @@ func (s *Service) GetCheckRecord(ctx context.Context, checkID string) (core.Chec
 }
 
 func checkRecordNeedsUIEvidence(work core.WorkItemRecord, report core.CheckReport) bool {
-	haystack := strings.Join([]string{work.Title, work.Objective, report.DiffStat}, "\n")
-	return checkerUIEvidencePattern.MatchString(haystack)
+	if workNeedsUIVerification(work) {
+		return true
+	}
+	return checkerUIEvidencePattern.MatchString(report.DiffStat)
 }
 
 func (s *Service) prepareCheckArtifactPaths(ctx context.Context, workID string, srcPaths []string) ([]string, error) {
@@ -3161,9 +3230,13 @@ func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord)
 	// Pick a checker model that differs from the worker's last model.
 	// Only require the model to differ — same adapter is fine (avoids
 	// skipping claude/opus just because the worker also used claude adapter).
-	checkerAdapter := checkerModels[0].adapter
-	checkerModel := checkerModels[0].model
-	for _, cm := range checkerModels {
+	checkerPool := checkerModels
+	if workNeedsUIVerification(work) {
+		checkerPool = uiCheckerModels
+	}
+	checkerAdapter := checkerPool[0].adapter
+	checkerModel := checkerPool[0].model
+	for _, cm := range checkerPool {
 		if cm.model != workerModel {
 			checkerAdapter = cm.adapter
 			checkerModel = cm.model
@@ -3208,6 +3281,18 @@ func (s *Service) checkerDispatchCWD(ctx context.Context, jobs []core.JobRecord)
 
 // buildCheckerBriefing produces a prompt for the checker agent.
 func (s *Service) buildCheckerBriefing(work core.WorkItemRecord) string {
+	uiWork := workNeedsUIVerification(work)
+	uiInstructions := ""
+	if uiWork {
+		uiInstructions = fmt.Sprintf(`
+5. This work is UI-tagged, so treat Playwright evidence as mandatory.
+   - Run the local service before testing so the browser has a live app to inspect.
+   - Run Playwright e2e from the app root with a strong multimodal model (Claude Sonnet/Opus).
+   - Capture screenshots and videos for the flows that matter, then verify they were persisted under .fase/artifacts/%s/screenshots/.
+   - Compare the rendered UI against the acceptance criteria and fail on broken filters, duplicate sections, fallback/placeholder data, or other visible regressions.
+   - If you cannot run Playwright or the persisted artifact directory is empty, report FAIL.
+`, work.WorkID)
+	}
 	return fmt.Sprintf(`# Checker Assignment
 
 Work ID: %s
@@ -3233,6 +3318,7 @@ You are a checker. Your job is to verify the worker's output independently and s
    - Use the app-local command when available, for example: cd mind-graph && npx playwright test --screenshot=on
    - After Playwright, persist screenshots and videos under .fase/artifacts/%s/screenshots/ and confirm they exist there before you pass the check.
    - If UI work is involved and you do not have persisted screenshots, report FAIL.
+%s
 6. Note any issues, warnings, test failures, missing deliverables, or visual regressions.
 
 ## Collecting Screenshots
@@ -3282,7 +3368,7 @@ Call the check_record_create MCP tool with:
 ## Work Objective
 
 %s
-`, work.WorkID, work.Title, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.Objective)
+`, work.WorkID, work.Title, work.WorkID, uiInstructions, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.Objective)
 }
 
 func (s *Service) ApproveWork(ctx context.Context, workID, createdBy, message string) (*core.WorkItemRecord, error) {
@@ -5709,7 +5795,7 @@ func (s *Service) spawnAttestationChildren(ctx context.Context, parent core.Work
 			continue
 		}
 
-		childAdapter, childModel := s.attestationChildRuntime(parent, job.Adapter, slotIdx)
+		childAdapters, childModels := s.attestationChildRuntime(parent, job.Adapter, slotIdx)
 		child := core.WorkItemRecord{
 			WorkID:               core.GenerateID("work"),
 			Title:                attestationChildTitle(parent, slotIdx, slot),
@@ -5721,8 +5807,8 @@ func (s *Service) spawnAttestationChildren(ctx context.Context, parent core.Work
 			Priority:             parent.Priority,
 			ConfigurationClass:   parent.ConfigurationClass,
 			BudgetClass:          parent.BudgetClass,
-			PreferredAdapters:    childAdapter,
-			PreferredModels:      nonEmptySlice(childModel),
+			PreferredAdapters:    childAdapters,
+			PreferredModels:      childModels,
 			RequiredAttestations: []core.RequiredAttestation{},
 			Metadata: map[string]any{
 				"parent_work_id":    parent.WorkID,
@@ -5805,15 +5891,18 @@ func (s *Service) spawnAttestationChildren(ctx context.Context, parent core.Work
 	return nil
 }
 
-func (s *Service) attestationChildRuntime(parent core.WorkItemRecord, workerAdapter string, slotIndex int) ([]string, string) {
+func (s *Service) attestationChildRuntime(parent core.WorkItemRecord, workerAdapter string, slotIndex int) ([]string, []string) {
+	if workNeedsUIVerification(parent) {
+		return []string{"claude"}, []string{"claude-opus-4-6", "claude-sonnet-4-6"}
+	}
 	adapters := attestationPreferredAdapters(s.Config, parent, slotIndex)
 	if len(adapters) > 0 {
-		return adapters[:1], ""
+		return adapters[:1], []string{}
 	}
 	if adapter := alternateAdapter(workerAdapter, s.Config); adapter != "" {
-		return []string{adapter}, ""
+		return []string{adapter}, []string{}
 	}
-	return []string{}, ""
+	return []string{}, []string{}
 }
 
 func alternateAdapter(workerAdapter string, cfg core.Config) string {
@@ -5890,6 +5979,17 @@ func attestationChildTitle(parent core.WorkItemRecord, slotIndex int, slot core.
 
 func attestationChildObjective(parent core.WorkItemRecord, job core.JobRecord, slotIndex int, slot core.RequiredAttestation, nonce, workerFindings string) string {
 	workerModel := summaryString(job.Summary, "model")
+	uiGuidance := ""
+	if workNeedsUIVerification(parent) {
+		uiGuidance = fmt.Sprintf(`
+## UI attestation requirements
+1. Start the service before testing so the browser can reach the app.
+2. Run Playwright e2e against the UI and capture screenshots/videos for the flows that matter.
+3. Compare the rendered UI against the acceptance criteria and the worker's findings.
+4. Fail if filters are broken, sections are duplicated, or fallback/placeholder data is shown.
+5. Record the artifact paths and the visible defects in your finding summary.
+`)
+	}
 	return fmt.Sprintf(`You are an attestation agent reviewing work item %s.
 
 ## Work item
@@ -5902,6 +6002,7 @@ Slot: %d (%s/%s)
 
 ## Worker's verification findings
 %s
+%s
 
 ## Attestation procedure
 1. Inspect the parent work item and its diff.
@@ -5909,7 +6010,7 @@ Slot: %d (%s/%s)
 3. Record exactly one attestation on the parent:
    fase work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
 
-Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
+Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, uiGuidance, parent.WorkID, nonce, slot.VerifierKind, slot.Method)
 }
 
 func metadataInt(metadata map[string]any, key string) (int, bool) {

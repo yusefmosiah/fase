@@ -1998,6 +1998,34 @@ func TestCreateCheckRecordRequiresScreenshotsForUIWork(t *testing.T) {
 	}
 }
 
+func TestCreateCheckRecordRequiresScreenshotsForUITaggedWork(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "dashboard polish",
+		Objective: "update the board cards",
+		Metadata: map[string]any{
+			"tags": []string{"ui"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	_, err = svc.CreateCheckRecord(ctx, CheckRecordCreateRequest{
+		WorkID: work.WorkID,
+		Result: "pass",
+		Report: core.CheckReport{
+			BuildOK:     true,
+			TestsPassed: 1,
+		},
+	})
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for UI-tagged pass without screenshots, got %v", err)
+	}
+}
+
 func TestCreateCheckRecordRejectsMissingArtifactPaths(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2043,6 +2071,52 @@ func TestBuildCheckerBriefingIncludesEvidenceRequirements(t *testing.T) {
 		if !strings.Contains(briefing, want) {
 			t.Fatalf("expected briefing to contain %q", want)
 		}
+	}
+}
+
+func TestBuildCheckerBriefingIncludesUIPlaywrightRequirements(t *testing.T) {
+	svc := newTestService(t)
+
+	briefing := svc.buildCheckerBriefing(core.WorkItemRecord{
+		WorkID:    "work_ui_123",
+		Title:     "UI attestation",
+		Objective: "review mind-graph/index.html, filters, and screenshots",
+		Metadata: map[string]any{
+			"tags": []string{"ui"},
+		},
+	})
+
+	for _, want := range []string{
+		"UI-tagged",
+		"strong multimodal model",
+		"broken filters",
+		"duplicate sections",
+		"fallback/placeholder data",
+		".fase/artifacts/work_ui_123/screenshots",
+	} {
+		if !strings.Contains(briefing, want) {
+			t.Fatalf("expected UI briefing to contain %q", want)
+		}
+	}
+}
+
+func TestAttestationChildRuntimePinsUITaggedWorkToStrongModels(t *testing.T) {
+	svc := newTestService(t)
+	parent := core.WorkItemRecord{
+		WorkID:    "work_ui_456",
+		Title:     "UI attestation",
+		Objective: "verify mind-graph/index.html",
+		Metadata: map[string]any{
+			"tags": []string{"ui"},
+		},
+	}
+
+	adapters, models := svc.attestationChildRuntime(parent, "native", 0)
+	if len(adapters) != 1 || adapters[0] != "claude" {
+		t.Fatalf("expected claude adapter for UI work, got %v", adapters)
+	}
+	if len(models) != 2 || models[0] != "claude-opus-4-6" || models[1] != "claude-sonnet-4-6" {
+		t.Fatalf("expected strong multimodal model preference for UI work, got %v", models)
 	}
 }
 
