@@ -584,20 +584,21 @@ func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRe
 	}
 
 	subject := fmt.Sprintf("[FASE] done: %s", work.Title)
+	bundle := s.notificationProofBundle(ctx, work)
 
 	// Try to find the latest passing check record to render as proof.
-	checkRecords, err := s.store.ListCheckRecords(ctx, work.WorkID, 10)
+	checkRecords := bundle.CheckRecords
 	var html string
 	var attachments []notify.ResendEmailAttachment
 
-	if err == nil {
+	if len(checkRecords) > 0 {
 		// Find the most recent passing check record.
 		for _, cr := range checkRecords {
 			if cr.Result == "pass" {
 				// Ensure all screenshot paths (including fallback) are in the report for inlining.
 				// This handles cases where cr.Report.Screenshots might not have been populated fully.
 				cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, cr)
-				html = notify.BuildCheckReportEmail(&work, cr)
+				html = notify.BuildCheckReportEmail(bundle, cr)
 				attachments = s.collectCheckArtifacts(ctx, work.WorkID, cr)
 				break
 			}
@@ -606,8 +607,7 @@ func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRe
 
 	if html == "" {
 		// Fallback: basic completion email without check report.
-		attestations, _ := s.store.ListAttestationRecords(ctx, "work", work.WorkID, 10)
-		html = notify.BuildWorkCompletionEmail(&work, message, attestations, true)
+		html = notify.BuildWorkCompletionEmail(bundle, message, true)
 		attachments = s.collectPlaywrightAttachments(ctx, work.WorkID)
 	}
 
@@ -1141,8 +1141,7 @@ func (s *Service) sendWorkFailureNotification(ctx context.Context, work core.Wor
 		return
 	}
 	subject := fmt.Sprintf("[FASE] failed: %s", work.Title)
-	attestations, _ := s.store.ListAttestationRecords(ctx, "work", work.WorkID, 10)
-	html := notify.BuildWorkCompletionEmail(&work, message, attestations, false)
+	html := notify.BuildWorkCompletionEmail(s.notificationProofBundle(ctx, work), message, false)
 	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
 }
 
@@ -1157,9 +1156,8 @@ func (s *Service) SendSpecEscalationEmail(ctx context.Context, workID, summary, 
 	if err != nil {
 		return
 	}
-	checkRecords, _ := s.store.ListCheckRecords(ctx, workID, 10)
 	subject := fmt.Sprintf("[FASE] spec question: %s", work.Title)
-	html := notify.BuildSpecEscalationEmail(&work, checkRecords, summary, recommendation)
+	html := notify.BuildSpecEscalationEmail(s.notificationProofBundle(ctx, work), summary, recommendation)
 	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
 }
 
@@ -5396,8 +5394,7 @@ func (s *Service) startPreparedJobLifecycle(
 	// Report job completion to supervisor/host via channel notification.
 	// This ensures the dispatch loop always gets notified, even if the
 	// worker LLM didn't call report itself.
-	reportMsg := fmt.Sprintf("[job %s] %s: %s (work: %s)", job.JobID, terminalEvent, message, job.WorkID)
-	s.reportJobCompletion(reportMsg)
+	s.reportJobCompletion(*job, terminalEvent, message)
 
 	return message, runErr
 }
@@ -5406,10 +5403,101 @@ func (s *Service) startPreparedJobLifecycle(
 // Uses serve's HTTP API to reach the host via the MCP proxy channel.
 // Best-effort: failures are silently dropped since the host can still
 // observe job state via polling.
-func (s *Service) reportJobCompletion(message string) {
+func (s *Service) reportJobCompletion(job core.JobRecord, terminalEvent, message string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = s.postServeChannelEvent(ctx, message, channelmeta.JobCompletionMeta())
+	reportMsg := fmt.Sprintf("[job %s] %s: %s (work: %s)", job.JobID, terminalEvent, message, job.WorkID)
+	if job.WorkID != "" {
+		reportMsg = reportMsg + " | proof: " + formatProofBundleRefs(s.notificationProofBundle(ctx, core.WorkItemRecord{WorkID: job.WorkID}))
+	}
+	_ = s.postServeChannelEvent(ctx, reportMsg, channelmeta.JobCompletionMeta())
+}
+
+func (s *Service) notificationProofBundle(ctx context.Context, work core.WorkItemRecord) notify.ProofBundle {
+	result, err := s.Work(ctx, work.WorkID)
+	if err != nil {
+		return notify.ProofBundle{Work: work}
+	}
+	return notify.ProofBundle{
+		Work:         result.Work,
+		CheckRecords: result.CheckRecords,
+		Attestations: result.Attestations,
+		Artifacts:    result.Artifacts,
+		Docs:         result.Docs,
+	}
+}
+
+func formatProofBundleRefs(bundle notify.ProofBundle) string {
+	parts := []string{
+		fmt.Sprintf("work=%s", bundle.Work.WorkID),
+		fmt.Sprintf("state=%s", bundle.Work.ExecutionState),
+		fmt.Sprintf("approval=%s", bundle.Work.ApprovalState),
+	}
+	if refs := checkRefs(bundle.CheckRecords); len(refs) > 0 {
+		parts = append(parts, "checks="+strings.Join(refs, ","))
+	}
+	if refs := proofBundleAttestationRefs(bundle.Attestations); len(refs) > 0 {
+		parts = append(parts, "attestations="+strings.Join(refs, ","))
+	}
+	if refs := proofBundleArtifactRefs(bundle.Artifacts); len(refs) > 0 {
+		parts = append(parts, "artifacts="+strings.Join(refs, ","))
+	}
+	if refs := proofBundleDocRefs(bundle.Docs); len(refs) > 0 {
+		parts = append(parts, "docs="+strings.Join(refs, ","))
+	}
+	return strings.Join(parts, " ")
+}
+
+func checkRefs(records []core.CheckRecord) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	limit := min(3, len(records))
+	refs := make([]string, 0, limit)
+	for _, record := range records[:limit] {
+		refs = append(refs, fmt.Sprintf("%s(%s)", record.CheckID, record.Result))
+	}
+	return refs
+}
+
+func proofBundleAttestationRefs(records []core.AttestationRecord) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	limit := min(3, len(records))
+	refs := make([]string, 0, limit)
+	for _, record := range records[:limit] {
+		ref := fmt.Sprintf("%s(%s)", record.AttestationID, record.Result)
+		if record.ArtifactID != "" {
+			ref += ":" + record.ArtifactID
+		}
+		refs = append(refs, ref)
+	}
+	return refs
+}
+
+func proofBundleArtifactRefs(records []core.ArtifactRecord) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	limit := min(3, len(records))
+	refs := make([]string, 0, limit)
+	for _, record := range records[:limit] {
+		refs = append(refs, fmt.Sprintf("%s(%s)", record.ArtifactID, record.Kind))
+	}
+	return refs
+}
+
+func proofBundleDocRefs(records []core.DocContentRecord) []string {
+	if len(records) == 0 {
+		return nil
+	}
+	limit := min(3, len(records))
+	refs := make([]string, 0, limit)
+	for _, record := range records[:limit] {
+		refs = append(refs, fmt.Sprintf("%s(%s)", record.DocID, record.Path))
+	}
+	return refs
 }
 
 func (s *Service) postServeChannelEvent(ctx context.Context, message string, meta map[string]string) error {

@@ -299,7 +299,7 @@ func TestRenderWorkShowIncludesCanonicalEvidenceBundle(t *testing.T) {
 	}
 
 	rendered := out.String()
-	for _, want := range []string{"checks: 1", "attestations: 1", "artifacts: 1", "docs: 1", "verified evidence bundle", "docs/review.md"} {
+	for _, want := range []string{"checks: 1", "chk_123", "attestations: 1", "att_123", "artifacts: 1", "art_123", "docs: 1", "doc_123", "verified evidence bundle", "docs/review.md"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("rendered work show missing %q:\n%s", want, rendered)
 		}

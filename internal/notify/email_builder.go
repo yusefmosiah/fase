@@ -11,8 +11,17 @@ import (
 	"github.com/yusefmosiah/fase/internal/core"
 )
 
+type ProofBundle struct {
+	Work         core.WorkItemRecord
+	CheckRecords []core.CheckRecord
+	Attestations []core.AttestationRecord
+	Artifacts    []core.ArtifactRecord
+	Docs         []core.DocContentRecord
+}
+
 // BuildWorkCompletionEmail builds an HTML email for work item completion or failure.
-func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attestations []core.AttestationRecord, isSuccess bool) string {
+func BuildWorkCompletionEmail(bundle ProofBundle, message string, isSuccess bool) string {
+	work := bundle.Work
 	status := "FAILED"
 	statusColor := "#dc2626"
 	if isSuccess {
@@ -21,9 +30,9 @@ func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attesta
 	}
 
 	attestationSummary := ""
-	if len(attestations) > 0 {
+	if len(bundle.Attestations) > 0 {
 		attestationSummary = "<h3>Attestations</h3><ul>"
-		for _, att := range attestations {
+		for _, att := range bundle.Attestations {
 			result := att.Result
 			if result == "" {
 				result = "unknown"
@@ -40,6 +49,8 @@ func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attesta
 	if message != "" {
 		updateMessage = fmt.Sprintf("<h3>Update Message</h3><p>%s</p>", escapeHTML(message))
 	}
+
+	proofBundleSection := buildProofBundleSection(bundle)
 
 	html := fmt.Sprintf(`
 <!DOCTYPE html>
@@ -73,11 +84,15 @@ func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attesta
 				<div><strong>Work ID:</strong> <code>%s</code></div>
 				<div><strong>Title:</strong> %s</div>
 				<div><strong>Kind:</strong> %s</div>
+				<div><strong>Execution State:</strong> %s</div>
+				<div><strong>Approval State:</strong> %s</div>
 				<div><strong>Timestamp:</strong> %s</div>
 			</div>
 
 			<h3>Objective</h3>
 			<p>%s</p>
+
+			%s
 
 			%s
 
@@ -99,11 +114,14 @@ func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attesta
 		work.WorkID,
 		escapeHTML(work.Title),
 		work.Kind,
+		escapeHTML(string(work.ExecutionState)),
+		escapeHTML(string(work.ApprovalState)),
 		work.UpdatedAt.Format(time.RFC3339),
 		escapeHTML(work.Objective),
 		updateMessage,
 		attestationSummary,
-		buildMetadataSection(work),
+		buildMetadataSection(&work),
+		proofBundleSection,
 	)
 
 	return strings.TrimSpace(html)
@@ -111,7 +129,8 @@ func BuildWorkCompletionEmail(work *core.WorkItemRecord, message string, attesta
 
 // BuildCheckReportEmail renders a CheckReport as an HTML email body for work completion.
 // Subject should be "[FASE] done: <title>".
-func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) string {
+func BuildCheckReportEmail(bundle ProofBundle, cr core.CheckRecord) string {
+	work := bundle.Work
 	testStatus := "✓ All tests passed"
 	testColor := "#16a34a"
 	if cr.Report.TestsFailed > 0 {
@@ -148,6 +167,7 @@ func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) strin
 	}
 
 	screenshotsSection := buildInlineScreenshots(cr.Report.Screenshots)
+	proofBundleSection := buildProofBundleSection(bundle)
 
 	return strings.TrimSpace(fmt.Sprintf(`<!DOCTYPE html>
 <html>
@@ -177,7 +197,10 @@ func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) strin
 		<div class="content">
 			<div class="metadata">
 				<div><strong>Work ID:</strong> <code>%s</code></div>
+				<div><strong>Check ID:</strong> <code>%s</code></div>
 				<div><strong>Kind:</strong> %s</div>
+				<div><strong>Execution State:</strong> %s</div>
+				<div><strong>Approval State:</strong> %s</div>
 				<div><strong>Completed:</strong> %s</div>
 				<div><strong>Checker:</strong> %s</div>
 			</div>
@@ -192,6 +215,7 @@ func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) strin
 			%s
 			%s
 			%s
+			%s
 		</div>
 		<div class="footer">
 			<p>This is an automated notification from FASE work management system.</p>
@@ -201,7 +225,10 @@ func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) strin
 </html>`,
 		escapeHTML(work.Title),
 		work.WorkID,
+		cr.CheckID,
 		work.Kind,
+		escapeHTML(string(work.ExecutionState)),
+		escapeHTML(string(work.ApprovalState)),
 		cr.CreatedAt.Format(time.RFC3339),
 		escapeHTML(cr.CheckerModel),
 		buildColor, buildStatus,
@@ -210,6 +237,7 @@ func BuildCheckReportEmail(work *core.WorkItemRecord, cr core.CheckRecord) strin
 		testOutputSection,
 		checkerNotesSection,
 		screenshotsSection,
+		proofBundleSection,
 	))
 }
 
@@ -241,11 +269,12 @@ func buildInlineScreenshots(paths []string) string {
 }
 
 // BuildSpecEscalationEmail builds an HTML email for spec escalation after 3+ failed checks.
-func BuildSpecEscalationEmail(work *core.WorkItemRecord, checkRecords []core.CheckRecord, summary, recommendation string) string {
+func BuildSpecEscalationEmail(bundle ProofBundle, summary, recommendation string) string {
+	work := bundle.Work
 	checksSection := ""
-	if len(checkRecords) > 0 {
+	if len(bundle.CheckRecords) > 0 {
 		checksSection = "<h3>Check History</h3><ul>"
-		for _, cr := range checkRecords {
+		for _, cr := range bundle.CheckRecords {
 			icon := "✓"
 			color := "#16a34a"
 			if cr.Result == "fail" {
@@ -276,6 +305,8 @@ func BuildSpecEscalationEmail(work *core.WorkItemRecord, checkRecords []core.Che
 		recommendationSection = fmt.Sprintf(`<h3>Recommendation</h3><p style="white-space:pre-wrap">%s</p>`, escapeHTML(recommendation))
 	}
 
+	proofBundleSection := buildProofBundleSection(bundle)
+
 	return strings.TrimSpace(fmt.Sprintf(`<!DOCTYPE html>
 <html>
 <head>
@@ -303,11 +334,14 @@ func BuildSpecEscalationEmail(work *core.WorkItemRecord, checkRecords []core.Che
 			<div class="metadata">
 				<div><strong>Work ID:</strong> <code>%s</code></div>
 				<div><strong>Kind:</strong> %s</div>
+				<div><strong>Execution State:</strong> %s</div>
+				<div><strong>Approval State:</strong> %s</div>
 				<div><strong>Failed checks:</strong> %d</div>
 			</div>
 
 			<p>This item has failed verification %d time(s). The spec may need to change.</p>
 
+			%s
 			%s
 			%s
 			%s
@@ -321,12 +355,92 @@ func BuildSpecEscalationEmail(work *core.WorkItemRecord, checkRecords []core.Che
 		escapeHTML(work.Title),
 		work.WorkID,
 		work.Kind,
-		len(checkRecords),
-		len(checkRecords),
+		escapeHTML(string(work.ExecutionState)),
+		escapeHTML(string(work.ApprovalState)),
+		len(bundle.CheckRecords),
+		len(bundle.CheckRecords),
 		checksSection,
 		summarySection,
 		recommendationSection,
+		proofBundleSection,
 	))
+}
+
+func buildProofBundleSection(bundle ProofBundle) string {
+	var b strings.Builder
+	b.WriteString("<h3>Canonical Proof Bundle</h3><ul>")
+	fmt.Fprintf(&b, "<li><strong>Work:</strong> <code>%s</code> (%s / %s)</li>",
+		bundle.Work.WorkID,
+		escapeHTML(string(bundle.Work.ExecutionState)),
+		escapeHTML(string(bundle.Work.ApprovalState)),
+	)
+
+	b.WriteString("<li><strong>Checks:</strong><ul>")
+	if len(bundle.CheckRecords) == 0 {
+		b.WriteString("<li>none recorded</li>")
+	} else {
+		for _, check := range bundle.CheckRecords {
+			fmt.Fprintf(&b, "<li><code>%s</code> — %s (%s)</li>",
+				check.CheckID,
+				escapeHTML(check.Result),
+				escapeHTML(check.CheckerModel),
+			)
+		}
+	}
+	b.WriteString("</ul></li>")
+
+	b.WriteString("<li><strong>Attestations:</strong><ul>")
+	if len(bundle.Attestations) == 0 {
+		b.WriteString("<li>none recorded</li>")
+	} else {
+		for _, att := range bundle.Attestations {
+			entry := fmt.Sprintf("<code>%s</code> — %s (%s)", att.AttestationID, escapeHTML(att.Result), escapeHTML(att.VerifierKind))
+			if att.ArtifactID != "" {
+				entry += fmt.Sprintf(" artifact=<code>%s</code>", att.ArtifactID)
+			}
+			b.WriteString("<li>" + entry + "</li>")
+		}
+	}
+	b.WriteString("</ul></li>")
+
+	b.WriteString("<li><strong>Artifacts:</strong><ul>")
+	if len(bundle.Artifacts) == 0 {
+		b.WriteString("<li>none recorded</li>")
+	} else {
+		for _, artifact := range bundle.Artifacts {
+			fmt.Fprintf(&b, "<li><code>%s</code> — %s (%s)</li>",
+				artifact.ArtifactID,
+				escapeHTML(artifact.Path),
+				escapeHTML(artifact.Kind),
+			)
+		}
+	}
+	b.WriteString("</ul></li>")
+
+	b.WriteString("<li><strong>Docs:</strong><ul>")
+	if len(bundle.Docs) == 0 {
+		b.WriteString("<li>none recorded</li>")
+	} else {
+		for _, doc := range bundle.Docs {
+			fmt.Fprintf(&b, "<li><code>%s</code> — %s [%s]</li>",
+				doc.DocID,
+				escapeHTML(doc.Path),
+				escapeHTML(repoStatusLabel(doc)),
+			)
+		}
+	}
+	b.WriteString("</ul></li></ul>")
+	return b.String()
+}
+
+func repoStatusLabel(doc core.DocContentRecord) string {
+	if !doc.RepoFileExists {
+		return "repo-missing"
+	}
+	if doc.MatchesRepo {
+		return "repo-match"
+	}
+	return "repo-drift"
 }
 
 // BuildAttestationEmail builds an HTML email for attestation events (passed or failed).

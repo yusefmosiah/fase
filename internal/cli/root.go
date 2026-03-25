@@ -3096,7 +3096,7 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 			if summary == "" {
 				summary = strings.TrimSpace(check.Report.TestOutput)
 			}
-			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\n", check.CreatedAt.Format("2006-01-02 15:04:05"), check.Result, emptyDash(check.CheckerModel), emptyDash(summary)); err != nil {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\t%s\n", check.CreatedAt.Format("2006-01-02 15:04:05"), check.CheckID, check.Result, emptyDash(check.CheckerModel), emptyDash(summary)); err != nil {
 				return err
 			}
 		}
@@ -3106,7 +3106,7 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 			return err
 		}
 		for _, attestation := range result.Attestations {
-			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\n", attestation.CreatedAt.Format("2006-01-02 15:04:05"), attestation.Result, emptyDash(attestation.VerifierKind), attestation.Summary); err != nil {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\t%s\n", attestation.CreatedAt.Format("2006-01-02 15:04:05"), attestation.AttestationID, attestation.Result, emptyDash(attestation.VerifierKind), attestation.Summary); err != nil {
 				return err
 			}
 		}
@@ -3154,7 +3154,7 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 					repoStatus = "repo-drift"
 				}
 			}
-			if err := writef(cmd.OutOrStdout(), "  %s\t%s\tv%d\t%s\t[%s]\n", emptyDash(doc.Path), emptyDash(doc.Format), doc.Version, emptyDash(doc.Title), repoStatus); err != nil {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\tv%d\t%s\t[%s]\n", doc.DocID, emptyDash(doc.Path), emptyDash(doc.Format), doc.Version, emptyDash(doc.Title), repoStatus); err != nil {
 				return err
 			}
 		}

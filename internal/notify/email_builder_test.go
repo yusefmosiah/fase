@@ -7,25 +7,45 @@ import (
 )
 
 func TestBuildWorkCompletionEmailSuccess(t *testing.T) {
-	work := &core.WorkItemRecord{
-		WorkID:    "work_test123",
-		Title:     "Test Task: Implement Email Notification",
-		Objective: "Add email notifications via Resend API for work item completion",
-		Kind:      "implement",
+	work := core.WorkItemRecord{
+		WorkID:         "work_test123",
+		Title:          "Test Task: Implement Email Notification",
+		Objective:      "Add email notifications via Resend API for work item completion",
+		Kind:           "implement",
+		ExecutionState: core.WorkExecutionStateDone,
+		ApprovalState:  core.WorkApprovalStateVerified,
 		Metadata: map[string]any{
 			"result": "passed",
 		},
 	}
 	message := "Successfully implemented email notifications. All tests passing."
-	attestations := []core.AttestationRecord{
-		{
-			Method:       "manual",
-			VerifierKind: "supervisor",
-			Result:       "passed",
-		},
+	bundle := ProofBundle{
+		Work: work,
+		CheckRecords: []core.CheckRecord{{
+			CheckID:      "chk_test123",
+			Result:       "pass",
+			CheckerModel: "claude-sonnet-4-6",
+		}},
+		Attestations: []core.AttestationRecord{{
+			AttestationID: "att_test123",
+			Method:        "manual",
+			VerifierKind:  "supervisor",
+			Result:        "passed",
+		}},
+		Artifacts: []core.ArtifactRecord{{
+			ArtifactID: "art_test123",
+			Kind:       "check_output",
+			Path:       "/tmp/check.txt",
+		}},
+		Docs: []core.DocContentRecord{{
+			DocID:          "doc_test123",
+			Path:           "docs/spec-check-flow.md",
+			RepoFileExists: true,
+			MatchesRepo:    true,
+		}},
 	}
 
-	html := BuildWorkCompletionEmail(work, message, attestations, true)
+	html := BuildWorkCompletionEmail(bundle, message, true)
 
 	// Verify key elements are present
 	if len(html) == 0 {
@@ -49,19 +69,26 @@ func TestBuildWorkCompletionEmailSuccess(t *testing.T) {
 	if !contains(html, "#16a34a") { // green color for success
 		t.Error("BuildWorkCompletionEmailSuccess: missing success color")
 	}
+	for _, want := range []string{"Canonical Proof Bundle", "chk_test123", "att_test123", "art_test123", "doc_test123"} {
+		if !contains(html, want) {
+			t.Errorf("BuildWorkCompletionEmailSuccess: missing proof bundle reference %q", want)
+		}
+	}
 }
 
 func TestBuildWorkCompletionEmailFailure(t *testing.T) {
-	work := &core.WorkItemRecord{
-		WorkID:    "work_test456",
-		Title:     "Test Task: Failing Job",
-		Objective: "Test email for failures",
-		Kind:      "implement",
+	work := core.WorkItemRecord{
+		WorkID:         "work_test456",
+		Title:          "Test Task: Failing Job",
+		Objective:      "Test email for failures",
+		Kind:           "implement",
+		ExecutionState: core.WorkExecutionStateFailed,
+		ApprovalState:  core.WorkApprovalStateRejected,
 	}
 	message := "Task failed: database connection timeout"
-	attestations := []core.AttestationRecord{}
+	bundle := ProofBundle{Work: work}
 
-	html := BuildWorkCompletionEmail(work, message, attestations, false)
+	html := BuildWorkCompletionEmail(bundle, message, false)
 
 	// Verify key elements for failure
 	if len(html) == 0 {
@@ -76,17 +103,20 @@ func TestBuildWorkCompletionEmailFailure(t *testing.T) {
 	if !contains(html, "#dc2626") { // red color for failure
 		t.Error("BuildWorkCompletionEmailFailure: missing failure color")
 	}
+	if !contains(html, "Canonical Proof Bundle") {
+		t.Error("BuildWorkCompletionEmailFailure: missing proof bundle section")
+	}
 }
 
 func TestHTMLEscaping(t *testing.T) {
-	work := &core.WorkItemRecord{
+	work := core.WorkItemRecord{
 		WorkID:    "work_test",
 		Title:     "Test Alert XSS",
 		Objective: "Test & verify escaping of HTML special chars <tag>",
 		Kind:      "implement",
 	}
 
-	html := BuildWorkCompletionEmail(work, "", []core.AttestationRecord{}, true)
+	html := BuildWorkCompletionEmail(ProofBundle{Work: work}, "", true)
 
 	// Verify that special HTML characters in objective are escaped
 	if !contains(html, "&lt;") && !contains(html, "&amp;") {
@@ -202,6 +232,90 @@ func TestBuildAttestationEmailWithCheckRecord(t *testing.T) {
 	}
 	if !contains(html, "Build OK") {
 		t.Error("BuildAttestationEmailWithCheckRecord: missing build status")
+	}
+}
+
+func TestBuildCheckReportEmailIncludesCanonicalProofBundleReferences(t *testing.T) {
+	bundle := ProofBundle{
+		Work: core.WorkItemRecord{
+			WorkID:         "work_bundle01",
+			Title:          "Bundle email",
+			Objective:      "Render proof bundle references",
+			Kind:           "implement",
+			ExecutionState: core.WorkExecutionStateDone,
+			ApprovalState:  core.WorkApprovalStateVerified,
+		},
+		CheckRecords: []core.CheckRecord{{
+			CheckID:      "chk_bundle01",
+			Result:       "pass",
+			CheckerModel: "claude-sonnet-4-6",
+		}},
+		Attestations: []core.AttestationRecord{{
+			AttestationID: "att_bundle01",
+			Result:        "passed",
+			VerifierKind:  "deterministic",
+			ArtifactID:    "art_bundle01",
+		}},
+		Artifacts: []core.ArtifactRecord{{
+			ArtifactID: "art_bundle01",
+			Kind:       "check_output",
+			Path:       "/tmp/check.txt",
+		}},
+		Docs: []core.DocContentRecord{{
+			DocID:          "doc_bundle01",
+			Path:           "docs/spec-check-flow.md",
+			RepoFileExists: true,
+			MatchesRepo:    true,
+		}},
+	}
+	cr := core.CheckRecord{
+		CheckID:      "chk_bundle01",
+		Result:       "pass",
+		CheckerModel: "claude-sonnet-4-6",
+		Report: core.CheckReport{
+			BuildOK:      true,
+			TestsPassed:  2,
+			TestOutput:   "go test ./internal/notify",
+			CheckerNotes: "verified bundle references",
+		},
+	}
+
+	html := BuildCheckReportEmail(bundle, cr)
+	for _, want := range []string{"Check ID", "chk_bundle01", "att_bundle01", "art_bundle01", "doc_bundle01", "Canonical Proof Bundle"} {
+		if !contains(html, want) {
+			t.Fatalf("BuildCheckReportEmail: missing %q in output:\n%s", want, html)
+		}
+	}
+}
+
+func TestBuildSpecEscalationEmailIncludesCanonicalProofBundleReferences(t *testing.T) {
+	bundle := ProofBundle{
+		Work: core.WorkItemRecord{
+			WorkID:         "work_escalate01",
+			Title:          "Escalation email",
+			Objective:      "Render escalation bundle references",
+			Kind:           "implement",
+			ExecutionState: core.WorkExecutionStateFailed,
+			ApprovalState:  core.WorkApprovalStateRejected,
+		},
+		CheckRecords: []core.CheckRecord{{
+			CheckID:      "chk_escalate01",
+			Result:       "fail",
+			CheckerModel: "claude-opus-4-6",
+		}},
+		Docs: []core.DocContentRecord{{
+			DocID:   "doc_escalate01",
+			Path:    "docs/spec-check-flow.md",
+			Title:   "Check Flow Spec",
+			Version: 1,
+		}},
+	}
+
+	html := BuildSpecEscalationEmail(bundle, "Still failing targeted tests.", "Clarify the contract.")
+	for _, want := range []string{"chk_escalate01", "doc_escalate01", "Canonical Proof Bundle", "Clarify the contract."} {
+		if !contains(html, want) {
+			t.Fatalf("BuildSpecEscalationEmail: missing %q in output:\n%s", want, html)
+		}
 	}
 }
 

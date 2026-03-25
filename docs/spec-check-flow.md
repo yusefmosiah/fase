@@ -2,6 +2,8 @@
 
 > **Contract Note**: The canonical work execution states are defined in `internal/core/types.go` (see `WorkExecutionState` constants). This document describes the original design intent; the runtime code is the authoritative source. See the README for the precedence rule.
 
+> **Briefing Note**: The checker briefing is generated at runtime from `internal/service/service.go`. There is no separate static checker-briefing contract file.
+
 ## Flow
 
 ```
@@ -25,9 +27,9 @@ ready → doing → checking → report → done
 - Does NOT decide pass/fail — just reports what it sees
 
 **Supervisor** — makes decisions.
-- Reads the checker's report
+- Reads the canonical review bundle via `fase work show`
 - Decides: mark done (ship) or back to doing (fix)
-- On done: merge worktree to main, email fires with report as proof
+- On done: merge worktree to main, email/reporting reuses the canonical proof bundle
 - On back-to-doing: sends failure context to original worker session
 - After 3 failed checks on same item: considers whether this is a spec problem, escalates to human with recommendation
 
@@ -86,11 +88,14 @@ type CheckReport struct {
 
 Artifacts persist even after worktree cleanup. They're the proof.
 
-## Email (on done only)
+## Completion Reporting
 
 Subject: `[FASE] done: <work title>`
 
-Body: the check report rendered as HTML.
+Body: the latest passing check report rendered alongside canonical proof-bundle references for the same work item.
+- Work ID plus execution/approval state
+- Check and attestation identifiers
+- Artifact and doc identifiers/paths from the canonical review bundle
 - What was built (diff stat)
 - Test results (pass/fail counts)
 - Screenshots inline (if any)
@@ -106,7 +111,7 @@ After 3 failed checks on the same work item, supervisor emails the human:
 
 Subject: `[FASE] spec question: <work title>`
 
-Body: "This item has failed verification 3 times. Here's what keeps going wrong: [checker reports]. The spec may need to change. Recommendation: [supervisor's suggestion]."
+Body: "This item has failed verification 3 times. Here's what keeps going wrong: [checker reports]." The escalation also carries canonical proof-bundle references back to the same work/check/attestation/artifact/doc records used by `fase work show`, so operators do not have to reconcile a prose-only summary.
 
 This is the ONLY failure email the human receives.
 

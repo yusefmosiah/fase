@@ -2007,7 +2007,7 @@ func TestCreateCheckRecordRejectsMissingDeliverableEvidence(t *testing.T) {
 
 	work, err := svc.CreateWork(ctx, WorkCreateRequest{
 		Title:     "deliverable evidence required",
-		Objective: "verify mind-graph/index.html and docs/checker-briefing.md",
+		Objective: "verify mind-graph/index.html and docs/spec-check-flow.md",
 	})
 	if err != nil {
 		t.Fatalf("CreateWork: %v", err)
@@ -2362,7 +2362,7 @@ func TestBuildCheckerBriefingIncludesEvidenceRequirements(t *testing.T) {
 	briefing := svc.buildCheckerBriefing(core.WorkItemRecord{
 		WorkID:    "work_123",
 		Title:     "checker evidence update",
-		Objective: "verify mind-graph/index.html and docs/checker-briefing.md",
+		Objective: "verify mind-graph/index.html and docs/spec-check-flow.md",
 	})
 
 	for _, want := range []string{
