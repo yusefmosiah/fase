@@ -1,6 +1,6 @@
 {
   "milestone": "supervisor-wake-causality",
-  "round": 5,
+  "round": 6,
   "status": "fail",
   "validatorsRun": {
     "test": {
@@ -20,41 +20,40 @@
     }
   },
   "reviewsSummary": {
-    "total": 2,
-    "passed": 1,
+    "total": 1,
+    "passed": 0,
     "failed": 1,
     "failedFeatures": [
-      "supervisor-streamablehttp-session-isolation-fix"
+      "supervisor-streamablehttp-live-transport-and-broadcast-fix"
     ]
   },
   "blockingIssues": [
     {
-      "featureId": "supervisor-streamablehttp-session-isolation-fix",
+      "featureId": "supervisor-streamablehttp-live-transport-and-broadcast-fix",
       "severity": "blocking",
-      "description": "The new \"integration\" test never drives the live transport. Its body only builds requests and inspects GetServerForRequest/GetServerInstance; there is no handler.ServeHTTP or session.CallTool invocation, so the requested end-to-end proof for external and supervisor-marked traffic is still missing."
+      "description": "The live transport regression still only uses helper selection. `TestStreamableHTTPHandlerIntegration` never invokes `handler.ServeHTTP` or `session.CallTool`, so the production StreamableHTTP path is not exercised end to end."
     },
     {
-      "featureId": "supervisor-streamablehttp-session-isolation-fix",
+      "featureId": "supervisor-streamablehttp-live-transport-and-broadcast-fix",
       "severity": "blocking",
-      "description": "SessionManager.SetBroadcastFunc only updates servers that already exist. serve.go installs it before any sessions are materialized, so later-created sessions such as the \"channel-send\" server never inherit the hub broadcast function and SendChannelEvent falls back to stdout instead of reaching serve-mode websocket clients."
+      "description": "The new live transport provenance test repeats the helper-only pattern. It constructs a handler but still never drives the actual live transport path, so VAL-SUPERVISOR-003 remains unproven on the production route."
     }
   ],
   "appliedUpdates": [],
   "suggestedGuidanceUpdates": [
     {
       "target": "AGENTS.md",
-      "suggestion": "Require live transport regression coverage for MCP/StreamableHTTP changes; helper-level provenance assertions are not enough when the production handler path is part of the contract.",
-      "evidence": "Both provenance fix reviews noted that the tests stopped at helper-level request/server inspection and did not drive session.CallTool or StreamableHTTP end to end.",
-      "isSystemic": true
-    },
-    {
-      "target": "AGENTS.md",
-      "suggestion": "Require explicit CreatedBy=\"service\" labeling on true service-generated follow-on paths so ActorService provenance stays visible and easy to review.",
-      "evidence": "The service-created-by fix passed only after the callsites were explicitly labeled, and the review history shows this is easy to miss without a stronger guidance note.",
+      "suggestion": "Require live StreamableHTTP regressions to invoke `handler.ServeHTTP` or `session.CallTool` when a feature claims live transport coverage; helper-level request/server selection is not sufficient.",
+      "evidence": "The reviewed fix feature and its predecessor both stopped at `GetServerForRequest` / `GetServerInstance`, leaving the actual transport path untested.",
       "isSystemic": true
     }
   ],
-  "rejectedObservations": [],
-  "previousRound": "/Users/wiz/fase/.factory/validation/supervisor-wake-causality/scrutiny/synthesis.round4.json"
-}
+  "rejectedObservations": [
+    {
+      "observation": "The test comments describe an 'actual StreamableHTTP handler path' even though the code still only exercises helper-level request selection.",
+      "reason": "duplicate",
+      "details": "This is the same underlying transport-coverage gap already captured in the blocking issues and guidance update."
+    }
+  ],
+  "previousRound": "/Users/wiz/fase/.factory/validation/supervisor-wake-causality/scrutiny/synthesis.round5.json"
 }
