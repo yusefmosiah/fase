@@ -277,24 +277,24 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	// WebSocket hub — shared across all goroutines
 	hub := newWSHub()
 
-	// MCP endpoint — same work graph tools as `fase mcp http`
-	mcpServer := mcpserver.New(svc)
+	// MCP endpoint with per-session server isolation for correct provenance.
+	// SessionManager ensures supervisor-triggered and external MCP traffic
+	// don't share mutable state (VAL-SUPERVISOR-003, round-5 scrutiny fix).
+	sessionManager := mcpserver.NewSessionManager(svc)
 
 	// Agentic supervisor (ADR-0041) — created before API handlers so
 	// pause/resume endpoints have a reference. Goroutine started below.
 	var sup *agenticSupervisor
 	if auto {
-		sup = newAgenticSupervisor(svc, cwd, hub, supAdapter, supModel, mcpServer)
+		sup = newAgenticSupervisor(svc, cwd, hub, supAdapter, supModel, sessionManager)
 	}
 
 	mux := http.NewServeMux()
 	registerAPIHandlers(mux, svc, cwd, hub, sup)
 	// Route channel notifications through the WebSocket hub so the MCP proxy
 	// can relay them as notifications/claude/channel to Claude Code.
-	mcpServer.SetBroadcastFunc(hub.broadcast)
-	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
-		return mcpServer.MCP
-	}, nil))
+	sessionManager.SetBroadcastFunc(hub.broadcast)
+	mux.Handle("/mcp", mcp.NewStreamableHTTPHandler(sessionManager.GetServerForRequest, nil))
 
 	// Channel send — push notifications to connected Claude Code session
 	mux.HandleFunc("/api/channel/send", func(w http.ResponseWriter, r *http.Request) {
@@ -314,14 +314,18 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 			writeJSONHTTP(w, 400, map[string]string{"error": "content must not be empty"})
 			return
 		}
-		// SendChannelEvent routes via hub.broadcast (registered above), which
-		// the MCP proxy's WebSocket listener relays to Claude Code.
-		if err := mcpServer.SendChannelEvent(req.Content, req.Meta); err != nil {
+		// Get or create a server for this request to send channel events.
+		// For channel send, we use a default session since there's no explicit session ID.
+		server := sessionManager.GetServerInstance("channel-send")
+		if err := server.SendChannelEvent(req.Content, req.Meta); err != nil {
 			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
 			return
 		}
 		writeJSONHTTP(w, 200, map[string]string{"status": "sent"})
 	})
+
+	// Store sessionManager reference for use in goroutines
+	sm := sessionManager
 
 	// WebSocket endpoint
 	mux.HandleFunc("/ws", func(w http.ResponseWriter, r *http.Request) {
@@ -355,7 +359,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		runHousekeeping(ctx, svc, cwd, hub, sup, mcpServer)
+		runHousekeeping(ctx, svc, cwd, hub, sup, sm)
 	}()
 
 	// Always run change watcher — detects work/job/attestation changes and pushes via WebSocket
@@ -530,7 +534,7 @@ func cleanupWorktree(repoRoot, workID string) {
 	_ = delCmd.Run()
 }
 
-func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub, sup *agenticSupervisor, mcpServer *mcpserver.Server) {
+func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub, sup *agenticSupervisor, sm *mcpserver.SessionManager) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
@@ -616,8 +620,9 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					hub.broadcast("work_updated", map[string]string{"work_id": workID})
 
 					// If no supervisor is running (one-off dispatch), send channel notification to host
-					if sup == nil && mcpServer != nil {
-						_ = mcpServer.SendChannelEvent(
+					if sup == nil && sm != nil {
+						mcpSrv := sm.GetServerInstance("housekeeping")
+						_ = mcpSrv.SendChannelEvent(
 							fmt.Sprintf("⚠️ Stall detected: job %s has no output for 30 minutes and worker is dead. Work: %s (%s)", jobID, workResult.Work.Title, workID),
 							map[string]string{"type": "stall_warning", "work_id": workID, "job_id": jobID},
 						)
@@ -657,8 +662,9 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 					hub.broadcast("work_updated", map[string]string{"work_id": item.WorkID})
 
 					// If no supervisor is running, send channel notification
-					if sup == nil && mcpServer != nil {
-						_ = mcpServer.SendChannelEvent(
+					if sup == nil && sm != nil {
+						mcpSrv := sm.GetServerInstance("housekeeping")
+						_ = mcpSrv.SendChannelEvent(
 							fmt.Sprintf("⚠️ Orphan worker detected: process %d for job %s is dead. Work: %s (%s)", rt.SupervisorPID, item.CurrentJobID, item.Title, item.WorkID),
 							map[string]string{"type": "orphan_warning", "work_id": item.WorkID, "job_id": item.CurrentJobID},
 						)

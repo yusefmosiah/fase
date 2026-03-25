@@ -61,10 +61,10 @@ Use 'fase mcp proxy' instead — it routes through serve's HTTP API.`,
 			}
 			defer func() { _ = svc.Close() }()
 
-			server := mcpserver.New(svc)
-			handler := mcp.NewStreamableHTTPHandler(func(_ *http.Request) *mcp.Server {
-				return server.MCP
-			}, nil)
+			// Use SessionManager for per-session server isolation (VAL-SUPERVISOR-003).
+			// This ensures external MCP traffic doesn't share mutable state with supervisor.
+			sessionManager := mcpserver.NewSessionManager(svc)
+			handler := mcp.NewStreamableHTTPHandler(sessionManager.GetServerForRequest, nil)
 
 			fmt.Fprintf(cmd.OutOrStdout(), "FASE MCP server listening on %s\n", httpAddr)
 			return http.ListenAndServe(httpAddr, handler)

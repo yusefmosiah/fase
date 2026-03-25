@@ -20,19 +20,19 @@ import (
 // The LLM has FASE MCP tools and handles all dispatch/attestation logic.
 // The Go code just manages the session lifecycle.
 type agenticSupervisor struct {
-	svc       *service.Service
-	cwd       string
-	hub       *wsHub
-	adapter   string
-	model     string
-	mcpServer *mcpserver.Server // MCP server for provenance tracking (VAL-SUPERVISOR-003)
+	svc            *service.Service
+	cwd            string
+	hub            *wsHub
+	adapter        string
+	model          string
+	sessionManager *mcpserver.SessionManager // MCP session manager for provenance tracking (VAL-SUPERVISOR-003)
 
 	mu     sync.Mutex
 	paused bool
 	hostCh chan string
 }
 
-func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string, mcpServer *mcpserver.Server) *agenticSupervisor {
+func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string, sessionManager *mcpserver.SessionManager) *agenticSupervisor {
 	// Load adapter/model from .fase/supervisor-brief.md if not set via flags.
 	if adapter == "" || model == "" {
 		briefAdapter, briefModel := parseSupervisorBrief(svc.Paths.StateDir)
@@ -47,13 +47,13 @@ func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter,
 		fmt.Fprintf(os.Stderr, "supervisor: adapter=%q model=%q — set supervisor_adapter/supervisor_model in .fase/supervisor-brief.md\n", adapter, model)
 	}
 	return &agenticSupervisor{
-		svc:       svc,
-		cwd:       cwd,
-		hub:       hub,
-		adapter:   adapter,
-		model:     model,
-		mcpServer: mcpServer,
-		hostCh:    make(chan string, 16),
+		svc:            svc,
+		cwd:            cwd,
+		hub:            hub,
+		adapter:        adapter,
+		model:          model,
+		sessionManager: sessionManager,
+		hostCh:         make(chan string, 16),
 	}
 }
 
@@ -100,11 +100,11 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	sessionID := result.Session.SessionID
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
 
-	// Set caller role for MCP provenance tracking (VAL-SUPERVISOR-003).
+	// Mark this session as the supervisor session for MCP provenance (VAL-SUPERVISOR-003).
 	// This ensures supervisor-triggered MCP mutations emit ActorSupervisor.
-	// The role is per-server (not global), so concurrent traffic is safe.
-	if s.mcpServer != nil {
-		s.mcpServer.SetCallerRole("supervisor")
+	// The session manager creates per-session server instances, so concurrent traffic is safe.
+	if s.sessionManager != nil {
+		s.sessionManager.SetSupervisorSession(sessionID)
 	}
 
 	outcome := s.waitForJob(ctx, ch, result.Job.JobID)

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"sync"
 
@@ -43,6 +44,121 @@ type Server struct {
 	// When set, all tool mutations from this server instance use this role for provenance.
 	// This is per-server (not global) because each session has its own Server instance.
 	callerRole string
+}
+
+// SessionManager manages per-session MCP server instances for StreamableHTTP
+// transport, ensuring session isolation and correct provenance tracking.
+// This solves the shared mutable state problem identified in round-5 scrutiny.
+type SessionManager struct {
+	svc         *service.Service
+	mu          sync.RWMutex
+	sessions    map[string]*Server // sessionID -> server
+	supervisorSessionID string       // tracks which session is the supervisor
+}
+
+// NewSessionManager creates a new session manager backed by the given service.
+func NewSessionManager(svc *service.Service) *SessionManager {
+	return &SessionManager{
+		svc:      svc,
+		sessions: make(map[string]*Server),
+	}
+}
+
+// GetServer returns an MCP server for the given session ID.
+// For the supervisor session, the server is configured with supervisor provenance.
+// For external sessions, the server returns "mcp" as the default CreatedBy.
+// This implements per-session state isolation for VAL-SUPERVISOR-003.
+func (sm *SessionManager) GetServer(sessionID string) *mcp.Server {
+	sm.mu.RLock()
+	server, exists := sm.sessions[sessionID]
+	isSupervisor := sm.supervisorSessionID == sessionID
+	sm.mu.RUnlock()
+
+	if exists {
+		return server.MCP
+	}
+
+	// Create new server for this session
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if server, exists := sm.sessions[sessionID]; exists {
+		return server.MCP
+	}
+
+	server = New(sm.svc)
+	if isSupervisor {
+		server.SetCallerRole("supervisor")
+	}
+	sm.sessions[sessionID] = server
+	return server.MCP
+}
+
+// SetSupervisorSession marks the given session ID as the supervisor session.
+// Future GetServer calls for this session will return a server with supervisor provenance.
+func (sm *SessionManager) SetSupervisorSession(sessionID string) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.supervisorSessionID = sessionID
+}
+
+// GetServerInstance returns the mcpserver.Server instance for the given session ID.
+// This is used for operations like SendChannelEvent that need the wrapper, not the MCP server.
+func (sm *SessionManager) GetServerInstance(sessionID string) *Server {
+	sm.mu.RLock()
+	server, exists := sm.sessions[sessionID]
+	isSupervisor := sm.supervisorSessionID == sessionID
+	sm.mu.RUnlock()
+
+	if exists {
+		return server
+	}
+
+	// Create new server for this session
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+
+	// Double-check after acquiring write lock
+	if server, exists := sm.sessions[sessionID]; exists {
+		return server
+	}
+
+	server = New(sm.svc)
+	if isSupervisor {
+		server.SetCallerRole("supervisor")
+	}
+	sm.sessions[sessionID] = server
+	return server
+}
+
+// GetSupervisorSession returns the current supervisor session ID (if any).
+func (sm *SessionManager) GetSupervisorSession() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.supervisorSessionID
+}
+
+// SetBroadcastFunc sets the broadcast function on all managed servers.
+// This is used in serve mode to route channel events through the WebSocket hub.
+func (sm *SessionManager) SetBroadcastFunc(fn func(string, any)) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for _, server := range sm.sessions {
+		server.SetBroadcastFunc(fn)
+	}
+}
+
+// GetServerForRequest returns the MCP server for a given HTTP request.
+// It extracts the session ID from the Mcp-Session-Id header and returns
+// the appropriate server instance for that session.
+// This method signature matches what mcp.NewStreamableHTTPHandler expects.
+func (sm *SessionManager) GetServerForRequest(req *http.Request) *mcp.Server {
+	sessionID := req.Header.Get("Mcp-Session-Id")
+	if sessionID == "" {
+		sessionID = "default"
+	}
+	return sm.GetServer(sessionID)
 }
 
 // New creates an MCP server backed by the given service.
