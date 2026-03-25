@@ -1,6 +1,9 @@
 package core
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+)
 
 func TestWorkExecutionStateValid(t *testing.T) {
 	tests := []struct {
@@ -135,5 +138,25 @@ func TestWorkExecutionStateTerminal(t *testing.T) {
 				t.Errorf("Terminal() = %v, want %v", got, tt.want)
 			}
 		})
+	}
+}
+
+func TestWorkExecutionStateMarshalJSONCanonicalizesDeprecatedState(t *testing.T) {
+	payload, err := json.Marshal(WorkExecutionStateAwaitingAttestation)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	if string(payload) != `"checking"` {
+		t.Fatalf("Marshal = %s, want %q", payload, `"checking"`)
+	}
+}
+
+func TestWorkExecutionStateMarshalTextCanonicalizesDeprecatedState(t *testing.T) {
+	payload, err := WorkExecutionStateAwaitingAttestation.MarshalText()
+	if err != nil {
+		t.Fatalf("MarshalText: %v", err)
+	}
+	if string(payload) != "checking" {
+		t.Fatalf("MarshalText = %q, want %q", payload, "checking")
 	}
 }

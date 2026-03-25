@@ -341,6 +341,14 @@ func (s WorkExecutionState) Canonical() WorkExecutionState {
 	}
 }
 
+func (s WorkExecutionState) MarshalJSON() ([]byte, error) {
+	return json.Marshal(string(s.Canonical()))
+}
+
+func (s WorkExecutionState) MarshalText() ([]byte, error) {
+	return []byte(s.Canonical()), nil
+}
+
 func (s WorkExecutionState) Terminal() bool {
 	switch s {
 	case WorkExecutionStateDone, WorkExecutionStateFailed, WorkExecutionStateCancelled, WorkExecutionStateArchived:

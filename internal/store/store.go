@@ -3321,6 +3321,7 @@ func scanWorkItem(scanner interface{ Scan(...any) error }) (core.WorkItemRecord,
 	if rec.LockState == "" {
 		rec.LockState = core.WorkLockStateUnlocked
 	}
+	rec.ExecutionState = rec.ExecutionState.Canonical()
 	rec.Phase = phase.String
 	rec.ConfigurationClass = configurationClass.String
 	rec.BudgetClass = budgetClass.String
@@ -3481,6 +3482,7 @@ func scanWorkUpdate(scanner interface{ Scan(...any) error }) (core.WorkUpdateRec
 
 	rec.ExecutionState = core.WorkExecutionState(executionState.String)
 	rec.ApprovalState = core.WorkApprovalState(approvalState.String)
+	rec.ExecutionState = rec.ExecutionState.Canonical()
 	rec.Phase = phase.String
 	rec.Message = message.String
 	rec.JobID = jobID.String

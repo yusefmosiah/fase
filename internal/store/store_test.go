@@ -151,6 +151,22 @@ func TestGetWorkItemNotFound(t *testing.T) {
 	}
 }
 
+func TestGetWorkItemCanonicalizesDeprecatedExecutionState(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	w := sampleWorkItem("work_legacy")
+	w.ExecutionState = core.WorkExecutionStateAwaitingAttestation
+	seedWorkItem(t, s, w)
+
+	got, err := s.GetWorkItem(ctx, w.WorkID)
+	if err != nil {
+		t.Fatalf("GetWorkItem: %v", err)
+	}
+	if got.ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("ExecutionState = %q, want %q", got.ExecutionState, core.WorkExecutionStateChecking)
+	}
+}
+
 func TestUpdateWorkItem(t *testing.T) {
 	s := openTestDB(t)
 	ctx := context.Background()
@@ -224,6 +240,57 @@ func TestListWorkItems(t *testing.T) {
 	}
 	if len(items) != 1 {
 		t.Fatalf("len(items) with limit=1 = %d, want 1", len(items))
+	}
+}
+
+func TestListWorkItemsCanonicalizesDeprecatedExecutionState(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	w := sampleWorkItem("work_legacy")
+	w.ExecutionState = core.WorkExecutionStateAwaitingAttestation
+	seedWorkItem(t, s, w)
+
+	items, err := s.ListWorkItems(ctx, 10, "", "", "", false)
+	if err != nil {
+		t.Fatalf("ListWorkItems: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if items[0].ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateChecking)
+	}
+}
+
+func TestListWorkUpdatesCanonicalizesDeprecatedExecutionState(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	w := sampleWorkItem("work_legacy_updates")
+	seedWorkItem(t, s, w)
+
+	err := s.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       "upd_legacy",
+		WorkID:         w.WorkID,
+		ExecutionState: core.WorkExecutionStateAwaitingAttestation,
+		ApprovalState:  core.WorkApprovalStatePending,
+		Message:        "legacy state update",
+		Metadata:       map[string]any{},
+		CreatedBy:      "test",
+		CreatedAt:      time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatalf("CreateWorkUpdate: %v", err)
+	}
+
+	updates, err := s.ListWorkUpdates(ctx, w.WorkID, 10)
+	if err != nil {
+		t.Fatalf("ListWorkUpdates: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("len(updates) = %d, want 1", len(updates))
+	}
+	if updates[0].ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("ExecutionState = %q, want %q", updates[0].ExecutionState, core.WorkExecutionStateChecking)
 	}
 }
 

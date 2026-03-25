@@ -2137,6 +2137,76 @@ func newTestService(t *testing.T) *Service {
 	return svc
 }
 
+func TestWorkJSONNormalizesDeprecatedExecutionState(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "legacy state work",
+		Objective: "verify deprecated execution state normalization on read",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	work.ExecutionState = core.WorkExecutionStateAwaitingAttestation
+	if err := svc.store.UpdateWorkItem(ctx, *work); err != nil {
+		t.Fatalf("UpdateWorkItem: %v", err)
+	}
+	if err := svc.store.CreateWorkUpdate(ctx, core.WorkUpdateRecord{
+		UpdateID:       core.GenerateID("upd"),
+		WorkID:         work.WorkID,
+		ExecutionState: core.WorkExecutionStateAwaitingAttestation,
+		Message:        "legacy state update",
+		Metadata:       map[string]any{},
+		CreatedBy:      "test",
+		CreatedAt:      time.Now().UTC(),
+	}); err != nil {
+		t.Fatalf("CreateWorkUpdate: %v", err)
+	}
+
+	show, err := svc.Work(ctx, work.WorkID)
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+	if show.Work.ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("Work.ExecutionState = %q, want %q", show.Work.ExecutionState, core.WorkExecutionStateChecking)
+	}
+	if len(show.Updates) != 1 {
+		t.Fatalf("len(Updates) = %d, want 1", len(show.Updates))
+	}
+	if show.Updates[0].ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("Updates[0].ExecutionState = %q, want %q", show.Updates[0].ExecutionState, core.WorkExecutionStateChecking)
+	}
+
+	showJSON, err := json.Marshal(show)
+	if err != nil {
+		t.Fatalf("Marshal show: %v", err)
+	}
+	if bytes.Contains(showJSON, []byte("awaiting_attestation")) {
+		t.Fatalf("show JSON leaked deprecated state: %s", showJSON)
+	}
+
+	items, err := svc.ListWork(ctx, WorkListRequest{Limit: 10})
+	if err != nil {
+		t.Fatalf("ListWork: %v", err)
+	}
+	if len(items) != 1 {
+		t.Fatalf("len(items) = %d, want 1", len(items))
+	}
+	if items[0].ExecutionState != core.WorkExecutionStateChecking {
+		t.Fatalf("items[0].ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateChecking)
+	}
+
+	listJSON, err := json.Marshal(items)
+	if err != nil {
+		t.Fatalf("Marshal list: %v", err)
+	}
+	if bytes.Contains(listJSON, []byte("awaiting_attestation")) {
+		t.Fatalf("list JSON leaked deprecated state: %s", listJSON)
+	}
+}
+
 func TestAttestationGateBlocksArchive(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
