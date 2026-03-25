@@ -99,6 +99,12 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 
 	outcome := s.waitForJob(ctx, ch, result.Job.JobID)
 
+	// Seen-set: tracks (WorkID → State) pairs the supervisor already processed.
+	// Events matching a seen pair are echoes of the supervisor's own mutations
+	// and get dropped to prevent self-wake loops.
+	seen := make(map[string]string)
+	recordSeen(outcome.events, seen)
+
 	// Backoff state: tracks consecutive unproductive turns.
 	consecutiveEmpty := 0
 	productiveTurns := 0
@@ -158,15 +164,15 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 			}
 		}
 
+		// Filter out echo events the supervisor already processed.
+		novel := filterNovelEvents(outcome.events, seen)
+
 		// Collect pending events or wait for a signal.
-		// If events were collected during the last turn but the queue is empty,
-		// suppress them — they're likely side-effects of the supervisor's own
-		// actions (e.g., marking items done, creating attest children).
 		var msg string
-		if len(outcome.events) > 0 && s.hasActionableWork(ctx) {
-			msg = formatEvents(outcome.events)
+		if len(novel) > 0 {
+			msg = formatEvents(novel)
 		} else {
-			msg = s.waitForSignal(ctx, ch)
+			msg = s.waitForSignal(ctx, ch, seen)
 		}
 		if ctx.Err() != nil {
 			return
@@ -192,8 +198,9 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 
 		outcome = s.waitForJob(ctx, ch, sendResult.Job.JobID)
 
-		// Only notify host on meaningful turns (dispatches, attestations, failures).
-		// Skip "still waiting" and monitoring-only turns to reduce noise.
+		// Record events from this turn into the seen-set so echo events
+		// in the next iteration get filtered out.
+		recordSeen(outcome.events, seen)
 	}
 }
 
@@ -207,7 +214,7 @@ type jobOutcome struct {
 // waitForSignal blocks until an event or host message arrives.
 // syncWorkStateFromJob and refreshAttestationParentState now publish WorkEvents
 // with correct Actor/Cause fields, so worker completion reliably wakes the supervisor.
-func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.WorkEvent) string {
+func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.WorkEvent, seen map[string]string) string {
 	var events []service.WorkEvent
 	for {
 		select {
@@ -220,8 +227,7 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 				continue
 			}
 			events = append(events, ev)
-			// Debounce: collect burst events within 30s to avoid firing
-			// a new Sonnet turn for every individual event.
+			// Debounce: collect burst events within 30s.
 			timer := time.NewTimer(30 * time.Second)
 		drain:
 			for {
@@ -237,7 +243,12 @@ func (s *agenticSupervisor) waitForSignal(ctx context.Context, ch chan service.W
 					break drain
 				}
 			}
-			return formatEvents(events)
+			// Filter echoes before returning — if all events are seen, keep waiting.
+			novel := filterNovelEvents(events, seen)
+			if len(novel) > 0 {
+				return formatEvents(novel)
+			}
+			events = nil // reset and keep waiting
 		}
 	}
 }
@@ -411,4 +422,31 @@ func (s *agenticSupervisor) hasActionableWork(ctx context.Context) bool {
 		}
 	}
 	return false
+}
+
+// filterNovelEvents returns only events whose (WorkID, State) pair hasn't been
+// seen before. This prevents the supervisor from re-processing its own mutations.
+func filterNovelEvents(events []service.WorkEvent, seen map[string]string) []service.WorkEvent {
+	var novel []service.WorkEvent
+	for _, ev := range events {
+		if ev.WorkID == "" {
+			novel = append(novel, ev)
+			continue
+		}
+		if prev, ok := seen[ev.WorkID]; ok && prev == ev.State {
+			continue // echo of a transition the supervisor already handled
+		}
+		novel = append(novel, ev)
+	}
+	return novel
+}
+
+// recordSeen adds all events' (WorkID, State) pairs to the seen-set.
+// Called after each supervisor turn so that echo events get filtered next iteration.
+func recordSeen(events []service.WorkEvent, seen map[string]string) {
+	for _, ev := range events {
+		if ev.WorkID != "" {
+			seen[ev.WorkID] = ev.State
+		}
+	}
 }
