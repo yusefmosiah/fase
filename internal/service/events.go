@@ -27,6 +27,7 @@ const (
 	ActorHost         EventActor = "host"
 	ActorService      EventActor = "service"
 	ActorReconciler   EventActor = "reconciler"
+	ActorMCP          EventActor = "mcp"
 )
 
 // EventCause classifies why the event was emitted.
@@ -151,6 +152,12 @@ func actorFromCreatedBy(createdBy string) EventActor {
 		return ActorReconciler
 	case "supervisor":
 		return ActorSupervisor
+	case "mcp":
+		return ActorMCP
+	case "host":
+		return ActorHost
+	case "service":
+		return ActorService
 	default:
 		return ActorWorker
 	}
