@@ -196,15 +196,16 @@ type TransferRunRequest struct {
 }
 
 type StatusResult struct {
-	Job            core.JobRecord             `json:"job"`
-	Session        core.SessionRecord         `json:"session"`
-	NativeSessions []core.NativeSessionRecord `json:"native_sessions"`
-	Events         []core.EventRecord         `json:"events"`
-	Usage          *core.UsageReport          `json:"usage,omitempty"`
-	UsageByModel   []core.UsageReport         `json:"usage_by_model,omitempty"`
-	Cost           *core.CostEstimate         `json:"cost,omitempty"`
-	VendorCost     *core.CostEstimate         `json:"vendor_cost,omitempty"`
-	EstimatedCost  *core.CostEstimate         `json:"estimated_cost,omitempty"`
+	Job              core.JobRecord             `json:"job"`
+	Session          core.SessionRecord         `json:"session"`
+	NativeSessions   []core.NativeSessionRecord `json:"native_sessions"`
+	Events           []core.EventRecord         `json:"events"`
+	Usage            *core.UsageReport          `json:"usage,omitempty"`
+	UsageByModel     []core.UsageReport         `json:"usage_by_model,omitempty"`
+	Cost             *core.CostEstimate         `json:"cost,omitempty"`
+	VendorCost       *core.CostEstimate         `json:"vendor_cost,omitempty"`
+	EstimatedCost    *core.CostEstimate         `json:"estimated_cost,omitempty"`
+	UsageAttribution *core.UsageAttribution     `json:"usage_attribution,omitempty"`
 }
 
 type SessionAction struct {
@@ -1278,7 +1279,7 @@ func (s *Service) Run(ctx context.Context, req RunRequest) (*RunResult, error) {
 		}
 	}
 	if req.WorkID != "" {
-		if err := s.markWorkQueued(ctx, req.WorkID, job, session); err != nil {
+		if err := s.markWorkQueued(ctx, req.WorkID, &job, session); err != nil {
 			return nil, err
 		}
 	}
@@ -1814,23 +1815,22 @@ func (s *Service) Status(ctx context.Context, jobID string) (*StatusResult, erro
 		return nil, err
 	}
 
-	vendorCost := vendorCostFromSummary(job)
-	estimatedCost := estimatedCostFromSummary(job)
-	selectedCost := vendorCost
-	if selectedCost == nil {
-		selectedCost = estimatedCost
+	contract := s.canonicalJobUsage(ctx, job, map[string]core.WorkItemRecord{})
+	if contract == nil {
+		contract = &jobUsageContract{}
 	}
 
 	return &StatusResult{
-		Job:            job,
-		Session:        session,
-		NativeSessions: nativeSessions,
-		Events:         events,
-		Usage:          usageFromSummary(job.Summary),
-		UsageByModel:   modelUsageFromSummary(job.Summary),
-		Cost:           selectedCost,
-		VendorCost:     vendorCost,
-		EstimatedCost:  estimatedCost,
+		Job:              job,
+		Session:          session,
+		NativeSessions:   nativeSessions,
+		Events:           events,
+		Usage:            contract.usage,
+		UsageByModel:     contract.usageByModel,
+		Cost:             contract.cost,
+		VendorCost:       contract.vendorCost,
+		EstimatedCost:    contract.estimatedCost,
+		UsageAttribution: contract.attribution,
 	}, nil
 }
 
@@ -4735,13 +4735,17 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 		return nil, err
 	}
 
+	workCache := make(map[string]core.WorkItemRecord)
 	jobByID := make(map[string]core.JobRecord, len(jobs))
+	jobUsageByID := make(map[string]*jobUsageContract, len(jobs))
 	var filteredJobs []core.JobRecord
 	for _, job := range jobs {
-		if !historyJobMatches(job, req) {
+		contract := s.canonicalJobUsage(ctx, job, workCache)
+		if !historyJobMatches(job, contract, req) {
 			continue
 		}
 		jobByID[job.JobID] = job
+		jobUsageByID[job.JobID] = contract
 		filteredJobs = append(filteredJobs, job)
 	}
 
@@ -4755,7 +4759,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 		if !ok {
 			continue
 		}
-		matches = append(matches, core.HistoryMatch{
+		matchRecord := core.HistoryMatch{
 			Kind:      "job",
 			ID:        job.JobID,
 			WorkID:    job.WorkID,
@@ -4769,7 +4773,9 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			Snippet:   match,
 			Score:     historyScore(query, text),
 			Source:    "canonical",
-		})
+		}
+		applyUsageContract(&matchRecord, jobUsageByID[job.JobID])
+		matches = append(matches, matchRecord)
 	}
 
 	if len(allowedKinds) == 0 || allowedKinds["turn"] {
@@ -4787,7 +4793,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			if !ok {
 				continue
 			}
-			matches = append(matches, core.HistoryMatch{
+			matchRecord := core.HistoryMatch{
 				Kind:      "turn",
 				ID:        turn.TurnID,
 				WorkID:    job.WorkID,
@@ -4801,7 +4807,9 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 				Snippet:   match,
 				Score:     historyScore(query, text),
 				Source:    "canonical",
-			})
+			}
+			applyUsageContract(&matchRecord, jobUsageByID[job.JobID])
+			matches = append(matches, matchRecord)
 		}
 	}
 
@@ -4820,7 +4828,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 			if !ok {
 				continue
 			}
-			matches = append(matches, core.HistoryMatch{
+			matchRecord := core.HistoryMatch{
 				Kind:      "event",
 				ID:        event.EventID,
 				WorkID:    job.WorkID,
@@ -4834,7 +4842,9 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 				Snippet:   match,
 				Score:     historyScore(query, text),
 				Source:    "canonical",
-			})
+			}
+			applyUsageContract(&matchRecord, jobUsageByID[job.JobID])
+			matches = append(matches, matchRecord)
 		}
 	}
 
@@ -4868,7 +4878,7 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 				match = contentMatch
 			}
 			copyArtifact := artifact
-			matches = append(matches, core.HistoryMatch{
+			matchRecord := core.HistoryMatch{
 				Kind:      "artifact",
 				ID:        artifact.ArtifactID,
 				WorkID:    job.WorkID,
@@ -4884,7 +4894,9 @@ func (s *Service) SearchHistory(ctx context.Context, req HistorySearchRequest) (
 				Score:     historyScore(query, text),
 				Source:    "canonical",
 				Artifact:  &copyArtifact,
-			})
+			}
+			applyUsageContract(&matchRecord, jobUsageByID[job.JobID])
+			matches = append(matches, matchRecord)
 		}
 	}
 
@@ -5895,7 +5907,7 @@ func (s *Service) queueContinuation(
 	session.LatestJobID = job.JobID
 	session.UpdatedAt = now
 	if req.WorkID != "" {
-		if err := s.markWorkQueued(ctx, req.WorkID, job, session); err != nil {
+		if err := s.markWorkQueued(ctx, req.WorkID, &job, session); err != nil {
 			return nil, err
 		}
 	}
@@ -7440,6 +7452,251 @@ func catalogHistoryKey(adapter, provider, model string) string {
 	return strings.ToLower(strings.Join([]string{adapter, provider, model}, "|"))
 }
 
+type jobUsageContract struct {
+	usage         *core.UsageReport
+	usageByModel  []core.UsageReport
+	cost          *core.CostEstimate
+	vendorCost    *core.CostEstimate
+	estimatedCost *core.CostEstimate
+	attribution   *core.UsageAttribution
+}
+
+type catalogUsageContribution struct {
+	key   string
+	usage core.UsageReport
+}
+
+func usageRoleForWork(work core.WorkItemRecord) string {
+	if strings.EqualFold(work.Kind, "attest") {
+		return "verifier"
+	}
+	return "worker"
+}
+
+func usageAttributionMap(attr core.UsageAttribution) map[string]any {
+	return map[string]any{
+		"role":           attr.Role,
+		"attempt_epoch":  attr.AttemptEpoch,
+		"parent_work_id": attr.ParentWorkID,
+		"worker_job_id":  attr.WorkerJobID,
+	}
+}
+
+func stampJobUsageAttribution(job *core.JobRecord, work core.WorkItemRecord) {
+	if job == nil {
+		return
+	}
+	if job.Summary == nil {
+		job.Summary = map[string]any{}
+	}
+	attr := core.UsageAttribution{
+		Role:         usageRoleForWork(work),
+		AttemptEpoch: currentAttemptEpoch(work),
+	}
+	if attr.Role == "verifier" {
+		attr.ParentWorkID = summaryString(work.Metadata, "parent_work_id")
+		attr.WorkerJobID = summaryString(work.Metadata, "worker_job_id")
+	}
+	job.Summary["usage_attribution"] = usageAttributionMap(attr)
+}
+
+func usageAttributionFromSummary(summary map[string]any) *core.UsageAttribution {
+	if summary == nil {
+		return nil
+	}
+	raw, ok := summary["usage_attribution"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	attr := &core.UsageAttribution{
+		Role:         summaryString(raw, "role"),
+		AttemptEpoch: int(summaryInt64(raw, "attempt_epoch")),
+		ParentWorkID: summaryString(raw, "parent_work_id"),
+		WorkerJobID:  summaryString(raw, "worker_job_id"),
+	}
+	if attr.Role == "" && attr.AttemptEpoch == 0 && attr.ParentWorkID == "" && attr.WorkerJobID == "" {
+		return nil
+	}
+	return attr
+}
+
+func normalizeUsageAttribution(attr *core.UsageAttribution) *core.UsageAttribution {
+	if attr == nil {
+		return nil
+	}
+	if attr.Role == "" && attr.AttemptEpoch == 0 && attr.ParentWorkID == "" && attr.WorkerJobID == "" && !attr.CurrentAttempt {
+		return nil
+	}
+	copy := *attr
+	return &copy
+}
+
+func usageMatchesModel(report core.UsageReport, model string) bool {
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return true
+	}
+	if strings.EqualFold(report.Model, model) {
+		return true
+	}
+	if report.Provider != "" && report.Model != "" && strings.EqualFold(report.Provider+"/"+report.Model, model) {
+		return true
+	}
+	if strings.Contains(model, "/") {
+		parts := strings.SplitN(model, "/", 2)
+		return strings.EqualFold(report.Model, parts[1])
+	}
+	return false
+}
+
+func addCatalogUsageTotals(hist *core.CatalogHistory, usage core.UsageReport) {
+	hist.TotalInputTokens += usage.InputTokens
+	hist.TotalOutputTokens += usage.OutputTokens
+	hist.TotalTokens += usage.TotalTokens
+	hist.TotalCachedInputTokens += usage.CachedInputTokens
+	hist.TotalCacheReadInputTokens += usage.CacheReadInputTokens
+	hist.TotalCacheCreationInputTokens += usage.CacheCreationInputTokens
+}
+
+func (s *Service) loadWorkForUsage(ctx context.Context, job core.JobRecord, workCache map[string]core.WorkItemRecord) *core.WorkItemRecord {
+	if job.WorkID == "" {
+		return nil
+	}
+	if workCache != nil {
+		if cached, ok := workCache[job.WorkID]; ok {
+			work := cached
+			return &work
+		}
+	}
+	work, err := s.store.GetWorkItem(ctx, job.WorkID)
+	if err != nil {
+		return nil
+	}
+	if workCache != nil {
+		workCache[job.WorkID] = work
+	}
+	return &work
+}
+
+func (s *Service) canonicalJobUsage(ctx context.Context, job core.JobRecord, workCache map[string]core.WorkItemRecord) *jobUsageContract {
+	usage := usageFromSummary(job.Summary)
+	usageByModel := modelUsageFromSummary(job.Summary)
+	vendorCost := vendorCostFromSummary(job)
+	estimatedCost := estimatedCostFromSummary(job)
+	selectedCost := vendorCost
+	if selectedCost == nil {
+		selectedCost = estimatedCost
+	}
+
+	attr := usageAttributionFromSummary(job.Summary)
+	if work := s.loadWorkForUsage(ctx, job, workCache); work != nil {
+		if attr == nil {
+			attr = &core.UsageAttribution{}
+		}
+		if attr.Role == "" {
+			attr.Role = usageRoleForWork(*work)
+		}
+		if attr.AttemptEpoch == 0 {
+			attr.AttemptEpoch = currentAttemptEpoch(*work)
+		}
+		if attr.Role == "verifier" {
+			if attr.ParentWorkID == "" {
+				attr.ParentWorkID = summaryString(work.Metadata, "parent_work_id")
+			}
+			if attr.WorkerJobID == "" {
+				attr.WorkerJobID = summaryString(work.Metadata, "worker_job_id")
+			}
+		}
+		if attr.AttemptEpoch > 0 {
+			attr.CurrentAttempt = attr.AttemptEpoch == currentAttemptEpoch(*work)
+		}
+	}
+
+	if usage == nil && len(usageByModel) == 0 && vendorCost == nil && estimatedCost == nil && normalizeUsageAttribution(attr) == nil {
+		return nil
+	}
+	return &jobUsageContract{
+		usage:         usage,
+		usageByModel:  usageByModel,
+		cost:          selectedCost,
+		vendorCost:    vendorCost,
+		estimatedCost: estimatedCost,
+		attribution:   normalizeUsageAttribution(attr),
+	}
+}
+
+func catalogUsageContributions(job core.JobRecord, contract *jobUsageContract) []catalogUsageContribution {
+	if contract != nil && len(contract.usageByModel) > 0 {
+		perProvider := make(map[string]core.UsageReport)
+		result := make([]catalogUsageContribution, 0, len(contract.usageByModel)*2)
+		for _, usage := range contract.usageByModel {
+			provider, model := pricingLookupContext(job, &usage)
+			if provider == "" && model == "" {
+				continue
+			}
+			usage.Provider = provider
+			usage.Model = model
+			result = append(result, catalogUsageContribution{
+				key:   catalogHistoryKey(job.Adapter, provider, model),
+				usage: usage,
+			})
+			bucket := perProvider[provider]
+			bucket.Provider = provider
+			bucket.InputTokens += usage.InputTokens
+			bucket.OutputTokens += usage.OutputTokens
+			bucket.TotalTokens += usage.TotalTokens
+			bucket.CachedInputTokens += usage.CachedInputTokens
+			bucket.CacheReadInputTokens += usage.CacheReadInputTokens
+			bucket.CacheCreationInputTokens += usage.CacheCreationInputTokens
+			perProvider[provider] = bucket
+		}
+		providers := make([]string, 0, len(perProvider))
+		for provider := range perProvider {
+			providers = append(providers, provider)
+		}
+		sort.Strings(providers)
+		for _, provider := range providers {
+			result = append(result, catalogUsageContribution{
+				key:   catalogHistoryKey(job.Adapter, provider, ""),
+				usage: perProvider[provider],
+			})
+		}
+		return result
+	}
+	if contract == nil || contract.usage == nil {
+		return nil
+	}
+	usage := *contract.usage
+	provider, model := pricingLookupContext(job, &usage)
+	usage.Provider = provider
+	usage.Model = model
+	result := []catalogUsageContribution{{
+		key:   catalogHistoryKey(job.Adapter, provider, model),
+		usage: usage,
+	}}
+	if model != "" {
+		providerTotal := usage
+		providerTotal.Model = ""
+		result = append(result, catalogUsageContribution{
+			key:   catalogHistoryKey(job.Adapter, provider, ""),
+			usage: providerTotal,
+		})
+	}
+	return result
+}
+
+func applyUsageContract(match *core.HistoryMatch, contract *jobUsageContract) {
+	if match == nil || contract == nil {
+		return
+	}
+	match.Usage = contract.usage
+	match.UsageByModel = contract.usageByModel
+	match.Cost = contract.cost
+	match.VendorCost = contract.vendorCost
+	match.EstimatedCost = contract.estimatedCost
+	match.UsageAttribution = contract.attribution
+}
+
 func (s *Service) catalogHistory(ctx context.Context, limit int) (map[string]core.CatalogHistory, error) {
 	jobs, err := s.store.ListJobs(ctx, limit)
 	if err != nil {
@@ -7447,15 +7704,28 @@ func (s *Service) catalogHistory(ctx context.Context, limit int) (map[string]cor
 	}
 
 	history := make(map[string]core.CatalogHistory)
+	workCache := make(map[string]core.WorkItemRecord)
 	for _, job := range jobs {
-		usage := usageFromSummary(job.Summary)
-		provider, model := pricingLookupContext(job, usage)
-		keys := []string{catalogHistoryKey(job.Adapter, provider, model)}
-		if model != "" {
-			keys = append(keys, catalogHistoryKey(job.Adapter, provider, ""))
+		contract := s.canonicalJobUsage(ctx, job, workCache)
+		contributions := catalogUsageContributions(job, contract)
+		keys := make([]string, 0, len(contributions)+2)
+		for _, contribution := range contributions {
+			keys = append(keys, contribution.key)
+		}
+		if len(keys) == 0 {
+			provider, model := pricingLookupContext(job, nil)
+			keys = append(keys, catalogHistoryKey(job.Adapter, provider, model))
+			if model != "" {
+				keys = append(keys, catalogHistoryKey(job.Adapter, provider, ""))
+			}
 		}
 
+		seenKeys := make(map[string]bool)
 		for _, key := range keys {
+			if seenKeys[key] {
+				continue
+			}
+			seenKeys[key] = true
 			hist := history[key]
 			if hist.RecentJobs == 0 {
 				hist.LastJobID = job.JobID
@@ -7480,11 +7750,12 @@ func (s *Service) catalogHistory(ctx context.Context, limit int) (map[string]cor
 			case core.JobStateCancelled:
 				hist.RecentCancelled++
 			}
-			if usage != nil {
-				hist.TotalInputTokens += usage.InputTokens + usage.CachedInputTokens + usage.CacheReadInputTokens + usage.CacheCreationInputTokens
-				hist.TotalOutputTokens += usage.OutputTokens
-			}
 			history[key] = hist
+		}
+		for _, contribution := range contributions {
+			hist := history[contribution.key]
+			addCatalogUsageTotals(&hist, contribution.usage)
+			history[contribution.key] = hist
 		}
 	}
 
@@ -7572,7 +7843,7 @@ func compareTimes(a, b *time.Time) int {
 	}
 }
 
-func historyJobMatches(job core.JobRecord, req HistorySearchRequest) bool {
+func historyJobMatches(job core.JobRecord, contract *jobUsageContract, req HistorySearchRequest) bool {
 	if req.Adapter != "" && job.Adapter != req.Adapter {
 		return false
 	}
@@ -7582,7 +7853,20 @@ func historyJobMatches(job core.JobRecord, req HistorySearchRequest) bool {
 	if req.CWD != "" && job.CWD != req.CWD {
 		return false
 	}
-	if req.Model != "" && !strings.EqualFold(summaryString(job.Summary, "model"), req.Model) {
+	if req.Model != "" {
+		if strings.EqualFold(summaryString(job.Summary, "model"), req.Model) {
+			return true
+		}
+		if contract != nil {
+			if contract.usage != nil && usageMatchesModel(*contract.usage, req.Model) {
+				return true
+			}
+			for _, usage := range contract.usageByModel {
+				if usageMatchesModel(usage, req.Model) {
+					return true
+				}
+			}
+		}
 		return false
 	}
 	return true
@@ -7807,7 +8091,7 @@ func (s *Service) applyUsageHint(ctx context.Context, job *core.JobRecord, paylo
 		}
 	}
 	if usageByModel := modelUsageFromPayload(payload); len(usageByModel) > 0 {
-		job.Summary["usage_by_model"] = modelUsageMaps(usageByModel)
+		job.Summary["usage_by_model"] = modelUsageMaps(mergeModelUsageReports(modelUsageFromSummary(job.Summary), usageByModel))
 	}
 
 	if vendor := costFromPayload(payload); vendor != nil {
@@ -7934,6 +8218,9 @@ func modelUsageFromPayload(payload map[string]any) []core.UsageReport {
 		return nil
 	}
 	sort.Slice(models, func(i, j int) bool {
+		if models[i].Provider != models[j].Provider {
+			return models[i].Provider < models[j].Provider
+		}
 		return models[i].Model < models[j].Model
 	})
 	return models
@@ -7977,9 +8264,54 @@ func modelUsageFromSummary(summary map[string]any) []core.UsageReport {
 		return nil
 	}
 	sort.Slice(models, func(i, j int) bool {
+		if models[i].Provider != models[j].Provider {
+			return models[i].Provider < models[j].Provider
+		}
 		return models[i].Model < models[j].Model
 	})
 	return models
+}
+
+func mergeModelUsageReports(existing []core.UsageReport, incoming []core.UsageReport) []core.UsageReport {
+	if len(existing) == 0 {
+		return incoming
+	}
+	if len(incoming) == 0 {
+		return existing
+	}
+
+	merged := make(map[string]core.UsageReport, len(existing)+len(incoming))
+	add := func(report core.UsageReport) {
+		if report.TotalTokens == 0 {
+			report.TotalTokens = report.InputTokens + report.OutputTokens + report.CachedInputTokens + report.CacheReadInputTokens + report.CacheCreationInputTokens
+		}
+		key := strings.ToLower(report.Provider + "|" + report.Model)
+		if current, ok := merged[key]; ok {
+			updated := mergeUsageReports(&current, report)
+			updated.CostUSD = max(current.CostUSD, report.CostUSD)
+			merged[key] = *updated
+			return
+		}
+		merged[key] = report
+	}
+	for _, report := range existing {
+		add(report)
+	}
+	for _, report := range incoming {
+		add(report)
+	}
+
+	result := make([]core.UsageReport, 0, len(merged))
+	for _, report := range merged {
+		result = append(result, report)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Provider != result[j].Provider {
+			return result[i].Provider < result[j].Provider
+		}
+		return result[i].Model < result[j].Model
+	})
+	return result
 }
 
 func modelUsageMaps(models []core.UsageReport) []map[string]any {
@@ -8140,7 +8472,7 @@ func pricingLookupContext(job core.JobRecord, usage *core.UsageReport) (string, 
 }
 
 func costMap(cost core.CostEstimate) map[string]any {
-	return map[string]any{
+	result := map[string]any{
 		"currency":                cost.Currency,
 		"input_cost_usd":          cost.InputCostUSD,
 		"output_cost_usd":         cost.OutputCostUSD,
@@ -8152,6 +8484,10 @@ func costMap(cost core.CostEstimate) map[string]any {
 		"source":                  cost.Source,
 		"source_url":              cost.SourceURL,
 	}
+	if cost.ObservedAt != nil {
+		result["observed_at"] = cost.ObservedAt.Format(time.RFC3339Nano)
+	}
+	return result
 }
 
 func summaryCost(summary map[string]any, key string) *core.CostEstimate {
@@ -8173,6 +8509,7 @@ func summaryCost(summary map[string]any, key string) *core.CostEstimate {
 		Estimated:            summaryBool(raw, "estimated"),
 		Source:               summaryString(raw, "source"),
 		SourceURL:            summaryString(raw, "source_url"),
+		ObservedAt:           summaryTime(raw, "observed_at"),
 	}
 	if cost.Currency == "" {
 		cost.Currency = "USD"
@@ -8217,6 +8554,22 @@ func summaryFloat64(summary map[string]any, key string) float64 {
 	}
 }
 
+func summaryTime(summary map[string]any, key string) *time.Time {
+	if summary == nil {
+		return nil
+	}
+	value, _ := summary[key].(string)
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return nil
+	}
+	return &parsed
+}
+
 func summaryBool(summary map[string]any, key string) bool {
 	if summary == nil {
 		return false
@@ -8255,12 +8608,19 @@ func (s *Service) isCancelRequested(ctx context.Context, jobID string) bool {
 	return rec.CancelRequestedAt != nil
 }
 
-func (s *Service) markWorkQueued(ctx context.Context, workID string, job core.JobRecord, session core.SessionRecord) error {
+func (s *Service) markWorkQueued(ctx context.Context, workID string, job *core.JobRecord, session core.SessionRecord) error {
 	work, err := s.store.GetWorkItem(ctx, workID)
 	if err != nil {
 		return err
 	}
+	if job == nil {
+		return fmt.Errorf("%w: job is required", ErrInvalidInput)
+	}
 	now := time.Now().UTC()
+	stampJobUsageAttribution(job, work)
+	if err := s.store.UpdateJob(ctx, *job); err != nil {
+		return err
+	}
 	work.CurrentJobID = job.JobID
 	work.CurrentSessionID = session.SessionID
 	work.ExecutionState = core.WorkExecutionStateClaimed

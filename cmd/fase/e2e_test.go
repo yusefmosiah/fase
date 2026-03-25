@@ -43,16 +43,19 @@ type cliStatusResult struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 		Estimated    bool    `json:"estimated"`
 		Source       string  `json:"source"`
+		ObservedAt   string  `json:"observed_at"`
 	} `json:"cost"`
 	VendorCost *struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 		Estimated    bool    `json:"estimated"`
 		Source       string  `json:"source"`
+		ObservedAt   string  `json:"observed_at"`
 	} `json:"vendor_cost"`
 	EstimatedCost *struct {
 		TotalCostUSD float64 `json:"total_cost_usd"`
 		Estimated    bool    `json:"estimated"`
 		Source       string  `json:"source"`
+		ObservedAt   string  `json:"observed_at"`
 	} `json:"estimated_cost"`
 	UsageByModel []struct {
 		Model        string  `json:"model"`
@@ -61,6 +64,13 @@ type cliStatusResult struct {
 		InputTokens  int64   `json:"input_tokens"`
 		OutputTokens int64   `json:"output_tokens"`
 	} `json:"usage_by_model"`
+	UsageAttribution *struct {
+		Role           string `json:"role"`
+		AttemptEpoch   int    `json:"attempt_epoch"`
+		CurrentAttempt bool   `json:"current_attempt"`
+		ParentWorkID   string `json:"parent_work_id"`
+		WorkerJobID    string `json:"worker_job_id"`
+	} `json:"usage_attribution"`
 }
 
 type cliJobRecord struct {
@@ -132,15 +142,29 @@ type cliCatalogEntry struct {
 }
 
 type cliHistoryMatch struct {
-	Kind      string `json:"kind"`
-	ID        string `json:"id"`
-	WorkID    string `json:"work_id"`
-	SessionID string `json:"session_id"`
-	JobID     string `json:"job_id"`
-	Adapter   string `json:"adapter"`
-	Model     string `json:"model"`
-	Snippet   string `json:"snippet"`
-	Path      string `json:"path"`
+	Kind             string `json:"kind"`
+	ID               string `json:"id"`
+	WorkID           string `json:"work_id"`
+	SessionID        string `json:"session_id"`
+	JobID            string `json:"job_id"`
+	Adapter          string `json:"adapter"`
+	Model            string `json:"model"`
+	Snippet          string `json:"snippet"`
+	Path             string `json:"path"`
+	UsageAttribution *struct {
+		Role           string `json:"role"`
+		AttemptEpoch   int    `json:"attempt_epoch"`
+		CurrentAttempt bool   `json:"current_attempt"`
+		ParentWorkID   string `json:"parent_work_id"`
+		WorkerJobID    string `json:"worker_job_id"`
+	} `json:"usage_attribution"`
+	Usage *struct {
+		Model       string `json:"model"`
+		TotalTokens int64  `json:"total_tokens"`
+	} `json:"usage"`
+	UsageByModel []struct {
+		Model string `json:"model"`
+	} `json:"usage_by_model"`
 }
 
 type cliWorkItem struct {
@@ -354,6 +378,9 @@ func TestStatusReportsUsageAndEstimatedCost(t *testing.T) {
 	if status.EstimatedCost == nil || status.EstimatedCost.TotalCostUSD != status.Cost.TotalCostUSD {
 		t.Fatalf("expected explicit estimated_cost in status, got %+v", status.EstimatedCost)
 	}
+	if status.EstimatedCost.ObservedAt == "" {
+		t.Fatalf("expected estimated_cost observed_at provenance, got %+v", status.EstimatedCost)
+	}
 }
 
 func TestClaudeStatusReportsVendorCost(t *testing.T) {
@@ -383,6 +410,9 @@ func TestClaudeStatusReportsVendorCost(t *testing.T) {
 	}
 	if status.EstimatedCost == nil || status.EstimatedCost.TotalCostUSD <= 0 {
 		t.Fatalf("expected fallback estimated_cost alongside vendor cost, got %+v", status.EstimatedCost)
+	}
+	if status.EstimatedCost.ObservedAt == "" {
+		t.Fatalf("expected estimated_cost observed_at provenance, got %+v", status.EstimatedCost)
 	}
 }
 
@@ -1643,6 +1673,7 @@ func writeFakeCatalogConfig(t *testing.T) string {
 
 func runFase(t *testing.T, binary, configPath string, args ...string) string {
 	t.Helper()
+	ensureServeForCommand(t, binary, configPath, args)
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
 	// Strip any ambient agent token from the developer shell so JSON assertions
@@ -1673,6 +1704,7 @@ func runFaseWithEnv(t *testing.T, binary, configPath, dir string, env []string, 
 
 func runFaseExpectError(t *testing.T, binary, configPath string, args ...string) (string, int) {
 	t.Helper()
+	ensureServeForCommand(t, binary, configPath, args)
 
 	cmd := exec.Command(binary, append([]string{"--config", configPath}, args...)...)
 	cmd.Env = append(os.Environ(),
@@ -1688,6 +1720,53 @@ func runFaseExpectError(t *testing.T, binary, configPath string, args ...string)
 		t.Fatalf("expected exit error for %v: %v\n%s", args, err, output)
 	}
 	return string(output), exitErr.ExitCode()
+}
+
+func ensureServeForCommand(t *testing.T, binary, configPath string, args []string) {
+	t.Helper()
+	if !shouldAutoStartServe(args) {
+		return
+	}
+	stateDir := os.Getenv("FASE_STATE_DIR")
+	if stateDir == "" {
+		return
+	}
+	serveInfoPath := filepath.Join(stateDir, "serve.json")
+	if _, err := os.Stat(serveInfoPath); err == nil {
+		return
+	}
+
+	serveCmd := exec.Command(binary, "--config", configPath, "serve", "--no-ui", "--no-browser")
+	serveCmd.Env = append(os.Environ(),
+		"FASE_CAPABILITY_ENFORCEMENT=audit",
+		"FASE_AGENT_TOKEN=",
+	)
+	var serveLogs bytes.Buffer
+	serveCmd.Stdout = &serveLogs
+	serveCmd.Stderr = &serveLogs
+	if err := serveCmd.Start(); err != nil {
+		t.Fatalf("start serve for %v: %v", args, err)
+	}
+	t.Cleanup(func() {
+		if serveCmd.Process != nil {
+			_ = serveCmd.Process.Kill()
+			_, _ = serveCmd.Process.Wait()
+		}
+	})
+
+	waitForFile(t, serveInfoPath, 10*time.Second, func() string {
+		return serveLogs.String()
+	})
+}
+
+func shouldAutoStartServe(args []string) bool {
+	for _, arg := range args {
+		if strings.HasPrefix(arg, "-") {
+			continue
+		}
+		return arg != "serve" && arg != "__run-job"
+	}
+	return false
 }
 
 func waitForJobState(t *testing.T, binary, configPath, jobID string, allowed map[string]bool) {

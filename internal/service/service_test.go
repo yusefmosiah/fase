@@ -214,6 +214,9 @@ func TestRunStatusEstimatesCostWhenModelPricingKnown(t *testing.T) {
 	if status.EstimatedCost == nil || status.EstimatedCost.TotalCostUSD != status.Cost.TotalCostUSD {
 		t.Fatalf("expected explicit estimated cost, got %+v", status.EstimatedCost)
 	}
+	if status.EstimatedCost.ObservedAt == nil {
+		t.Fatalf("expected estimated cost provenance observed_at, got %+v", status.EstimatedCost)
+	}
 }
 
 func TestClaudeRunStatusUsesVendorCost(t *testing.T) {
@@ -269,6 +272,9 @@ func TestClaudeRunStatusUsesVendorCost(t *testing.T) {
 	}
 	if status.EstimatedCost == nil || status.EstimatedCost.TotalCostUSD <= 0 {
 		t.Fatalf("expected explicit estimated cost alongside vendor cost, got %+v", status.EstimatedCost)
+	}
+	if status.EstimatedCost.ObservedAt == nil {
+		t.Fatalf("expected estimated cost provenance observed_at, got %+v", status.EstimatedCost)
 	}
 }
 
@@ -1197,6 +1203,398 @@ func TestCatalogReflectsRecentModelHistory(t *testing.T) {
 	}
 	if successIdx == -1 || failedIdx == -1 || successIdx > failedIdx {
 		t.Fatalf("expected successful recent model to sort ahead of failing one, got successIdx=%d failedIdx=%d", successIdx, failedIdx)
+	}
+}
+
+func TestCatalogUsageRollsUpPerModelHistory(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	snapshot := core.CatalogSnapshot{
+		SnapshotID: core.GenerateID("snap"),
+		CreatedAt:  time.Now().UTC(),
+		Entries: []core.CatalogEntry{
+			{Adapter: "claude", Provider: "anthropic", Model: "claude-haiku-4-5", Available: true},
+			{Adapter: "claude", Provider: "anthropic", Model: "claude-sonnet-4-6", Available: true},
+			{Adapter: "claude", Provider: "anthropic", Model: "", Available: true},
+		},
+	}
+	if err := svc.store.CreateCatalogSnapshot(ctx, snapshot); err != nil {
+		t.Fatalf("CreateCatalogSnapshot: %v", err)
+	}
+
+	session, job := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "claude",
+		State:   core.JobStateCompleted,
+		CWD:     t.TempDir(),
+		Label:   "catalog usage rollup",
+	})
+	_ = session
+	if err := svc.applyUsageHint(ctx, &job, map[string]any{
+		"provider":                    "anthropic",
+		"model":                       "multi",
+		"input_tokens":                int64(110),
+		"output_tokens":               int64(220),
+		"total_tokens":                int64(703),
+		"cached_input_tokens":         int64(55),
+		"cache_read_input_tokens":     int64(123),
+		"cache_creation_input_tokens": int64(195),
+		"cost_usd":                    1.5,
+		"model_usage": []any{
+			map[string]any{
+				"provider":                    "anthropic",
+				"model":                       "claude-haiku-4-5",
+				"input_tokens":                int64(10),
+				"output_tokens":               int64(20),
+				"total_tokens":                int64(67),
+				"cached_input_tokens":         int64(5),
+				"cache_read_input_tokens":     int64(12),
+				"cache_creation_input_tokens": int64(20),
+				"cost_usd":                    0.5,
+			},
+			map[string]any{
+				"provider":                    "anthropic",
+				"model":                       "claude-sonnet-4-6",
+				"input_tokens":                int64(100),
+				"output_tokens":               int64(200),
+				"total_tokens":                int64(636),
+				"cached_input_tokens":         int64(50),
+				"cache_read_input_tokens":     int64(111),
+				"cache_creation_input_tokens": int64(175),
+				"cost_usd":                    1.0,
+			},
+		},
+	}); err != nil {
+		t.Fatalf("applyUsageHint: %v", err)
+	}
+
+	shown, err := svc.Catalog(ctx)
+	if err != nil {
+		t.Fatalf("Catalog: %v", err)
+	}
+
+	findHistory := func(model string) *core.CatalogHistory {
+		t.Helper()
+		for _, entry := range shown.Snapshot.Entries {
+			if entry.Adapter == "claude" && entry.Provider == "anthropic" && entry.Model == model {
+				return entry.History
+			}
+		}
+		t.Fatalf("missing catalog entry for model %q", model)
+		return nil
+	}
+
+	haiku := findHistory("claude-haiku-4-5")
+	if haiku == nil || haiku.RecentJobs != 1 {
+		t.Fatalf("expected one recent haiku job, got %+v", haiku)
+	}
+	if haiku.TotalInputTokens != 10 || haiku.TotalCachedInputTokens != 5 || haiku.TotalCacheReadInputTokens != 12 || haiku.TotalCacheCreationInputTokens != 20 || haiku.TotalOutputTokens != 20 || haiku.TotalTokens != 67 {
+		t.Fatalf("unexpected haiku usage rollup: %+v", haiku)
+	}
+
+	sonnet := findHistory("claude-sonnet-4-6")
+	if sonnet == nil || sonnet.RecentJobs != 1 {
+		t.Fatalf("expected one recent sonnet job, got %+v", sonnet)
+	}
+	if sonnet.TotalInputTokens != 100 || sonnet.TotalCachedInputTokens != 50 || sonnet.TotalCacheReadInputTokens != 111 || sonnet.TotalCacheCreationInputTokens != 175 || sonnet.TotalOutputTokens != 200 || sonnet.TotalTokens != 636 {
+		t.Fatalf("unexpected sonnet usage rollup: %+v", sonnet)
+	}
+
+	provider := findHistory("")
+	if provider == nil || provider.RecentJobs != 1 {
+		t.Fatalf("expected one recent provider-level job, got %+v", provider)
+	}
+	if provider.TotalInputTokens != 110 || provider.TotalCachedInputTokens != 55 || provider.TotalCacheReadInputTokens != 123 || provider.TotalCacheCreationInputTokens != 195 || provider.TotalOutputTokens != 220 || provider.TotalTokens != 703 {
+		t.Fatalf("unexpected provider usage rollup: %+v", provider)
+	}
+}
+
+func TestStatusUsageAttributionSurvivesRetriesAndVerifierFanout(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	parent, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "usage lineage parent",
+		Objective: "track worker and verifier usage",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork parent: %v", err)
+	}
+
+	_, workerJobAttempt1 := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "codex",
+		WorkID:  parent.WorkID,
+		State:   core.JobStateCreated,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage attempt 1",
+	})
+	workerSession1, _ := svc.store.GetSession(ctx, workerJobAttempt1.SessionID)
+	if err := svc.markWorkQueued(ctx, parent.WorkID, &workerJobAttempt1, workerSession1); err != nil {
+		t.Fatalf("markWorkQueued attempt 1: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &workerJobAttempt1, map[string]any{
+		"provider":      "openai",
+		"model":         "gpt-5-nano",
+		"input_tokens":  int64(100),
+		"output_tokens": int64(25),
+		"total_tokens":  int64(125),
+	}); err != nil {
+		t.Fatalf("applyUsageHint attempt 1: %v", err)
+	}
+
+	parent, err = svc.ResetWork(ctx, WorkResetRequest{
+		WorkID:    parent.WorkID,
+		Reason:    "retry with verifier fanout",
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("ResetWork: %v", err)
+	}
+
+	_, workerJobAttempt2 := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "codex",
+		WorkID:  parent.WorkID,
+		State:   core.JobStateCreated,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage attempt 2",
+	})
+	workerSession2, _ := svc.store.GetSession(ctx, workerJobAttempt2.SessionID)
+	if err := svc.markWorkQueued(ctx, parent.WorkID, &workerJobAttempt2, workerSession2); err != nil {
+		t.Fatalf("markWorkQueued attempt 2: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &workerJobAttempt2, map[string]any{
+		"provider":      "openai",
+		"model":         "gpt-5-nano",
+		"input_tokens":  int64(200),
+		"output_tokens": int64(50),
+		"total_tokens":  int64(250),
+	}); err != nil {
+		t.Fatalf("applyUsageHint attempt 2: %v", err)
+	}
+
+	verifierWork, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:        "usage lineage verifier",
+		Objective:    "verify accepted attempt",
+		Kind:         "attest",
+		ParentWorkID: parent.WorkID,
+		Metadata: map[string]any{
+			"parent_work_id": parent.WorkID,
+			"worker_job_id":  workerJobAttempt2.JobID,
+			"attempt_epoch":  parent.AttemptEpoch,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork verifier: %v", err)
+	}
+
+	_, verifierJob := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "claude",
+		WorkID:  verifierWork.WorkID,
+		State:   core.JobStateCreated,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage verifier attempt 2",
+	})
+	verifierSession, _ := svc.store.GetSession(ctx, verifierJob.SessionID)
+	if err := svc.markWorkQueued(ctx, verifierWork.WorkID, &verifierJob, verifierSession); err != nil {
+		t.Fatalf("markWorkQueued verifier: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &verifierJob, map[string]any{
+		"provider":      "anthropic",
+		"model":         "multi",
+		"input_tokens":  int64(110),
+		"output_tokens": int64(220),
+		"total_tokens":  int64(330),
+		"cost_usd":      1.5,
+		"model_usage": []any{
+			map[string]any{"provider": "anthropic", "model": "claude-haiku-4-5", "input_tokens": int64(10), "output_tokens": int64(20), "total_tokens": int64(30), "cost_usd": 0.5},
+			map[string]any{"provider": "anthropic", "model": "claude-sonnet-4-6", "input_tokens": int64(100), "output_tokens": int64(200), "total_tokens": int64(300), "cost_usd": 1.0},
+		},
+	}); err != nil {
+		t.Fatalf("applyUsageHint verifier: %v", err)
+	}
+
+	attempt1Status, err := svc.Status(ctx, workerJobAttempt1.JobID)
+	if err != nil {
+		t.Fatalf("Status attempt 1: %v", err)
+	}
+	if attempt1Status.UsageAttribution == nil || attempt1Status.UsageAttribution.AttemptEpoch != 1 || attempt1Status.UsageAttribution.CurrentAttempt {
+		t.Fatalf("expected superseded attempt 1 attribution, got %+v", attempt1Status.UsageAttribution)
+	}
+
+	attempt2Status, err := svc.Status(ctx, workerJobAttempt2.JobID)
+	if err != nil {
+		t.Fatalf("Status attempt 2: %v", err)
+	}
+	if attempt2Status.UsageAttribution == nil || attempt2Status.UsageAttribution.Role != "worker" || attempt2Status.UsageAttribution.AttemptEpoch != 2 || !attempt2Status.UsageAttribution.CurrentAttempt {
+		t.Fatalf("expected current worker attribution, got %+v", attempt2Status.UsageAttribution)
+	}
+
+	verifierStatus, err := svc.Status(ctx, verifierJob.JobID)
+	if err != nil {
+		t.Fatalf("Status verifier: %v", err)
+	}
+	if verifierStatus.UsageAttribution == nil || verifierStatus.UsageAttribution.Role != "verifier" || verifierStatus.UsageAttribution.AttemptEpoch != 2 || !verifierStatus.UsageAttribution.CurrentAttempt {
+		t.Fatalf("expected current verifier attribution, got %+v", verifierStatus.UsageAttribution)
+	}
+	if verifierStatus.UsageAttribution.ParentWorkID != parent.WorkID || verifierStatus.UsageAttribution.WorkerJobID != workerJobAttempt2.JobID {
+		t.Fatalf("expected verifier linkage to accepted attempt, got %+v", verifierStatus.UsageAttribution)
+	}
+	if len(verifierStatus.UsageByModel) != 2 || verifierStatus.UsageByModel[0].Model != "claude-haiku-4-5" || verifierStatus.UsageByModel[1].Model != "claude-sonnet-4-6" {
+		t.Fatalf("expected deterministic verifier model usage ordering, got %+v", verifierStatus.UsageByModel)
+	}
+	if verifierStatus.Cost == nil || verifierStatus.Cost.Estimated {
+		t.Fatalf("expected vendor-selected verifier cost, got %+v", verifierStatus.Cost)
+	}
+}
+
+func TestHistoryUsageSearchReturnsCanonicalAttribution(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	parent, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "usage history parent",
+		Objective: "track usage history attribution",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork parent: %v", err)
+	}
+
+	_, workerJobAttempt1 := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "codex",
+		WorkID:  parent.WorkID,
+		State:   core.JobStateCompleted,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage history attempt",
+	})
+	workerSession1, _ := svc.store.GetSession(ctx, workerJobAttempt1.SessionID)
+	if err := svc.markWorkQueued(ctx, parent.WorkID, &workerJobAttempt1, workerSession1); err != nil {
+		t.Fatalf("markWorkQueued attempt 1: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &workerJobAttempt1, map[string]any{
+		"provider":      "openai",
+		"model":         "gpt-5-nano",
+		"input_tokens":  int64(80),
+		"output_tokens": int64(20),
+		"total_tokens":  int64(100),
+	}); err != nil {
+		t.Fatalf("applyUsageHint attempt 1: %v", err)
+	}
+
+	parent, err = svc.ResetWork(ctx, WorkResetRequest{
+		WorkID:    parent.WorkID,
+		Reason:    "retry for usage history",
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("ResetWork: %v", err)
+	}
+
+	_, workerJobAttempt2 := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "codex",
+		WorkID:  parent.WorkID,
+		State:   core.JobStateCompleted,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage history attempt",
+	})
+	workerSession2, _ := svc.store.GetSession(ctx, workerJobAttempt2.SessionID)
+	if err := svc.markWorkQueued(ctx, parent.WorkID, &workerJobAttempt2, workerSession2); err != nil {
+		t.Fatalf("markWorkQueued attempt 2: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &workerJobAttempt2, map[string]any{
+		"provider":      "openai",
+		"model":         "gpt-5-nano",
+		"input_tokens":  int64(160),
+		"output_tokens": int64(40),
+		"total_tokens":  int64(200),
+	}); err != nil {
+		t.Fatalf("applyUsageHint attempt 2: %v", err)
+	}
+
+	verifierWork, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:        "usage history verifier",
+		Objective:    "track verifier usage history",
+		Kind:         "attest",
+		ParentWorkID: parent.WorkID,
+		Metadata: map[string]any{
+			"parent_work_id": parent.WorkID,
+			"worker_job_id":  workerJobAttempt2.JobID,
+			"attempt_epoch":  parent.AttemptEpoch,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateWork verifier: %v", err)
+	}
+
+	_, verifierJob := createTestSessionAndJob(t, svc, core.JobRecord{
+		Adapter: "claude",
+		WorkID:  verifierWork.WorkID,
+		State:   core.JobStateCompleted,
+		CWD:     t.TempDir(),
+		Label:   "usage lineage history attempt",
+	})
+	verifierSession, _ := svc.store.GetSession(ctx, verifierJob.SessionID)
+	if err := svc.markWorkQueued(ctx, verifierWork.WorkID, &verifierJob, verifierSession); err != nil {
+		t.Fatalf("markWorkQueued verifier: %v", err)
+	}
+	if err := svc.applyUsageHint(ctx, &verifierJob, map[string]any{
+		"provider":      "anthropic",
+		"model":         "multi",
+		"input_tokens":  int64(110),
+		"output_tokens": int64(220),
+		"total_tokens":  int64(330),
+		"cost_usd":      1.5,
+		"model_usage": []any{
+			map[string]any{"provider": "anthropic", "model": "claude-haiku-4-5", "input_tokens": int64(10), "output_tokens": int64(20), "total_tokens": int64(30), "cost_usd": 0.5},
+			map[string]any{"provider": "anthropic", "model": "claude-sonnet-4-6", "input_tokens": int64(100), "output_tokens": int64(200), "total_tokens": int64(300), "cost_usd": 1.0},
+		},
+	}); err != nil {
+		t.Fatalf("applyUsageHint verifier: %v", err)
+	}
+
+	result, err := svc.SearchHistory(ctx, HistorySearchRequest{
+		Query: "usage lineage history",
+		Kinds: []string{"job"},
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("SearchHistory all jobs: %v", err)
+	}
+
+	byJobID := make(map[string]core.HistoryMatch, len(result.Matches))
+	for _, match := range result.Matches {
+		byJobID[match.JobID] = match
+	}
+	if match, ok := byJobID[workerJobAttempt1.JobID]; !ok || match.UsageAttribution == nil || match.UsageAttribution.CurrentAttempt {
+		t.Fatalf("expected superseded attempt-1 history attribution, got %+v", match)
+	}
+	if match, ok := byJobID[workerJobAttempt2.JobID]; !ok || match.UsageAttribution == nil || !match.UsageAttribution.CurrentAttempt {
+		t.Fatalf("expected current attempt-2 history attribution, got %+v", match)
+	}
+	verifierMatch, ok := byJobID[verifierJob.JobID]
+	if !ok {
+		t.Fatalf("expected verifier history match in %+v", result.Matches)
+	}
+	if verifierMatch.Usage == nil || verifierMatch.Cost == nil || verifierMatch.UsageAttribution == nil {
+		t.Fatalf("expected canonical usage contract on verifier history match, got %+v", verifierMatch)
+	}
+	if verifierMatch.UsageAttribution.Role != "verifier" || verifierMatch.UsageAttribution.ParentWorkID != parent.WorkID || verifierMatch.UsageAttribution.WorkerJobID != workerJobAttempt2.JobID {
+		t.Fatalf("expected verifier linkage on history match, got %+v", verifierMatch.UsageAttribution)
+	}
+	if len(verifierMatch.UsageByModel) != 2 || verifierMatch.UsageByModel[1].Model != "claude-sonnet-4-6" {
+		t.Fatalf("expected deterministic verifier usage_by_model on history match, got %+v", verifierMatch.UsageByModel)
+	}
+
+	filtered, err := svc.SearchHistory(ctx, HistorySearchRequest{
+		Query: "usage lineage history",
+		Kinds: []string{"job"},
+		Model: "claude-sonnet-4-6",
+		Limit: 10,
+	})
+	if err != nil {
+		t.Fatalf("SearchHistory filtered: %v", err)
+	}
+	if len(filtered.Matches) != 1 || filtered.Matches[0].JobID != verifierJob.JobID {
+		t.Fatalf("expected model filter to match multi-model verifier job, got %+v", filtered.Matches)
 	}
 }
 
@@ -2455,6 +2853,43 @@ func newRepoBackedTestService(t *testing.T) (*Service, string) {
 	}
 	t.Cleanup(func() { _ = svc.Close() })
 	return svc, repoRoot
+}
+
+func createTestSessionAndJob(t *testing.T, svc *Service, job core.JobRecord) (core.SessionRecord, core.JobRecord) {
+	t.Helper()
+	now := time.Now().UTC()
+	if job.JobID == "" {
+		job.JobID = core.GenerateID("job")
+	}
+	if job.SessionID == "" {
+		job.SessionID = core.GenerateID("ses")
+	}
+	if job.CreatedAt.IsZero() {
+		job.CreatedAt = now
+	}
+	if job.UpdatedAt.IsZero() {
+		job.UpdatedAt = now
+	}
+	if job.Summary == nil {
+		job.Summary = map[string]any{}
+	}
+	session := core.SessionRecord{
+		SessionID:     job.SessionID,
+		Label:         "test session",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Status:        "active",
+		OriginAdapter: job.Adapter,
+		OriginJobID:   job.JobID,
+		CWD:           job.CWD,
+		LatestJobID:   job.JobID,
+		Tags:          []string{},
+		Metadata:      map[string]any{},
+	}
+	if err := svc.store.CreateSessionAndJob(context.Background(), session, job); err != nil {
+		t.Fatalf("CreateSessionAndJob: %v", err)
+	}
+	return session, job
 }
 
 func TestSetDocContentNormalizesAuthoritativeRepoPath(t *testing.T) {

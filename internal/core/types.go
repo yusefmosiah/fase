@@ -150,6 +150,14 @@ type CostEstimate struct {
 	ObservedAt           *time.Time `json:"observed_at,omitempty"`
 }
 
+type UsageAttribution struct {
+	Role           string `json:"role,omitempty"`
+	AttemptEpoch   int    `json:"attempt_epoch,omitempty"`
+	CurrentAttempt bool   `json:"current_attempt,omitempty"`
+	ParentWorkID   string `json:"parent_work_id,omitempty"`
+	WorkerJobID    string `json:"worker_job_id,omitempty"`
+}
+
 type CatalogProvenance struct {
 	Source     string    `json:"source"`
 	Command    string    `json:"command,omitempty"`
@@ -178,17 +186,21 @@ type CatalogEntry struct {
 }
 
 type CatalogHistory struct {
-	RecentJobs        int        `json:"recent_jobs,omitempty"`
-	RecentSuccesses   int        `json:"recent_successes,omitempty"`
-	RecentFailures    int        `json:"recent_failures,omitempty"`
-	RecentCancelled   int        `json:"recent_cancelled,omitempty"`
-	LastJobID         string     `json:"last_job_id,omitempty"`
-	LastSessionID     string     `json:"last_session_id,omitempty"`
-	LastUsedAt        *time.Time `json:"last_used_at,omitempty"`
-	LastSucceededAt   *time.Time `json:"last_succeeded_at,omitempty"`
-	LastFailedAt      *time.Time `json:"last_failed_at,omitempty"`
-	TotalInputTokens  int64      `json:"total_input_tokens,omitempty"`
-	TotalOutputTokens int64      `json:"total_output_tokens,omitempty"`
+	RecentJobs                    int        `json:"recent_jobs,omitempty"`
+	RecentSuccesses               int        `json:"recent_successes,omitempty"`
+	RecentFailures                int        `json:"recent_failures,omitempty"`
+	RecentCancelled               int        `json:"recent_cancelled,omitempty"`
+	LastJobID                     string     `json:"last_job_id,omitempty"`
+	LastSessionID                 string     `json:"last_session_id,omitempty"`
+	LastUsedAt                    *time.Time `json:"last_used_at,omitempty"`
+	LastSucceededAt               *time.Time `json:"last_succeeded_at,omitempty"`
+	LastFailedAt                  *time.Time `json:"last_failed_at,omitempty"`
+	TotalInputTokens              int64      `json:"total_input_tokens,omitempty"`
+	TotalOutputTokens             int64      `json:"total_output_tokens,omitempty"`
+	TotalTokens                   int64      `json:"total_tokens,omitempty"`
+	TotalCachedInputTokens        int64      `json:"total_cached_input_tokens,omitempty"`
+	TotalCacheReadInputTokens     int64      `json:"total_cache_read_input_tokens,omitempty"`
+	TotalCacheCreationInputTokens int64      `json:"total_cache_creation_input_tokens,omitempty"`
 }
 
 type CatalogIssue struct {
@@ -267,21 +279,27 @@ type JobRuntimeRecord struct {
 }
 
 type HistoryMatch struct {
-	Kind      string          `json:"kind"`
-	ID        string          `json:"id"`
-	WorkID    string          `json:"work_id,omitempty"`
-	SessionID string          `json:"session_id"`
-	JobID     string          `json:"job_id,omitempty"`
-	Adapter   string          `json:"adapter"`
-	Model     string          `json:"model,omitempty"`
-	CWD       string          `json:"cwd,omitempty"`
-	Timestamp time.Time       `json:"timestamp"`
-	Title     string          `json:"title,omitempty"`
-	Snippet   string          `json:"snippet,omitempty"`
-	Path      string          `json:"path,omitempty"`
-	Score     int             `json:"score,omitempty"`
-	Source    string          `json:"source,omitempty"`
-	Artifact  *ArtifactRecord `json:"artifact,omitempty"`
+	Kind             string            `json:"kind"`
+	ID               string            `json:"id"`
+	WorkID           string            `json:"work_id,omitempty"`
+	SessionID        string            `json:"session_id"`
+	JobID            string            `json:"job_id,omitempty"`
+	Adapter          string            `json:"adapter"`
+	Model            string            `json:"model,omitempty"`
+	CWD              string            `json:"cwd,omitempty"`
+	Timestamp        time.Time         `json:"timestamp"`
+	Title            string            `json:"title,omitempty"`
+	Snippet          string            `json:"snippet,omitempty"`
+	Path             string            `json:"path,omitempty"`
+	Score            int               `json:"score,omitempty"`
+	Source           string            `json:"source,omitempty"`
+	Artifact         *ArtifactRecord   `json:"artifact,omitempty"`
+	Usage            *UsageReport      `json:"usage,omitempty"`
+	UsageByModel     []UsageReport     `json:"usage_by_model,omitempty"`
+	Cost             *CostEstimate     `json:"cost,omitempty"`
+	VendorCost       *CostEstimate     `json:"vendor_cost,omitempty"`
+	EstimatedCost    *CostEstimate     `json:"estimated_cost,omitempty"`
+	UsageAttribution *UsageAttribution `json:"usage_attribution,omitempty"`
 }
 
 type WorkExecutionState string
