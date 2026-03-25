@@ -2215,6 +2215,147 @@ func TestWorkCheckUsesCreateCheckRecordAlias(t *testing.T) {
 	}
 }
 
+func TestWorkShowIncludesCanonicalReviewBundle(t *testing.T) {
+	svc := newTestService(t)
+	ctx := context.Background()
+
+	work, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "review bundle",
+		Objective: "inspect canonical review bundle",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork: %v", err)
+	}
+
+	now := time.Now().UTC()
+	session := core.SessionRecord{
+		SessionID:     "sess_review_bundle",
+		Label:         "review bundle session",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+		Status:        "completed",
+		OriginAdapter: "codex",
+		CWD:           t.TempDir(),
+		Metadata:      map[string]any{},
+	}
+	if err := svc.store.CreateSession(ctx, session); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	job := core.JobRecord{
+		JobID:     core.GenerateID("job"),
+		SessionID: session.SessionID,
+		WorkID:    work.WorkID,
+		Adapter:   "codex",
+		State:     core.JobStateCompleted,
+		CWD:       session.CWD,
+		CreatedAt: now,
+		UpdatedAt: now,
+		Summary:   map[string]any{"message": "implemented review bundle"},
+	}
+	if err := svc.store.CreateJob(ctx, job); err != nil {
+		t.Fatalf("CreateJob: %v", err)
+	}
+
+	check, err := svc.CreateCheckRecord(ctx, CheckRecordCreateRequest{
+		WorkID:       work.WorkID,
+		Result:       "pass",
+		CheckerModel: "claude-sonnet-4-6",
+		WorkerModel:  "glm-5-turbo",
+		Report: core.CheckReport{
+			BuildOK:      true,
+			TestsPassed:  2,
+			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.101s",
+			CheckerNotes: "verified canonical review bundle evidence",
+		},
+		CreatedBy: "test",
+	})
+	if err != nil {
+		t.Fatalf("CreateCheckRecord: %v", err)
+	}
+
+	attestation, _, err := svc.AttestWork(ctx, WorkAttestRequest{
+		WorkID:       work.WorkID,
+		Result:       "passed",
+		Summary:      "review gate resolved",
+		VerifierKind: "attestation",
+		Method:       "automated_review",
+		CreatedBy:    "test",
+	})
+	if err != nil {
+		t.Fatalf("AttestWork: %v", err)
+	}
+
+	if _, _, err := svc.SetDocContent(ctx, work.WorkID, "docs/review-bundle.md", "Review Bundle", "# Review\n", "markdown"); err != nil {
+		t.Fatalf("SetDocContent: %v", err)
+	}
+
+	artifactPath := filepath.Join(t.TempDir(), "review.txt")
+	if err := os.WriteFile(artifactPath, []byte("review artifact"), 0o644); err != nil {
+		t.Fatalf("WriteFile artifact: %v", err)
+	}
+	if err := svc.store.InsertArtifact(ctx, core.ArtifactRecord{
+		ArtifactID: core.GenerateID("art"),
+		JobID:      job.JobID,
+		SessionID:  job.SessionID,
+		Kind:       "review_note",
+		Path:       artifactPath,
+		CreatedAt:  time.Now().UTC(),
+		Metadata:   map[string]any{"work_id": work.WorkID},
+	}); err != nil {
+		t.Fatalf("InsertArtifact: %v", err)
+	}
+
+	show, err := svc.Work(ctx, work.WorkID)
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+	if len(show.CheckRecords) != 1 || show.CheckRecords[0].CheckID != check.CheckID {
+		t.Fatalf("expected check record in work show, got %+v", show.CheckRecords)
+	}
+	if len(show.Attestations) != 1 || show.Attestations[0].AttestationID != attestation.AttestationID {
+		t.Fatalf("expected attestation in work show, got %+v", show.Attestations)
+	}
+	if len(show.Artifacts) == 0 {
+		t.Fatalf("expected artifacts in work show, got %+v", show.Artifacts)
+	}
+	if len(show.Docs) != 1 || show.Docs[0].Path != "docs/review-bundle.md" {
+		t.Fatalf("expected doc in work show, got %+v", show.Docs)
+	}
+}
+
+func TestSupervisorReviewGuidanceKeepsChecksEvidenceOnly(t *testing.T) {
+	prompt := supervisorRolePrompt()
+	if !strings.Contains(prompt, "use work_show to review the canonical evidence bundle") {
+		t.Fatalf("supervisor prompt should direct reviewers to work_show, got:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "call work update <id> --execution-state done (emails automatically)") {
+		t.Fatalf("supervisor prompt still teaches check-pass=>done, got:\n%s", prompt)
+	}
+
+	checkFlow, ok := supervisorDispatchProtocol()["check_flow"].([]string)
+	if !ok {
+		t.Fatalf("check_flow missing or wrong type: %#v", supervisorDispatchProtocol()["check_flow"])
+	}
+	joined := strings.Join(checkFlow, "\n")
+	for _, want := range []string{
+		"Call work_show <work-id> to review the canonical evidence bundle",
+		"Passing checks are evidence only",
+		"Checks never authorize done on their own",
+	} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("check flow missing %q:\n%s", want, joined)
+		}
+	}
+	for _, old := range []string{
+		"2. If result is 'pass': call 'fase work update <work-id> --execution-state done'. This emails automatically with the report.",
+		"Only mark work as done when a check passes.",
+	} {
+		if strings.Contains(joined, old) {
+			t.Fatalf("check flow still contains legacy completion guidance %q:\n%s", old, joined)
+		}
+	}
+}
+
 func TestBuildCheckerBriefingIncludesEvidenceRequirements(t *testing.T) {
 	svc := newTestService(t)
 

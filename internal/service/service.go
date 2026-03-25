@@ -423,6 +423,7 @@ type WorkShowResult struct {
 	Notes        []core.WorkNoteRecord     `json:"notes,omitempty"`
 	Jobs         []core.JobRecord          `json:"jobs,omitempty"`
 	Proposals    []core.WorkProposalRecord `json:"proposals,omitempty"`
+	CheckRecords []core.CheckRecord        `json:"check_records,omitempty"`
 	Attestations []core.AttestationRecord  `json:"attestations,omitempty"`
 	Approvals    []core.ApprovalRecord     `json:"approvals,omitempty"`
 	Promotions   []core.PromotionRecord    `json:"promotions,omitempty"`
@@ -2060,6 +2061,10 @@ func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, err
 		}
 		proposals = append(proposals, proposal)
 	}
+	checkRecords, err := s.store.ListCheckRecords(ctx, workID, 50)
+	if err != nil {
+		return nil, err
+	}
 	attestations, err := s.store.ListAttestationRecords(ctx, "work", workID, 50)
 	if err != nil {
 		return nil, err
@@ -2085,6 +2090,7 @@ func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, err
 		Notes:        notes,
 		Jobs:         jobs,
 		Proposals:    proposals,
+		CheckRecords: checkRecords,
 		Attestations: attestations,
 		Approvals:    approvals,
 		Promotions:   promotions,
@@ -2686,8 +2692,8 @@ func supervisorRolePrompt() string {
 1. NEVER dispatch multiple features in parallel. Complete one feature at a time.
 2. Dispatch a single ready work item to a worker agent (choosing the right adapter and model).
 3. Monitor worker progress. When a worker signals "checking", a checker is auto-dispatched.
-4. When [check:pass] or [check:fail] events arrive, use check_record_show to read the report.
-5. If check result is PASS: call work update <id> --execution-state done (emails automatically). Move to next item.
+4. When [check:pass] or [check:fail] events arrive, use work_show to review the canonical evidence bundle (work state, checks, attestations, artifacts, docs, approvals, promotions).
+5. A passing check is evidence only. NEVER call work update <id> --execution-state done just because a check passed.
 6. If check result is FAIL: count failures with check_record_list. If < 3: use session_send to send feedback to original worker; do NOT mark done. If >= 3: use send_escalation_email to notify human; mark work failed.
 7. Ensure one code-writing feature at a time per the FASE sequential model.
 
@@ -2710,15 +2716,15 @@ func supervisorDispatchProtocol() map[string]any {
 			"CRITICAL: Do not dispatch the next feature until the current feature passes a check.",
 		},
 		"check_flow": []string{
-			"REQUIRED STEP: Checker produces evidence, supervisor makes decisions.",
+			"REQUIRED STEP: Checks produce evidence, the canonical review/completion path makes decisions.",
 			"When you see [check:pass] or [check:fail] event:",
-			"1. Call check_record_show <check-id> to read the full report (it tells you the result, test counts, and notes).",
-			"2. If result is 'pass': call 'fase work update <work-id> --execution-state done'. This emails automatically with the report.",
+			"1. Call work_show <work-id> to review the canonical evidence bundle (work state, checks, attestations, artifacts, docs, approvals, promotions). Use check_record_show only when you need one standalone check report.",
+			"2. If result is 'pass': do NOT call 'fase work update <work-id> --execution-state done'. Passing checks are evidence only; wait for the canonical attestation/review gate to resolve and then follow the resulting approval/promote path if required.",
 			"3. If result is 'fail': call check_record_list <work-id> to count how many checks have failed.",
 			"   - If failure count < 3: call session_send to send failure context back to the worker (they will fix and re-check).",
 			"   - If failure count >= 3: call send_escalation_email to notify the human (spec may need updating).",
-			"4. If you escalated or sent feedback, do NOT mark work as done — wait for next check or human action.",
-			"RULE: Only mark work as done when a check passes.",
+			"4. If you escalated or sent feedback, do NOT mark work as done — wait for the next check, attestation, or human action.",
+			"RULE: Checks never authorize done on their own.",
 		},
 		"communication": []string{
 			"REQUIRED: After each action (dispatch, attest), call the report tool with a structured status update.",

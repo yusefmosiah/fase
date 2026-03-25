@@ -1015,7 +1015,8 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 
 	showCmd := &cobra.Command{
 		Use:   "show <work-id>",
-		Short: "Show one work item and its related state",
+		Short: "Show the canonical review bundle for a work item",
+		Long:  "Show the canonical review bundle for a work item, including state, checks, attestations, artifacts, docs, approvals, and promotions.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			c := connectOrDie()
@@ -1043,6 +1044,9 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				if len(result.Proposals) > showOpts.limit {
 					result.Proposals = result.Proposals[:showOpts.limit]
 				}
+				if len(result.CheckRecords) > showOpts.limit {
+					result.CheckRecords = result.CheckRecords[:showOpts.limit]
+				}
 				if len(result.Attestations) > showOpts.limit {
 					result.Attestations = result.Attestations[:showOpts.limit]
 				}
@@ -1054,6 +1058,9 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 				}
 				if len(result.Artifacts) > showOpts.limit {
 					result.Artifacts = result.Artifacts[:showOpts.limit]
+				}
+				if len(result.Docs) > showOpts.limit {
+					result.Docs = result.Docs[:showOpts.limit]
 				}
 			}
 			return renderWorkShow(cmd, root.jsonOutput, &result)
@@ -1614,7 +1621,8 @@ This guarantees every doc has a corresponding work item.`,
 
 	verifyCmd := &cobra.Command{
 		Use:   "verify <work-id>",
-		Short: "Verify the recorded work graph and artifact chain for a work item",
+		Short: "Audit the recorded work graph and artifact chain for a work item",
+		Long:  "Audit the recorded work graph and artifact chain for a work item.\n\nThis verify surface is for cryptographic/audit validation only. It does not act as the completion-review bundle and it does not change work state.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -3061,6 +3069,20 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 			}
 		}
 	}
+	if len(result.CheckRecords) > 0 {
+		if err := writef(cmd.OutOrStdout(), "checks: %d\n", len(result.CheckRecords)); err != nil {
+			return err
+		}
+		for _, check := range result.CheckRecords {
+			summary := strings.TrimSpace(check.Report.CheckerNotes)
+			if summary == "" {
+				summary = strings.TrimSpace(check.Report.TestOutput)
+			}
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\t%s\n", check.CreatedAt.Format("2006-01-02 15:04:05"), check.Result, emptyDash(check.CheckerModel), emptyDash(summary)); err != nil {
+				return err
+			}
+		}
+	}
 	if len(result.Attestations) > 0 {
 		if err := writef(cmd.OutOrStdout(), "attestations: %d\n", len(result.Attestations)); err != nil {
 			return err
@@ -3087,6 +3109,26 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 		}
 		for _, promotion := range result.Promotions {
 			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", promotion.PromotedAt.Format("2006-01-02 15:04:05"), promotion.Environment, emptyDash(promotion.TargetRef)); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Artifacts) > 0 {
+		if err := writef(cmd.OutOrStdout(), "artifacts: %d\n", len(result.Artifacts)); err != nil {
+			return err
+		}
+		for _, artifact := range result.Artifacts {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\t%s\n", artifact.ArtifactID, emptyDash(artifact.Kind), artifact.Path); err != nil {
+				return err
+			}
+		}
+	}
+	if len(result.Docs) > 0 {
+		if err := writef(cmd.OutOrStdout(), "docs: %d\n", len(result.Docs)); err != nil {
+			return err
+		}
+		for _, doc := range result.Docs {
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\tv%d\t%s\n", emptyDash(doc.Path), emptyDash(doc.Format), doc.Version, emptyDash(doc.Title)); err != nil {
 				return err
 			}
 		}
@@ -3304,6 +3346,10 @@ func renderStatusProjection(result *service.WorkShowResult) string {
 		attestation := result.Attestations[0]
 		fmt.Fprintf(&b, "\n## Latest Attestation\n\n- Result: %s\n- Verifier: %s\n- Summary: %s\n", attestation.Result, emptyDash(attestation.VerifierKind), emptyDash(attestation.Summary))
 	}
+	if len(result.CheckRecords) > 0 {
+		check := result.CheckRecords[0]
+		fmt.Fprintf(&b, "\n## Latest Check\n\n- Result: %s\n- Checker: %s\n- Notes: %s\n", check.Result, emptyDash(check.CheckerModel), emptyDash(check.Report.CheckerNotes))
+	}
 	if len(result.Approvals) > 0 {
 		approval := result.Approvals[0]
 		fmt.Fprintf(&b, "\n## Latest Approval\n\n- Status: %s\n- Commit: %s\n", approval.Status, emptyDash(approval.ApprovedCommitOID))
@@ -3317,6 +3363,12 @@ func renderStatusProjection(result *service.WorkShowResult) string {
 		for _, child := range result.Children {
 			fmt.Fprintf(&b, "- `%s` %s (%s / %s)\n", child.WorkID, child.Title, child.ExecutionState, child.ApprovalState)
 		}
+	}
+	if len(result.Artifacts) > 0 || len(result.Docs) > 0 {
+		b.WriteString("\n## Evidence Bundle\n\n")
+		fmt.Fprintf(&b, "- Checks: %d\n", len(result.CheckRecords))
+		fmt.Fprintf(&b, "- Artifacts: %d\n", len(result.Artifacts))
+		fmt.Fprintf(&b, "- Docs: %d\n", len(result.Docs))
 	}
 	return b.String()
 }

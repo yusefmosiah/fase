@@ -12,9 +12,11 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/yusefmosiah/fase/internal/channelmeta"
 	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/service"
 )
 
 func TestReportCommandUsesWorkerReportContract(t *testing.T) {
@@ -249,5 +251,76 @@ func TestWorkCheckCommandUsesCanonicalCheckResponse(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "check chk_alias: pass") {
 		t.Fatalf("unexpected stdout: %q", stdout.String())
+	}
+}
+
+func TestRenderWorkShowIncludesCanonicalEvidenceBundle(t *testing.T) {
+	var out bytes.Buffer
+	cmd := NewRootCommand()
+	cmd.SetOut(&out)
+
+	result := &service.WorkShowResult{
+		Work: core.WorkItemRecord{
+			WorkID:         "work_123",
+			Title:          "Bundle review",
+			ExecutionState: core.WorkExecutionStateChecking,
+			ApprovalState:  core.WorkApprovalStatePending,
+		},
+		CheckRecords: []core.CheckRecord{{
+			CheckID:      "chk_123",
+			CheckerModel: "claude",
+			Result:       "pass",
+			Report:       core.CheckReport{CheckerNotes: "verified evidence bundle"},
+			CreatedAt:    time.Unix(1700000000, 0).UTC(),
+		}},
+		Attestations: []core.AttestationRecord{{
+			AttestationID: "att_123",
+			Result:        "passed",
+			VerifierKind:  "deterministic",
+			Summary:       "policy resolved",
+			CreatedAt:     time.Unix(1700000001, 0).UTC(),
+		}},
+		Artifacts: []core.ArtifactRecord{{
+			ArtifactID: "art_123",
+			Kind:       "check_output",
+			Path:       "/tmp/check.txt",
+		}},
+		Docs: []core.DocContentRecord{{
+			DocID:   "doc_123",
+			Path:    "docs/review.md",
+			Format:  "markdown",
+			Version: 2,
+			Title:   "Review Notes",
+		}},
+	}
+
+	if err := renderWorkShow(cmd, false, result); err != nil {
+		t.Fatalf("renderWorkShow: %v", err)
+	}
+
+	rendered := out.String()
+	for _, want := range []string{"checks: 1", "attestations: 1", "artifacts: 1", "docs: 1", "verified evidence bundle", "docs/review.md"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("rendered work show missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestWorkVerifyCommandHasAuditOnlyDescription(t *testing.T) {
+	cmd := NewRootCommand()
+	workCmd, _, err := cmd.Find([]string{"work"})
+	if err != nil {
+		t.Fatalf("find work command: %v", err)
+	}
+	verifyCmd, _, err := workCmd.Find([]string{"verify"})
+	if err != nil {
+		t.Fatalf("find verify command: %v", err)
+	}
+	if !strings.Contains(strings.ToLower(verifyCmd.Short), "audit") {
+		t.Fatalf("verify short help should describe audit semantics, got %q", verifyCmd.Short)
+	}
+	long := strings.ToLower(verifyCmd.Long)
+	if !strings.Contains(long, "does not act as the completion-review bundle") || !strings.Contains(long, "does not change work state") {
+		t.Fatalf("verify long help should disambiguate audit-only semantics, got %q", verifyCmd.Long)
 	}
 }

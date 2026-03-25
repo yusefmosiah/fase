@@ -176,6 +176,14 @@ type cliWorkShowResult struct {
 		ProposalID string `json:"proposal_id"`
 		State      string `json:"state"`
 	} `json:"proposals"`
+	CheckRecords []struct {
+		CheckID string `json:"check_id"`
+		Result  string `json:"result"`
+		Report  struct {
+			TestOutput   string `json:"test_output"`
+			CheckerNotes string `json:"checker_notes"`
+		} `json:"report"`
+	} `json:"check_records"`
 	Attestations []struct {
 		AttestationID string `json:"attestation_id"`
 		Result        string `json:"result"`
@@ -190,6 +198,16 @@ type cliWorkShowResult struct {
 		Environment string `json:"environment"`
 		TargetRef   string `json:"target_ref"`
 	} `json:"promotions"`
+	Artifacts []struct {
+		ArtifactID string `json:"artifact_id"`
+		Kind       string `json:"kind"`
+		Path       string `json:"path"`
+	} `json:"artifacts"`
+	Docs []struct {
+		DocID string `json:"doc_id"`
+		Path  string `json:"path"`
+		Title string `json:"title"`
+	} `json:"docs"`
 }
 
 type cliWorkProposalPayload struct {
@@ -598,8 +616,40 @@ func TestCatalogProbeClassifiesEntries(t *testing.T) {
 func TestWorkLifecycleCommands(t *testing.T) {
 	binary := buildFaseBinary(t)
 	configPath := writeFakeCodexConfig(t)
+	projectDir := t.TempDir()
+	stateDir := os.Getenv("FASE_STATE_DIR")
+	cacheDir := os.Getenv("FASE_CACHE_DIR")
+	configDir := os.Getenv("FASE_CONFIG_DIR")
 
-	rootOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Root plan", "--objective", "Track work runtime implementation", "--kind", "plan")
+	env := append(os.Environ(),
+		"FASE_CAPABILITY_ENFORCEMENT=audit",
+		"FASE_AGENT_TOKEN=",
+		"FASE_CONFIG_DIR="+configDir,
+		"FASE_STATE_DIR="+stateDir,
+		"FASE_CACHE_DIR="+cacheDir,
+	)
+
+	serveCmd := exec.Command(binary, "--config", configPath, "serve", "--no-ui", "--no-browser")
+	serveCmd.Dir = projectDir
+	serveCmd.Env = env
+	var serveLogs bytes.Buffer
+	serveCmd.Stdout = &serveLogs
+	serveCmd.Stderr = &serveLogs
+	if err := serveCmd.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		if serveCmd.Process != nil {
+			_ = serveCmd.Process.Kill()
+			_, _ = serveCmd.Process.Wait()
+		}
+	})
+
+	waitForFile(t, filepath.Join(stateDir, "serve.json"), 10*time.Second, func() string {
+		return serveLogs.String()
+	})
+
+	rootOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "create", "--title", "Root plan", "--objective", "Track work runtime implementation", "--kind", "plan")
 	var rootWork cliWorkItem
 	if err := json.Unmarshal([]byte(rootOutput), &rootWork); err != nil {
 		t.Fatalf("unmarshal root work: %v\n%s", err, rootOutput)
@@ -608,20 +658,20 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatal("expected root work id")
 	}
 
-	childOutput := runFase(t, binary, configPath, "--json", "work", "create", "--title", "Implement child", "--objective", "Attach run lifecycle to work", "--kind", "implement", "--parent", rootWork.WorkID, "--head-commit", "abc123", "--required-attestations", `[{"verifier_kind":"deterministic","method":"test","blocking":true}]`)
+	childOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "create", "--title", "Implement child", "--objective", "Attach run lifecycle to work", "--kind", "implement", "--parent", rootWork.WorkID, "--head-commit", "abc123", "--required-attestations", `[{"verifier_kind":"deterministic","method":"test","blocking":true}]`)
 	var childWork cliWorkItem
 	if err := json.Unmarshal([]byte(childOutput), &childWork); err != nil {
 		t.Fatalf("unmarshal child work: %v\n%s", err, childOutput)
 	}
 
-	runOutput := runFase(t, binary, configPath, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--work", childWork.WorkID, "--prompt", "work lifecycle test")
+	runOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "run", "--adapter", "codex", "--cwd", t.TempDir(), "--work", childWork.WorkID, "--prompt", "work lifecycle test")
 	var runResult cliRunResult
 	if err := json.Unmarshal([]byte(runOutput), &runResult); err != nil {
 		t.Fatalf("unmarshal work run: %v\n%s", err, runOutput)
 	}
-	waitForJobState(t, binary, configPath, runResult.Job.JobID, map[string]bool{"completed": true})
+	waitForJobStateWithEnv(t, binary, configPath, projectDir, env, runResult.Job.JobID, map[string]bool{"completed": true})
 
-	showOutput := runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", childWork.WorkID)
 	var show cliWorkShowResult
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show: %v\n%s", err, showOutput)
@@ -655,7 +705,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected linked job in work show, got %+v", show.Jobs)
 	}
 
-	noteOutput := runFase(t, binary, configPath, "--json", "work", "note-add", childWork.WorkID, "--type", "verifier_feedback", "--text", "Looks good")
+	noteOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "note-add", childWork.WorkID, "--type", "verifier_feedback", "--text", "Looks good")
 	var note cliWorkNote
 	if err := json.Unmarshal([]byte(noteOutput), &note); err != nil {
 		t.Fatalf("unmarshal work note: %v\n%s", err, noteOutput)
@@ -664,7 +714,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("unexpected note body: %+v", note)
 	}
 
-	notesOutput := runFase(t, binary, configPath, "--json", "work", "notes", childWork.WorkID)
+	notesOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "notes", childWork.WorkID)
 	var notes []cliWorkNote
 	if err := json.Unmarshal([]byte(notesOutput), &notes); err != nil {
 		t.Fatalf("unmarshal work notes: %v\n%s", err, notesOutput)
@@ -673,12 +723,55 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected note in work notes, got %+v", notes)
 	}
 
+	docOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "doc-set", childWork.WorkID, "--path", "docs/review-bundle.md", "--title", "Review Bundle", "--body", "# Review\n")
+	var docSet struct {
+		Doc struct {
+			DocID string `json:"doc_id"`
+			Path  string `json:"path"`
+		} `json:"doc"`
+	}
+	if err := json.Unmarshal([]byte(docOutput), &docSet); err != nil {
+		t.Fatalf("unmarshal doc-set output: %v\n%s", err, docOutput)
+	}
+	if docSet.Doc.Path != "docs/review-bundle.md" {
+		t.Fatalf("expected doc path in doc-set response, got %+v", docSet.Doc)
+	}
+
+	checkOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "check", "create", childWork.WorkID, "--result", "pass", "--build-ok", "--tests-passed", "1", "--test-output", "go test ./cmd/fase\nok\tgithub.com/yusefmosiah/fase/cmd/fase\t0.111s", "--notes", "verified canonical review bundle")
+	var checkRecord struct {
+		CheckID string `json:"check_id"`
+		Result  string `json:"result"`
+	}
+	if err := json.Unmarshal([]byte(checkOutput), &checkRecord); err != nil {
+		t.Fatalf("unmarshal check output: %v\n%s", err, checkOutput)
+	}
+	if checkRecord.Result != "pass" {
+		t.Fatalf("expected pass check record, got %+v", checkRecord)
+	}
+
+	showOutput = runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", childWork.WorkID)
+	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
+		t.Fatalf("unmarshal work show after check/doc: %v\n%s", err, showOutput)
+	}
+	if show.Work.ExecutionState != "checking" {
+		t.Fatalf("expected passing check to keep work in checking until attestation resolves, got %+v", show.Work)
+	}
+	if len(show.CheckRecords) == 0 || show.CheckRecords[0].CheckID != checkRecord.CheckID {
+		t.Fatalf("expected check record in canonical work show bundle, got %+v", show.CheckRecords)
+	}
+	if len(show.Docs) == 0 || show.Docs[0].Path != "docs/review-bundle.md" {
+		t.Fatalf("expected docs in canonical work show bundle, got %+v", show.Docs)
+	}
+	if len(show.Artifacts) == 0 {
+		t.Fatalf("expected artifacts in canonical work show bundle after check evidence, got %+v", show.Artifacts)
+	}
+
 	for _, attestationChild := range attestationChildren {
 		nonce, _ := attestationChild.Metadata["attestation_nonce"].(string)
 		if strings.TrimSpace(nonce) == "" {
 			t.Fatalf("expected attestation nonce on child, got %+v", attestationChild)
 		}
-		attestOutput := runFase(t, binary, configPath, "--json", "work", "attest", attestationChild.WorkID, "--nonce", nonce, "--result", "passed", "--summary", "Attestation passed", "--verifier-kind", "deterministic", "--method", "test")
+		attestOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "attest", attestationChild.WorkID, "--nonce", nonce, "--result", "passed", "--summary", "Attestation passed", "--verifier-kind", "deterministic", "--method", "test")
 		var attestation cliAttestationPayload
 		if err := json.Unmarshal([]byte(attestOutput), &attestation); err != nil {
 			t.Fatalf("unmarshal attestation payload: %v\n%s", err, attestOutput)
@@ -687,7 +780,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 			t.Fatalf("expected attestation child to complete cleanly, got %+v", attestation.Work)
 		}
 	}
-	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput = runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", childWork.WorkID)
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show after attestation: %v\n%s", err, showOutput)
 	}
@@ -698,14 +791,14 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected pending approval state after child attestations, got %+v", show.Work)
 	}
 
-	approveOutput := runFase(t, binary, configPath, "--json", "work", "approve", childWork.WorkID, "--message", "Ready to land")
+	approveOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "approve", childWork.WorkID, "--message", "Ready to land")
 	if err := json.Unmarshal([]byte(approveOutput), &childWork); err != nil {
 		t.Fatalf("unmarshal work approval: %v\n%s", err, approveOutput)
 	}
 	if childWork.ApprovalState != "verified" {
 		t.Fatalf("expected verified approval state, got %+v", childWork)
 	}
-	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput = runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", childWork.WorkID)
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show after approval: %v\n%s", err, showOutput)
 	}
@@ -713,7 +806,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected approval ledger entry in work show, got %+v", show.Approvals)
 	}
 
-	promoteOutput := runFase(t, binary, configPath, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/fase/promoted/staging", "--message", "Ship to staging")
+	promoteOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "promote", childWork.WorkID, "--environment", "staging", "--ref", "refs/fase/promoted/staging", "--message", "Ship to staging")
 	var promotion cliPromotionPayload
 	if err := json.Unmarshal([]byte(promoteOutput), &promotion); err != nil {
 		t.Fatalf("unmarshal work promotion: %v\n%s", err, promoteOutput)
@@ -721,7 +814,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if promotion.Promotion.Environment != "staging" || promotion.Promotion.TargetRef != "refs/fase/promoted/staging" {
 		t.Fatalf("expected staging promotion payload, got %+v", promotion)
 	}
-	showOutput = runFase(t, binary, configPath, "--json", "work", "show", childWork.WorkID)
+	showOutput = runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", childWork.WorkID)
 	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
 		t.Fatalf("unmarshal work show after promotion: %v\n%s", err, showOutput)
 	}
@@ -729,7 +822,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected promotion record in work show, got %+v", show.Promotions)
 	}
 
-	artifactsOutput := runFase(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	artifactsOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "artifacts", "list", "--work", childWork.WorkID)
 	var artifacts []cliArtifactRecord
 	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
 		t.Fatalf("unmarshal work artifacts: %v\n%s", err, artifactsOutput)
@@ -742,7 +835,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 	if err := os.WriteFile(notePath, []byte("# Attached note\n\nVerifier context.\n"), 0o644); err != nil {
 		t.Fatalf("write attached note: %v", err)
 	}
-	attachOutput := runFase(t, binary, configPath, "--json", "artifacts", "attach", "--work", childWork.WorkID, "--path", notePath, "--kind", "spec_markdown")
+	attachOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "artifacts", "attach", "--work", childWork.WorkID, "--path", notePath, "--kind", "spec_markdown")
 	var attached cliArtifactRecord
 	if err := json.Unmarshal([]byte(attachOutput), &attached); err != nil {
 		t.Fatalf("unmarshal attached artifact: %v\n%s", err, attachOutput)
@@ -751,7 +844,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("unexpected attached artifact payload: %+v", attached)
 	}
 
-	artifactsOutput = runFase(t, binary, configPath, "--json", "artifacts", "list", "--work", childWork.WorkID)
+	artifactsOutput = runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "artifacts", "list", "--work", childWork.WorkID)
 	if err := json.Unmarshal([]byte(artifactsOutput), &artifacts); err != nil {
 		t.Fatalf("unmarshal work artifacts after attach: %v\n%s", err, artifactsOutput)
 	}
@@ -766,7 +859,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected attached artifact in work artifact list, got %+v", artifacts)
 	}
 
-	discoverOutput := runFase(t, binary, configPath, "--json", "work", "discover", childWork.WorkID, "--title", "Verifier follow-up", "--objective", "Add gate work", "--kind", "verify", "--rationale", "Discovered during implementation")
+	discoverOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "discover", childWork.WorkID, "--title", "Verifier follow-up", "--objective", "Add gate work", "--kind", "verify", "--rationale", "Discovered during implementation")
 	var proposal cliWorkProposalPayload
 	if err := json.Unmarshal([]byte(discoverOutput), &proposal); err != nil {
 		t.Fatalf("unmarshal discover proposal: %v\n%s", err, discoverOutput)

@@ -50,11 +50,11 @@ type Server struct {
 // transport, ensuring session isolation and correct provenance tracking.
 // This solves the shared mutable state problem identified in round-5 scrutiny.
 type SessionManager struct {
-	svc         *service.Service
-	mu          sync.RWMutex
-	sessions    map[string]*Server // sessionID -> server
-	supervisorSessionID string       // tracks which session is the supervisor
-	broadcastFn func(string, any)    // global broadcast function for new sessions to inherit
+	svc                 *service.Service
+	mu                  sync.RWMutex
+	sessions            map[string]*Server // sessionID -> server
+	supervisorSessionID string             // tracks which session is the supervisor
+	broadcastFn         func(string, any)  // global broadcast function for new sessions to inherit
 }
 
 // NewSessionManager creates a new session manager backed by the given service.
@@ -489,7 +489,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "work_show",
-		Description: "Show full details for a single work item including updates, notes, and attestations.",
+		Description: "Show the canonical review bundle for a single work item, including state, checks, attestations, artifacts, docs, approvals, and promotions.",
 	}, func(ctx context.Context, _ *mcp.CallToolRequest, input workShowInput) (*mcp.CallToolResult, any, error) {
 		detail, err := svc.Work(ctx, input.WorkID)
 		if err != nil {
