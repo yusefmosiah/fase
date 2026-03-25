@@ -337,6 +337,7 @@ type WorkCreateRequest struct {
 	Acceptance           map[string]any             `json:"acceptance,omitempty"`
 	Metadata             map[string]any             `json:"metadata,omitempty"`
 	HeadCommitOID        string                     `json:"head_commit_oid,omitempty"`
+	CreatedBy            string                     `json:"created_by,omitempty"`
 }
 
 type WorkListRequest struct {
@@ -988,14 +989,18 @@ func (s *Service) persistCheckScreenshots(ctx context.Context, workID string, sr
 // CreateCheckRecordDirect is an acyclic bridge for the native adapter's in-process tool registration.
 // It accepts only core and primitive types so the native adapter can define a matching interface
 // without importing the service package (which would create an import cycle).
-func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport) (core.CheckRecord, error) {
+// The createdBy parameter enables proper provenance tracking for supervisor vs worker calls.
+func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport, createdBy string) (core.CheckRecord, error) {
+	if createdBy == "" {
+		createdBy = "worker"
+	}
 	return s.CreateCheckRecord(ctx, CheckRecordCreateRequest{
 		WorkID:       workID,
 		Result:       result,
 		CheckerModel: checkerModel,
 		WorkerModel:  workerModel,
 		Report:       report,
-		CreatedBy:    "worker",
+		CreatedBy:    createdBy,
 	})
 }
 
@@ -1825,7 +1830,7 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 					WorkID: existing.WorkID,
 					Title:  existing.Title,
 					State:  string(existing.ExecutionState),
-					Actor:  ActorService,
+					Actor:  actorFromCreatedBy(req.CreatedBy),
 					Cause:  CauseWorkCreated,
 					Metadata: map[string]string{
 						"duplicate_suppressed": "true",
@@ -1891,7 +1896,7 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		WorkID: work.WorkID,
 		Title:  work.Title,
 		State:  string(work.ExecutionState),
-		Actor:  ActorService,
+		Actor:  actorFromCreatedBy(req.CreatedBy),
 		Cause:  CauseWorkCreated,
 	})
 	return &work, nil

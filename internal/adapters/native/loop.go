@@ -159,7 +159,12 @@ func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Mes
 		wg.Add(1)
 		go func(idx int, c ToolCall) {
 			defer wg.Done()
-			output, err := s.registry.Execute(ctx, c.Name, c.Arguments)
+			// Inject supervisor context for provenance tracking
+			toolCtx := ctx
+			if s.profile == "supervisor" {
+				toolCtx = context.WithValue(ctx, "supervisor_session", true)
+			}
+			output, err := s.registry.Execute(toolCtx, c.Name, c.Arguments)
 			if err != nil {
 				output = fmt.Sprintf("tool_error: %v", err)
 			}

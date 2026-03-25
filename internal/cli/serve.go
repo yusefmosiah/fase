@@ -277,18 +277,18 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 	// WebSocket hub — shared across all goroutines
 	hub := newWSHub()
 
+	// MCP endpoint — same work graph tools as `fase mcp http`
+	mcpServer := mcpserver.New(svc)
+
 	// Agentic supervisor (ADR-0041) — created before API handlers so
 	// pause/resume endpoints have a reference. Goroutine started below.
 	var sup *agenticSupervisor
 	if auto {
-		sup = newAgenticSupervisor(svc, cwd, hub, supAdapter, supModel)
+		sup = newAgenticSupervisor(svc, cwd, hub, supAdapter, supModel, mcpServer)
 	}
 
 	mux := http.NewServeMux()
 	registerAPIHandlers(mux, svc, cwd, hub, sup)
-
-	// MCP endpoint — same work graph tools as `fase mcp http`
-	mcpServer := mcpserver.New(svc)
 	// Route channel notifications through the WebSocket hub so the MCP proxy
 	// can relay them as notifications/claude/channel to Claude Code.
 	mcpServer.SetBroadcastFunc(hub.broadcast)

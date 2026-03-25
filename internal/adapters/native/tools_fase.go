@@ -17,7 +17,7 @@ import (
 // faseBridge is the acyclic interface for FASE service tools.
 // Using only core and primitive types avoids the service→adapters import cycle.
 type faseBridge interface {
-	CreateCheckRecordDirect(ctx context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport) (core.CheckRecord, error)
+	CreateCheckRecordDirect(ctx context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport, createdBy string) (core.CheckRecord, error)
 	GetCheckRecord(ctx context.Context, checkID string) (core.CheckRecord, error)
 	ListCheckRecords(ctx context.Context, workID string, limit int) ([]core.CheckRecord, error)
 }
@@ -107,7 +107,12 @@ func newCheckRecordCreateTool(svc faseBridge) Tool {
 			if len(in.Videos) > 0 {
 				report.Videos = in.Videos
 			}
-			rec, err := svc.CreateCheckRecordDirect(ctx, in.WorkID, in.Result, in.CheckerModel, in.WorkerModel, report)
+			// Determine provenance: check if this is a supervisor session via profile flag in context
+			createdBy := "worker"
+			if isSupervisor, ok := ctx.Value("supervisor_session").(bool); ok && isSupervisor {
+				createdBy = "supervisor"
+			}
+			rec, err := svc.CreateCheckRecordDirect(ctx, in.WorkID, in.Result, in.CheckerModel, in.WorkerModel, report, createdBy)
 			if err != nil {
 				return "", fmt.Errorf("create check record: %w", err)
 			}

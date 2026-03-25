@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/fase/internal/mcpserver"
 	"github.com/yusefmosiah/fase/internal/service"
 )
 
@@ -19,18 +20,19 @@ import (
 // The LLM has FASE MCP tools and handles all dispatch/attestation logic.
 // The Go code just manages the session lifecycle.
 type agenticSupervisor struct {
-	svc     *service.Service
-	cwd     string
-	hub     *wsHub
-	adapter string
-	model   string
+	svc       *service.Service
+	cwd       string
+	hub       *wsHub
+	adapter   string
+	model     string
+	mcpServer *mcpserver.Server // MCP server for provenance tracking (VAL-SUPERVISOR-003)
 
 	mu     sync.Mutex
 	paused bool
 	hostCh chan string
 }
 
-func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string) *agenticSupervisor {
+func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter, model string, mcpServer *mcpserver.Server) *agenticSupervisor {
 	// Load adapter/model from .fase/supervisor-brief.md if not set via flags.
 	if adapter == "" || model == "" {
 		briefAdapter, briefModel := parseSupervisorBrief(svc.Paths.StateDir)
@@ -45,12 +47,13 @@ func newAgenticSupervisor(svc *service.Service, cwd string, hub *wsHub, adapter,
 		fmt.Fprintf(os.Stderr, "supervisor: adapter=%q model=%q — set supervisor_adapter/supervisor_model in .fase/supervisor-brief.md\n", adapter, model)
 	}
 	return &agenticSupervisor{
-		svc:     svc,
-		cwd:     cwd,
-		hub:     hub,
-		adapter: adapter,
-		model:   model,
-		hostCh:  make(chan string, 16),
+		svc:       svc,
+		cwd:       cwd,
+		hub:       hub,
+		adapter:   adapter,
+		model:     model,
+		mcpServer: mcpServer,
+		hostCh:    make(chan string, 16),
 	}
 }
 
@@ -96,6 +99,13 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	}
 	sessionID := result.Session.SessionID
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
+
+	// Set internal session ID for MCP provenance tracking (VAL-SUPERVISOR-003).
+	// This ensures supervisor-triggered MCP mutations emit ActorSupervisor.
+	if s.mcpServer != nil {
+		s.mcpServer.SetInternalSessionID(sessionID)
+		defer s.mcpServer.ClearInternalSessionID()
+	}
 
 	outcome := s.waitForJob(ctx, ch, result.Job.JobID)
 

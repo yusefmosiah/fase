@@ -1927,7 +1927,7 @@ func TestCheckRecordFlow(t *testing.T) {
 		BuildOK:      true,
 		TestsPassed:  5,
 		CheckerNotes: "via direct bridge",
-	})
+	}, "worker")
 	if err != nil {
 		t.Fatalf("CreateCheckRecordDirect: %v", err)
 	}

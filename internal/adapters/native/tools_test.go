@@ -263,7 +263,7 @@ func TestCollectPlaywrightScreenshots(t *testing.T) {
 // fakeFaseBridge implements faseBridge for testing.
 type fakeFaseBridge struct{}
 
-func (f *fakeFaseBridge) CreateCheckRecordDirect(_ context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport) (core.CheckRecord, error) {
+func (f *fakeFaseBridge) CreateCheckRecordDirect(_ context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport, createdBy string) (core.CheckRecord, error) {
 	return core.CheckRecord{
 		CheckID: "chk_test",
 		WorkID:  workID,

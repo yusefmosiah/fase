@@ -307,6 +307,7 @@ func (a *LiveAdapter) startSession(ctx context.Context, id string, req adapterap
 		resumed:         resumed,
 		manager:         manager,
 		reasoningEffort: effort,
+		profile:         req.Profile,
 	}), nil
 }
 

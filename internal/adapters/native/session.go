@@ -22,6 +22,7 @@ type nativeSessionConfig struct {
 	manager         *coAgentManager
 	reasoningEffort string // "low", "medium", "high", "max"/"xhigh"
 	history         []Message // pre-loaded history for resumed sessions
+	profile         string    // session profile (e.g., "supervisor") for provenance tracking
 }
 
 type nativeSession struct {
@@ -53,6 +54,7 @@ type nativeSession struct {
 	turnSeq     atomic.Int64
 	previousID  string
 	steerBridge sync.WaitGroup
+	profile         string // session profile (e.g., "supervisor") for provenance tracking
 }
 
 func newNativeSession(ctx context.Context, cfg nativeSessionConfig) *nativeSession {
@@ -70,6 +72,7 @@ func newNativeSession(ctx context.Context, cfg nativeSessionConfig) *nativeSessi
 		tools:           cfg.registry.CoreDefinitions(),
 		history:         history,
 		reasoningEffort: cfg.reasoningEffort,
+		profile:         cfg.profile,
 		eventCh:  make(chan adapterapi.Event, 256),
 		steerQ:   make(chan adapterapi.SteerEvent, 64),
 		svc:      cfg.svc,

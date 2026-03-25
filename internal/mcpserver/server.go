@@ -18,14 +18,19 @@ type Server struct {
 	MCP *mcp.Server
 	svc *service.Service
 
-	// mu protects w, broadcastFn, and stdio writes so channel notifications
-	// don't interleave with MCP protocol messages.
+	// mu protects w, broadcastFn, stdio writes, and internalSessionID.
 	mu sync.Mutex
 	w  io.Writer
 
 	// broadcastFn, when set, routes channel events through the WebSocket hub
 	// (serve mode). When nil, events are written to w directly (stdio mode).
 	broadcastFn func(string, any)
+
+	// internalSessionID tracks the active internal session (e.g., supervisor).
+	// When set, MCP tool mutations from this session should use CreatedBy="supervisor"
+	// instead of the default "mcp". This enables proper provenance tracking for
+	// supervisor-triggered MCP mutations (VAL-SUPERVISOR-003).
+	internalSessionID string
 }
 
 // New creates an MCP server backed by the given service.
@@ -42,10 +47,11 @@ func New(svc *service.Service) *Server {
 		},
 	)
 	s := &Server{MCP: mcpServer, svc: svc, w: os.Stdout}
-	// Tool registrations removed — MCP server is channels-only.
-	// Tools remain available via the HTTP API and native adapter.
-	// registerTools(mcpServer, svc)
-	// registerChannelTools(mcpServer, s)
+	// Register MCP tools with provenance tracking (VAL-SUPERVISOR-003).
+	// Tools use CreatedBy() which returns "supervisor" when an internal session
+	// is active (supervisor-triggered) or "mcp" for external MCP callers.
+	registerTools(mcpServer, s)
+	registerChannelTools(mcpServer, s)
 	return s
 }
 
@@ -64,6 +70,39 @@ func (s *Server) SetBroadcastFunc(fn func(string, any)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.broadcastFn = fn
+}
+
+// SetInternalSessionID marks a session as "internal" (e.g., supervisor).
+// When set, MCP tool mutations from this session will use CreatedBy="supervisor"
+// instead of the default "mcp", enabling proper provenance tracking.
+// This implements VAL-SUPERVISOR-003: supervisor-triggered MCP mutations should
+// preserve trustworthy provenance (ActorSupervisor, not ActorMCP).
+func (s *Server) SetInternalSessionID(sessionID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.internalSessionID = sessionID
+}
+
+// ClearInternalSessionID clears the internal session ID.
+// Call this when the internal session (e.g., supervisor) stops.
+func (s *Server) ClearInternalSessionID() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.internalSessionID = ""
+}
+
+// CreatedBy returns the appropriate CreatedBy value for MCP tool mutations.
+// If an internal session is active (e.g., supervisor), returns "supervisor".
+// Otherwise returns "mcp" (external MCP caller).
+// This enables proper provenance tracking: supervisor-triggered mutations
+// show ActorSupervisor, external MCP calls show ActorMCP.
+func (s *Server) CreatedBy() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.internalSessionID != "" {
+		return "supervisor"
+	}
+	return "mcp"
 }
 
 // channelNotification is a JSON-RPC notification for claude/channel.
@@ -245,7 +284,8 @@ type sendEscalationEmailInput struct {
 	Recommendation string `json:"recommendation" jsonschema:"required,supervisor's recommendation for spec change"`
 }
 
-func registerTools(server *mcp.Server, svc *service.Service) {
+func registerTools(server *mcp.Server, mcpSrv *Server) {
+	svc := mcpSrv.svc
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "project_hydrate",
 		Description: "Compile a project-scoped briefing: conventions, graph summary, active work, pending attestations, contract. Returns markdown by default for session injection.",
@@ -314,7 +354,7 @@ func registerTools(server *mcp.Server, svc *service.Service) {
 			WorkID:         input.WorkID,
 			ExecutionState: core.WorkExecutionState(input.ExecutionState),
 			Message:        input.Message,
-			CreatedBy:      "mcp",
+			CreatedBy:      mcpSrv.CreatedBy(),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -333,6 +373,7 @@ func registerTools(server *mcp.Server, svc *service.Service) {
 			Priority:          input.Priority,
 			PreferredAdapters: input.PreferredAdapters,
 			PreferredModels:   input.PreferredModels,
+			CreatedBy:         mcpSrv.CreatedBy(),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -348,7 +389,7 @@ func registerTools(server *mcp.Server, svc *service.Service) {
 			WorkID:    input.WorkID,
 			NoteType:  input.NoteType,
 			Body:      input.Body,
-			CreatedBy: "mcp",
+			CreatedBy: mcpSrv.CreatedBy(),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -374,7 +415,7 @@ func registerTools(server *mcp.Server, svc *service.Service) {
 			Summary:      input.Summary,
 			VerifierKind: verifierKind,
 			Method:       method,
-			CreatedBy:    "mcp",
+			CreatedBy:    mcpSrv.CreatedBy(),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -434,7 +475,7 @@ func registerTools(server *mcp.Server, svc *service.Service) {
 				Videos:       input.Videos,
 				CheckerNotes: input.CheckerNotes,
 			},
-			CreatedBy: "mcp",
+			CreatedBy: mcpSrv.CreatedBy(),
 		})
 		if err != nil {
 			return nil, nil, err
