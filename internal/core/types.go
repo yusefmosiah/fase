@@ -458,15 +458,17 @@ type WorkNoteRecord struct {
 }
 
 type DocContentRecord struct {
-	DocID     string    `json:"doc_id"`
-	WorkID    string    `json:"work_id"`
-	Path      string    `json:"path"`
-	Title     string    `json:"title"`
-	Body      string    `json:"body"`
-	Format    string    `json:"format"`
-	Version   int       `json:"version"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	DocID          string    `json:"doc_id"`
+	WorkID         string    `json:"work_id"`
+	Path           string    `json:"path"`
+	Title          string    `json:"title"`
+	Body           string    `json:"body"`
+	Format         string    `json:"format"`
+	Version        int       `json:"version"`
+	RepoFileExists bool      `json:"repo_file_exists"`
+	MatchesRepo    bool      `json:"matches_repo"`
+	CreatedAt      time.Time `json:"created_at"`
+	UpdatedAt      time.Time `json:"updated_at"`
 }
 
 type WorkProposalRecord struct {

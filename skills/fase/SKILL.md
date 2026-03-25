@@ -102,10 +102,11 @@ Split databases:
 - `.fase/fase-private.db` — private notes, credentials (gitignored, never committed)
 
 Doc-work coupling (IMPORTANT):
-- Every doc MUST have a corresponding work item. Use `work doc-set` to guarantee this.
-- `work doc-set --file <path>` without a work-id auto-creates a work item from the doc
-- `work doc-set <work-id> --file <path>` attaches to an existing work item
-- `work show` returns docs in the response
+- Every tracked doc MUST have a corresponding work item and authoritative repo-relative path. Use `work doc-set` to guarantee this.
+- `work doc-set --file <path>` without a work-id auto-creates a linked work item from the doc import
+- `work doc-set <work-id> --file <path>` refreshes the tracked runtime record for that work item
+- `work doc-set` is an import/bootstrap helper; the repo file at the declared path remains authoritative
+- `work show` returns tracked docs in the response, including repo-path linkage for review
 - The mind-graph UI renders docs in the detail panel
 - Principle: documentation commits before execution commits (ADR-0002)
 

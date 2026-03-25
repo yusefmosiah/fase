@@ -4183,7 +4183,9 @@ func (s *Store) GetDocContentByPath(ctx context.Context, path string) (*core.Doc
 	var createdAt, updatedAt string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT doc_id, work_id, path, title, body, format, version, created_at, updated_at
-		   FROM doc_content WHERE path = ?`, path).
+		   FROM doc_content WHERE path = ?
+		   ORDER BY updated_at DESC
+		   LIMIT 1`, path).
 		Scan(&d.DocID, &d.WorkID, &d.Path, &d.Title, &d.Body, &d.Format, &d.Version, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err

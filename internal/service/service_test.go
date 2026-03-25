@@ -2440,6 +2440,133 @@ func newTestService(t *testing.T) *Service {
 	return svc
 }
 
+func newRepoBackedTestService(t *testing.T) (*Service, string) {
+	t.Helper()
+	repoRoot := t.TempDir()
+	stateDir := filepath.Join(repoRoot, ".fase")
+	configDir := t.TempDir()
+	cacheDir := t.TempDir()
+	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("FASE_CONFIG_DIR", configDir)
+	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	svc, err := Open(context.Background(), "")
+	if err != nil {
+		t.Fatalf("Open returned error: %v", err)
+	}
+	t.Cleanup(func() { _ = svc.Close() })
+	return svc, repoRoot
+}
+
+func TestSetDocContentNormalizesAuthoritativeRepoPath(t *testing.T) {
+	svc, repoRoot := newRepoBackedTestService(t)
+	ctx := context.Background()
+
+	repoFile := filepath.Join(repoRoot, "docs", "review-bundle.md")
+	mustWriteFile(t, repoFile, "# Review\n")
+
+	doc, workID, err := svc.SetDocContent(ctx, "", repoFile, "", "# Review\n", "markdown")
+	if err != nil {
+		t.Fatalf("SetDocContent: %v", err)
+	}
+	if workID == "" {
+		t.Fatal("expected auto-created work id")
+	}
+	if doc.WorkID != workID {
+		t.Fatalf("expected doc work_id %q, got %q", workID, doc.WorkID)
+	}
+	if doc.Path != "docs/review-bundle.md" {
+		t.Fatalf("expected authoritative repo-relative path, got %q", doc.Path)
+	}
+	if !doc.RepoFileExists {
+		t.Fatalf("expected doc to report repo file exists, got %+v", doc)
+	}
+	if !doc.MatchesRepo {
+		t.Fatalf("expected doc body to match repo file, got %+v", doc)
+	}
+
+	show, err := svc.Work(ctx, workID)
+	if err != nil {
+		t.Fatalf("Work: %v", err)
+	}
+	if len(show.Docs) != 1 {
+		t.Fatalf("expected 1 doc in work show, got %+v", show.Docs)
+	}
+	if show.Docs[0].Path != "docs/review-bundle.md" {
+		t.Fatalf("expected work show doc path to be repo-relative, got %+v", show.Docs[0])
+	}
+	if !show.Docs[0].RepoFileExists || !show.Docs[0].MatchesRepo {
+		t.Fatalf("expected work show doc to reflect authoritative repo file, got %+v", show.Docs[0])
+	}
+}
+
+func TestSetDocContentRejectsPathLinkedToDifferentWork(t *testing.T) {
+	svc, repoRoot := newRepoBackedTestService(t)
+	ctx := context.Background()
+
+	first, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "first doc work",
+		Objective: "track first doc",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork first: %v", err)
+	}
+	second, err := svc.CreateWork(ctx, WorkCreateRequest{
+		Title:     "second doc work",
+		Objective: "track second doc",
+	})
+	if err != nil {
+		t.Fatalf("CreateWork second: %v", err)
+	}
+
+	repoFile := filepath.Join(repoRoot, "docs", "shared.md")
+	mustWriteFile(t, repoFile, "# Shared\n")
+
+	if _, _, err := svc.SetDocContent(ctx, first.WorkID, repoFile, "Shared", "# Shared\n", "markdown"); err != nil {
+		t.Fatalf("SetDocContent first: %v", err)
+	}
+	if _, _, err := svc.SetDocContent(ctx, second.WorkID, repoFile, "Shared", "# Shared\n", "markdown"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected ErrInvalidInput for conflicting doc path linkage, got %v", err)
+	}
+}
+
+func TestWorkShowDocsReportMissingAndDriftedRepoFiles(t *testing.T) {
+	svc, repoRoot := newRepoBackedTestService(t)
+	ctx := context.Background()
+
+	doc, workID, err := svc.SetDocContent(ctx, "", "docs/runtime-only.md", "Runtime Only", "# Runtime\n", "markdown")
+	if err != nil {
+		t.Fatalf("SetDocContent: %v", err)
+	}
+	if doc.RepoFileExists || doc.MatchesRepo {
+		t.Fatalf("expected runtime-only doc to start non-authoritative, got %+v", doc)
+	}
+
+	show, err := svc.Work(ctx, workID)
+	if err != nil {
+		t.Fatalf("Work missing repo file: %v", err)
+	}
+	if len(show.Docs) != 1 {
+		t.Fatalf("expected 1 doc, got %+v", show.Docs)
+	}
+	if show.Docs[0].RepoFileExists || show.Docs[0].MatchesRepo {
+		t.Fatalf("expected missing repo file to remain non-authoritative, got %+v", show.Docs[0])
+	}
+
+	repoFile := filepath.Join(repoRoot, "docs", "runtime-only.md")
+	mustWriteFile(t, repoFile, "# Runtime\nchanged\n")
+
+	show, err = svc.Work(ctx, workID)
+	if err != nil {
+		t.Fatalf("Work drifted repo file: %v", err)
+	}
+	if !show.Docs[0].RepoFileExists {
+		t.Fatalf("expected repo file to exist after writing it, got %+v", show.Docs[0])
+	}
+	if show.Docs[0].MatchesRepo {
+		t.Fatalf("expected mismatched repo file to remain non-authoritative, got %+v", show.Docs[0])
+	}
+}
+
 func TestWorkJSONNormalizesDeprecatedExecutionState(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()

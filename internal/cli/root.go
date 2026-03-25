@@ -1418,10 +1418,11 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 
 	docSetCmd := &cobra.Command{
 		Use:   "doc-set [work-id]",
-		Short: "Store doc content, auto-creating a work item if needed",
-		Long: `Associates a document (from file or inline) with a work item.
-If no work-id is given, auto-creates a work item from the doc content.
-This guarantees every doc has a corresponding work item.`,
+		Short: "Import tracked doc content, auto-creating linked work if needed",
+		Long: `Imports document content (from file or inline) into the runtime review bundle.
+The stored record always keeps an authoritative repo-relative path linked to one work item.
+If no work-id is given, fase auto-creates the linked work item from the doc content.
+The repo file at that path remains authoritative; doc-set is an import/bootstrap helper.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkCapability(core.CapWorkCreate); err != nil {
@@ -1457,7 +1458,11 @@ This guarantees every doc has a corresponding work item.`,
 				workID = args[0]
 			}
 
-			data, err := c.doPost("/api/work/"+workID+"/doc-set", map[string]string{
+			endpoint := "/api/work/doc-set"
+			if workID != "" {
+				endpoint = "/api/work/" + workID + "/doc-set"
+			}
+			data, err := c.doPost(endpoint, map[string]string{
 				"path": docPath, "title": docTitle, "body": body, "format": docFormat,
 			})
 			if err != nil {
@@ -1470,6 +1475,7 @@ This guarantees every doc has a corresponding work item.`,
 			var resp struct {
 				Doc struct {
 					DocID string `json:"doc_id"`
+					Path  string `json:"path"`
 				} `json:"doc"`
 				WorkID string `json:"work_id"`
 			}
@@ -1477,14 +1483,14 @@ This guarantees every doc has a corresponding work item.`,
 				return fmt.Errorf("decoding response: %w", err)
 			}
 			if workID == "" {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s) → work item %s (auto-created)\n", resp.Doc.DocID, len(body), docPath, resp.WorkID)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s imported (%d bytes, authoritative path=%s) → work item %s (auto-created)\n", resp.Doc.DocID, len(body), resp.Doc.Path, resp.WorkID)
 			} else {
-				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s stored (%d bytes, path=%s)\n", resp.Doc.DocID, len(body), docPath)
+				_, _ = fmt.Fprintf(cmd.OutOrStdout(), "doc %s imported (%d bytes, authoritative path=%s)\n", resp.Doc.DocID, len(body), resp.Doc.Path)
 			}
 			return nil
 		},
 	}
-	docSetCmd.Flags().String("path", "", "document path (e.g., docs/adr-0014.md)")
+	docSetCmd.Flags().String("path", "", "authoritative repo-relative path (e.g., docs/adr-0014.md)")
 	docSetCmd.Flags().String("title", "", "document title")
 	docSetCmd.Flags().String("file", "", "read body from file")
 	docSetCmd.Flags().String("body", "", "document body (inline)")
@@ -3128,7 +3134,15 @@ func renderWorkShow(cmd *cobra.Command, jsonOutput bool, result *service.WorkSho
 			return err
 		}
 		for _, doc := range result.Docs {
-			if err := writef(cmd.OutOrStdout(), "  %s\t%s\tv%d\t%s\n", emptyDash(doc.Path), emptyDash(doc.Format), doc.Version, emptyDash(doc.Title)); err != nil {
+			repoStatus := "repo-missing"
+			if doc.RepoFileExists {
+				if doc.MatchesRepo {
+					repoStatus = "repo-match"
+				} else {
+					repoStatus = "repo-drift"
+				}
+			}
+			if err := writef(cmd.OutOrStdout(), "  %s\t%s\tv%d\t%s\t[%s]\n", emptyDash(doc.Path), emptyDash(doc.Format), doc.Version, emptyDash(doc.Title), repoStatus); err != nil {
 				return err
 			}
 		}

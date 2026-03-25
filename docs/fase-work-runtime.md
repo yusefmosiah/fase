@@ -12,7 +12,8 @@ primary abstraction above jobs and sessions. Typed edges express structural
 relationships between work items. A three-tier graph mutation model separates
 execution updates from structural proposals from approval-gated changes. Workers
 hydrate from compiled briefings that are deterministic projections of runtime
-state. Documentation is a read-only projection, not a separate source of truth.
+state. Runtime doc records support linkage, indexing, and review, but the repo
+file at the declared path remains authoritative.
 
 The core principle: prompts are compiled views over runtime state, not the
 primary control plane. The briefing JSON passed to every worker is the output
@@ -369,8 +370,9 @@ compilation from work state.
 
 ## 9) Documentation As Deterministic Projection
 
-Documentation is a read-only projection of work state, not a separate writable
-source of truth.
+Tracked documentation is a work-linked runtime record, not an independent
+authoritative store. The authoritative content lives in the repository file at
+the declared repo-relative path.
 
 ### 9.1 Source Inputs
 
@@ -386,17 +388,17 @@ Projections are rendered from durable records:
 
 ### 9.2 DocContentRecord
 
-The runtime stores generated doc content:
+The runtime stores tracked doc linkage plus imported/projected content:
 
 ```
 DocContentRecord
   doc_id     string    -- identity
   work_id    string    -- source work item
-  path       string    -- target filesystem path
+  path       string    -- authoritative repo-relative path
   title      string    -- human-readable label
-  body       string    -- rendered content
+  body       string    -- imported or rendered content for indexing/review
   format     string    -- markdown, json, etc.
-  version    int       -- projection version
+  version    int       -- runtime record version
   created_at time.Time
   updated_at time.Time
 ```
@@ -410,14 +412,20 @@ conceptual shape before the runtime existed. The bridge is:
 - artifacts hold human-readable intermediate material,
 - Markdown docs become deterministic projections of current work state.
 
-The filesystem-doc era was necessary. The work runtime era is the target.
-Generated docs can be regenerated from work state at any time.
+The filesystem-doc era was necessary. The work runtime era keeps durable
+linkage and review metadata, but repo files still carry the authoritative
+content contract. Imported/generated doc bodies can be refreshed from the repo
+or regenerated from work state as needed.
 
 ### 9.4 Doc-Work Coupling
 
-Docs are coupled to work items via the `DocContentRecord.work_id` field.
-When work state changes, projections can be re-rendered. When attestation
-detects doc-code drift, the projection is stale.
+Docs are coupled to work items via the `DocContentRecord.work_id` field, and
+every tracked doc declares a non-empty authoritative repo-relative `path`.
+`work doc-set` is an import/bootstrap helper: it can create or refresh the
+runtime record, but it does not replace the repo file as the source of truth.
+When work state changes, projections can be re-rendered. When verification
+detects repo/runtime drift or a missing repo file at the declared path, the
+runtime record is stale and cannot satisfy docs-related verification on its own.
 
 ADR-0002 (docs-before-execution) establishes:
 - plans are committed docs,

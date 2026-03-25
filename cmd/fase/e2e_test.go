@@ -204,9 +204,11 @@ type cliWorkShowResult struct {
 		Path       string `json:"path"`
 	} `json:"artifacts"`
 	Docs []struct {
-		DocID string `json:"doc_id"`
-		Path  string `json:"path"`
-		Title string `json:"title"`
+		DocID          string `json:"doc_id"`
+		Path           string `json:"path"`
+		Title          string `json:"title"`
+		RepoFileExists bool   `json:"repo_file_exists"`
+		MatchesRepo    bool   `json:"matches_repo"`
 	} `json:"docs"`
 }
 
@@ -962,6 +964,86 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		if item.WorkID == constrainedWork.WorkID {
 			t.Fatalf("did not expect impossible-adapter work in ready list: %+v", ready)
 		}
+	}
+}
+
+func TestWorkDocSetAutoCreatesLinkedWorkWithAuthoritativePath(t *testing.T) {
+	binary := buildFaseBinary(t)
+	configPath := writeFakeCodexConfig(t)
+	projectDir := t.TempDir()
+	stateDir := os.Getenv("FASE_STATE_DIR")
+	cacheDir := os.Getenv("FASE_CACHE_DIR")
+	configDir := os.Getenv("FASE_CONFIG_DIR")
+
+	env := append(os.Environ(),
+		"FASE_CAPABILITY_ENFORCEMENT=audit",
+		"FASE_AGENT_TOKEN=",
+		"FASE_CONFIG_DIR="+configDir,
+		"FASE_STATE_DIR="+stateDir,
+		"FASE_CACHE_DIR="+cacheDir,
+	)
+
+	docPath := filepath.Join(projectDir, "docs", "authoritative.md")
+	if err := os.MkdirAll(filepath.Dir(docPath), 0o755); err != nil {
+		t.Fatalf("mkdir docs: %v", err)
+	}
+	if err := os.WriteFile(docPath, []byte("# Authoritative Doc\n\nHello repo truth.\n"), 0o644); err != nil {
+		t.Fatalf("write authoritative doc: %v", err)
+	}
+
+	serveCmd := exec.Command(binary, "--config", configPath, "serve", "--no-ui", "--no-browser")
+	serveCmd.Dir = projectDir
+	serveCmd.Env = env
+	var serveLogs bytes.Buffer
+	serveCmd.Stdout = &serveLogs
+	serveCmd.Stderr = &serveLogs
+	if err := serveCmd.Start(); err != nil {
+		t.Fatalf("start serve: %v", err)
+	}
+	t.Cleanup(func() {
+		if serveCmd.Process != nil {
+			_ = serveCmd.Process.Kill()
+			_, _ = serveCmd.Process.Wait()
+		}
+	})
+
+	waitForFile(t, filepath.Join(stateDir, "serve.json"), 10*time.Second, func() string {
+		return serveLogs.String()
+	})
+
+	docOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "doc-set", "--file", "docs/authoritative.md")
+	var docSet struct {
+		Doc struct {
+			DocID          string `json:"doc_id"`
+			Path           string `json:"path"`
+			RepoFileExists bool   `json:"repo_file_exists"`
+			MatchesRepo    bool   `json:"matches_repo"`
+		} `json:"doc"`
+		WorkID string `json:"work_id"`
+	}
+	if err := json.Unmarshal([]byte(docOutput), &docSet); err != nil {
+		t.Fatalf("unmarshal doc-set output: %v\n%s", err, docOutput)
+	}
+	if docSet.WorkID == "" {
+		t.Fatalf("expected auto-created work id, got %+v", docSet)
+	}
+	if docSet.Doc.Path != "docs/authoritative.md" {
+		t.Fatalf("expected repo-relative doc path, got %+v", docSet.Doc)
+	}
+	if !docSet.Doc.RepoFileExists || !docSet.Doc.MatchesRepo {
+		t.Fatalf("expected authoritative repo file linkage, got %+v", docSet.Doc)
+	}
+
+	showOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "work", "show", docSet.WorkID)
+	var show cliWorkShowResult
+	if err := json.Unmarshal([]byte(showOutput), &show); err != nil {
+		t.Fatalf("unmarshal work show: %v\n%s", err, showOutput)
+	}
+	if len(show.Docs) != 1 {
+		t.Fatalf("expected one linked doc, got %+v", show.Docs)
+	}
+	if show.Docs[0].Path != "docs/authoritative.md" || !show.Docs[0].RepoFileExists || !show.Docs[0].MatchesRepo {
+		t.Fatalf("expected authoritative repo-relative doc in work show, got %+v", show.Docs[0])
 	}
 }
 

@@ -1028,3 +1028,84 @@ func TestWorkNotes(t *testing.T) {
 		t.Fatalf("expected note_01, got %d notes", len(notes))
 	}
 }
+
+func TestUpsertDocContentAndGetByPath(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	seedWorkItem(t, s, sampleWorkItem("work_doc"))
+
+	rec := core.DocContentRecord{
+		DocID:  "doc_01",
+		WorkID: "work_doc",
+		Path:   "docs/review.md",
+		Title:  "Review",
+		Body:   "# Review\n",
+		Format: "markdown",
+	}
+	if err := s.UpsertDocContent(ctx, rec); err != nil {
+		t.Fatalf("UpsertDocContent: %v", err)
+	}
+
+	docs, err := s.GetDocContent(ctx, "work_doc")
+	if err != nil {
+		t.Fatalf("GetDocContent: %v", err)
+	}
+	if len(docs) != 1 {
+		t.Fatalf("expected 1 doc, got %d", len(docs))
+	}
+	if docs[0].DocID != rec.DocID || docs[0].Path != rec.Path || docs[0].Version != 1 {
+		t.Fatalf("unexpected doc row: %+v", docs[0])
+	}
+
+	byPath, err := s.GetDocContentByPath(ctx, "docs/review.md")
+	if err != nil {
+		t.Fatalf("GetDocContentByPath: %v", err)
+	}
+	if byPath.WorkID != rec.WorkID || byPath.Title != rec.Title {
+		t.Fatalf("unexpected doc by path: %+v", byPath)
+	}
+}
+
+func TestUpsertDocContentIncrementsVersionOnExistingPath(t *testing.T) {
+	s := openTestDB(t)
+	ctx := context.Background()
+	seedWorkItem(t, s, sampleWorkItem("work_doc"))
+
+	first := core.DocContentRecord{
+		DocID:  "doc_01",
+		WorkID: "work_doc",
+		Path:   "docs/review.md",
+		Title:  "Review",
+		Body:   "# Review\n",
+		Format: "markdown",
+	}
+	if err := s.UpsertDocContent(ctx, first); err != nil {
+		t.Fatalf("UpsertDocContent first: %v", err)
+	}
+
+	second := core.DocContentRecord{
+		DocID:  "doc_02",
+		WorkID: "work_doc",
+		Path:   "docs/review.md",
+		Title:  "Updated Review",
+		Body:   "# Review\nupdated\n",
+		Format: "markdown",
+	}
+	if err := s.UpsertDocContent(ctx, second); err != nil {
+		t.Fatalf("UpsertDocContent second: %v", err)
+	}
+
+	byPath, err := s.GetDocContentByPath(ctx, "docs/review.md")
+	if err != nil {
+		t.Fatalf("GetDocContentByPath: %v", err)
+	}
+	if byPath.DocID != first.DocID {
+		t.Fatalf("expected original doc_id to remain stable, got %q", byPath.DocID)
+	}
+	if byPath.Version != 2 {
+		t.Fatalf("expected version 2, got %d", byPath.Version)
+	}
+	if byPath.Title != second.Title || byPath.Body != second.Body {
+		t.Fatalf("expected updated content, got %+v", byPath)
+	}
+}

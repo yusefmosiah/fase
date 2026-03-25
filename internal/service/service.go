@@ -2081,7 +2081,7 @@ func (s *Service) Work(ctx context.Context, workID string) (*WorkShowResult, err
 	if err != nil {
 		return nil, err
 	}
-	docs, _ := s.store.GetDocContent(ctx, workID)
+	docs, _ := s.GetDocContent(ctx, workID)
 
 	return &WorkShowResult{
 		Work:         work,
@@ -3982,6 +3982,10 @@ func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, 
 	if format == "" {
 		format = "markdown"
 	}
+	path, err := s.normalizeDocPath(ctx, path)
+	if err != nil {
+		return nil, "", err
+	}
 
 	// Auto-create work item if none specified
 	createdWork := false
@@ -4028,6 +4032,10 @@ func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, 
 		if _, err := s.store.GetWorkItem(ctx, workID); err != nil {
 			return nil, "", normalizeStoreError("work", workID, err)
 		}
+		existing, err := s.store.GetDocContentByPath(ctx, path)
+		if err == nil && existing != nil && existing.WorkID != workID {
+			return nil, "", fmt.Errorf("%w: doc path %s is already linked to work %s", ErrInvalidInput, path, existing.WorkID)
+		}
 	}
 
 	rec := core.DocContentRecord{
@@ -4042,7 +4050,12 @@ func (s *Service) SetDocContent(ctx context.Context, workID, path, title, body, 
 		return nil, workID, err
 	}
 	_ = createdWork // could return this to caller
-	return &rec, workID, nil
+	if stored, err := s.store.GetDocContentByPath(ctx, path); err == nil && stored != nil {
+		enriched := s.enrichDocRecord(ctx, *stored)
+		return &enriched, workID, nil
+	}
+	enriched := s.enrichDocRecord(ctx, rec)
+	return &enriched, workID, nil
 }
 
 func inferTitleFromMarkdown(body string) string {
@@ -4086,7 +4099,83 @@ func extractFirstParagraph(body string) string {
 }
 
 func (s *Service) GetDocContent(ctx context.Context, workID string) ([]core.DocContentRecord, error) {
-	return s.store.GetDocContent(ctx, workID)
+	docs, err := s.store.GetDocContent(ctx, workID)
+	if err != nil {
+		return nil, err
+	}
+	for i := range docs {
+		docs[i] = s.enrichDocRecord(ctx, docs[i])
+	}
+	return docs, nil
+}
+
+func (s *Service) normalizeDocPath(ctx context.Context, raw string) (string, error) {
+	path := strings.TrimSpace(raw)
+	if path == "" {
+		return "", fmt.Errorf("%w: document path must not be empty", ErrInvalidInput)
+	}
+
+	if filepath.IsAbs(path) {
+		repoRoot := s.docRepoRoot(ctx)
+		if repoRoot == "" {
+			return "", fmt.Errorf("%w: cannot resolve repo-relative path for %s", ErrInvalidInput, path)
+		}
+		rel, err := filepath.Rel(repoRoot, filepath.Clean(path))
+		if err != nil {
+			return "", fmt.Errorf("%w: resolve repo-relative path for %s: %v", ErrInvalidInput, path, err)
+		}
+		path = rel
+	}
+
+	path = filepath.Clean(path)
+	if path == "." || path == "" {
+		return "", fmt.Errorf("%w: document path must not be empty", ErrInvalidInput)
+	}
+	if path == ".." || strings.HasPrefix(path, ".."+string(os.PathSeparator)) {
+		return "", fmt.Errorf("%w: document path %s must stay within the repository", ErrInvalidInput, raw)
+	}
+	return filepath.ToSlash(path), nil
+}
+
+func (s *Service) docRepoRoot(ctx context.Context) string {
+	base := strings.TrimSpace(s.Paths.StateDir)
+	if base != "" {
+		if root, err := gitMainRepoRoot(ctx, base); err == nil && root != "" {
+			return root
+		}
+		if filepath.Base(base) == ".fase" {
+			return filepath.Dir(base)
+		}
+	}
+	if cwd, err := os.Getwd(); err == nil && strings.TrimSpace(cwd) != "" {
+		if root, err := gitMainRepoRoot(ctx, cwd); err == nil && root != "" {
+			return root
+		}
+		return cwd
+	}
+	return ""
+}
+
+func (s *Service) enrichDocRecord(ctx context.Context, rec core.DocContentRecord) core.DocContentRecord {
+	repoRoot := s.docRepoRoot(ctx)
+	if repoRoot == "" {
+		return rec
+	}
+	absolute := filepath.Join(repoRoot, filepath.FromSlash(rec.Path))
+	info, err := os.Stat(absolute)
+	if err != nil || info.IsDir() {
+		rec.RepoFileExists = false
+		rec.MatchesRepo = false
+		return rec
+	}
+	rec.RepoFileExists = true
+	data, err := os.ReadFile(absolute)
+	if err != nil {
+		rec.MatchesRepo = false
+		return rec
+	}
+	rec.MatchesRepo = bytes.Equal(data, []byte(rec.Body))
+	return rec
 }
 
 func (s *Service) DiscoverWork(ctx context.Context, sourceWorkID, title, objective, kind, rationale string) (*core.WorkProposalRecord, error) {

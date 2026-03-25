@@ -811,6 +811,29 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 		writeJSONHTTP(w, 200, result)
 	})
 
+	mux.HandleFunc("/api/work/doc-set", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
+			return
+		}
+		var req struct {
+			Path   string `json:"path"`
+			Title  string `json:"title"`
+			Body   string `json:"body"`
+			Format string `json:"format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
+			return
+		}
+		doc, resolvedWorkID, err := svc.SetDocContent(r.Context(), "", req.Path, req.Title, req.Body, req.Format)
+		if err != nil {
+			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
+			return
+		}
+		writeJSONHTTP(w, 200, map[string]any{"doc": doc, "work_id": resolvedWorkID})
+	})
+
 	// Create work item
 	mux.HandleFunc("/api/work/create", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
