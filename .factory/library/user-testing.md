@@ -215,3 +215,42 @@ Docs-as-verification assertions test documentation integration with the work ver
 7. Verify completion gating by creating work with both code checks and required docs, satisfying one but not the other, and confirming completion remains blocked
 8. Verify proof bundle integration by accessing work detail/review surfaces and confirming linked docs are visible alongside checks and attestations
 9. Keep the entire milestone in a single validator run to ensure deterministic state progression
+
+## Flow Validator Guidance: usage-and-surface-cleanup
+
+### Isolation Rules
+
+Usage-and-surface-cleanup assertions test normalized usage/cost reporting, machine surface alignment (CLI/HTTP/MCP/native), and usage observability across work flows. All assertions share the same work-graph state and runtime surface exposure, so run them in a single serialized validator to ensure consistent state and avoid interference from concurrent job runs or surface mutations.
+
+### Resources and Boundaries
+
+- Use the already-running `fase serve` on port `5380`
+- Do NOT start additional serve instances
+- Use CLI, HTTP/API, and MCP surfaces for comprehensive testing
+- Create test work items with unique milestone-scoped identifiers (e.g., prefix with "usage-surface-test-")
+- Test jobs may incur real token usage if using live LLM providers - prefer fake/mock adapters where possible
+- Clean up test work items and jobs after validation or leave them for synthesis inspection
+
+### Assertions to Test
+
+- **VAL-USAGE-001**: Normalized usage reporting exposes one canonical machine shape. Verify that status surfaces expose one stable normalized usage object with canonical fields, derived totals are consistent, and no-usage cases omit the field rather than guessing.
+- **VAL-USAGE-002**: Multi-model usage aggregation is deterministic. Verify that jobs spanning multiple models expose deterministic aggregate usage plus sorted per-model entries whose totals match the aggregate.
+- **VAL-USAGE-003**: Cost selection is deterministic and provenance-carrying. Verify that vendor-reported cost wins when present, estimated cost appears only when known with explicit labeling, and machine-facing status doesn't ambiguously select between competing cost fields.
+- **VAL-USAGE-004**: Catalog and history rollups derive from canonical job usage. Verify that usage totals in catalog/history surfaces derive from the same normalized per-job usage contract used by status, with explicit inclusion rules and no-usage omission.
+- **VAL-SURFACE-001**: Surviving machine surfaces are thin wrappers or intentionally removed. Verify that CLI JSON and HTTP semantics stay aligned, legacy divergent surfaces are removed or exact aliases, and runtime/catalog/status/work/check/report surfaces don't silently substitute for one another.
+- **VAL-SURFACE-002**: MCP and reporting surfaces expose only the documented simplified contract. Verify that MCP tools and report/notification surfaces expose only the documented minimal contract with no hidden duplicate tools or mismatched envelopes.
+- **VAL-SURFACE-003**: Native tool exposure does not form a divergent control plane. Verify that native adapter tools expose only the documented simplified contract and don't introduce extra authoritative mutation or review paths beyond CLI/HTTP/MCP surfaces.
+- **VAL-CROSS-004**: Usage and cost observability remain attached to the verified work flow. Verify that worker and verifier jobs expose normalized usage/cost data tied back to the validated work item with clear vendor-reported vs estimated distinction.
+- **VAL-CROSS-005**: Usage and cost attribution survive retries and verifier fan-out. Verify that across retries and worker/verifier fan-out, usage remains attributable to specific job IDs and attempts, with final work/report surfaces distinguishing accepted from superseded attempts.
+
+### Testing Approach
+
+1. Create test work items that will spawn jobs with observable usage/cost data
+2. Use CLI commands to check job status and inspect usage reporting format
+3. Use HTTP API to inspect the same jobs and verify CLI/HTTP parity
+4. If MCP is available, test MCP tool exposure and verify contract alignment
+5. Create multi-model jobs if possible to test aggregation logic
+6. Create jobs with vendor-reported cost and jobs with only estimated cost to test cost selection
+7. Test retry/reset scenarios to verify usage attribution across attempts
+8. Verify catalog and history rollups match per-job usage data
+9. Keep the entire milestone in a single validator run to ensure deterministic usage accumulation and surface parity
