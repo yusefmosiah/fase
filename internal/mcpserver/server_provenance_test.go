@@ -1,100 +1,107 @@
 package mcpserver
 
 import (
+	"context"
+	"sync"
 	"testing"
 
 	"github.com/yusefmosiah/fase/internal/service"
 )
 
-// TestMCPServerCreatedByWithoutInternalSession verifies that when no internal
-// session is set (normal external MCP usage), CreatedBy returns "mcp".
+// TestMCPServerCreatedByDefault verifies that when no caller role is set
+// and no context override exists, CreatedBy returns "mcp".
 // This is the baseline provenance behavior for external MCP callers.
-func TestMCPServerCreatedByWithoutInternalSession(t *testing.T) {
+func TestMCPServerCreatedByDefault(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
-	// By default, no internal session should be set
-	createdBy := s.CreatedBy()
+	createdBy := s.CreatedBy(ctx)
 	if createdBy != "mcp" {
-		t.Errorf("CreatedBy() without internal session = %q, want %q", createdBy, "mcp")
+		t.Errorf("CreatedBy() without role = %q, want %q", createdBy, "mcp")
 	}
 }
 
-// TestMCPServerCreatedByWithInternalSession verifies that when an internal
-// session is set (supervisor mode), CreatedBy returns "supervisor".
+// TestMCPServerCreatedByWithCallerRole verifies that when a caller role
+// is set on the server (supervisor mode), CreatedBy returns "supervisor".
 // This implements VAL-SUPERVISOR-003: supervisor-triggered MCP mutations
 // must show ActorSupervisor in emitted events, not ActorMCP.
-func TestMCPServerCreatedByWithInternalSession(t *testing.T) {
+func TestMCPServerCreatedByWithCallerRole(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
-	// Set internal session ID (simulating supervisor starting a session)
-	s.SetInternalSessionID("test-supervisor-session-123")
+	// Set caller role (simulating supervisor starting a session)
+	s.SetCallerRole("supervisor")
 
-	createdBy := s.CreatedBy()
+	createdBy := s.CreatedBy(ctx)
 	if createdBy != "supervisor" {
-		t.Errorf("CreatedBy() with internal session = %q, want %q", createdBy, "supervisor")
+		t.Errorf("CreatedBy() with caller role = %q, want %q", createdBy, "supervisor")
 	}
 }
 
-// TestMCPServerCreatedByAfterClear verifies that clearing the internal
-// session restores CreatedBy to "mcp".
-func TestMCPServerCreatedByAfterClear(t *testing.T) {
+// TestMCPServerCreatedByWithContextOverride verifies that context override
+// takes precedence over server caller role.
+func TestMCPServerCreatedByWithContextOverride(t *testing.T) {
 	s := newTestServer()
 
-	// Set and then clear internal session
-	s.SetInternalSessionID("test-session")
-	s.ClearInternalSessionID()
+	// Set server caller role to supervisor
+	s.SetCallerRole("supervisor")
 
-	createdBy := s.CreatedBy()
-	if createdBy != "mcp" {
-		t.Errorf("CreatedBy() after clear = %q, want %q", createdBy, "mcp")
+	// But context has explicit host role
+	ctx := WithCallerRole(context.Background(), "host")
+
+	createdBy := s.CreatedBy(ctx)
+	if createdBy != "host" {
+		t.Errorf("CreatedBy() with context override = %q, want %q", createdBy, "host")
 	}
 }
 
-// TestMCPServerInternalSessionOverwrite verifies that setting a new internal
-// session ID overwrites the previous one (only one supervisor session at a time).
-func TestMCPServerInternalSessionOverwrite(t *testing.T) {
+// TestMCPServerCallerRoleOverwrite verifies that setting a new caller
+// role overwrites the previous one (only one role at a time per server).
+func TestMCPServerCallerRoleOverwrite(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
-	// Set first session
-	s.SetInternalSessionID("session-1")
-	if s.CreatedBy() != "supervisor" {
-		t.Error("First session should result in CreatedBy = supervisor")
+	// Set first role
+	s.SetCallerRole("supervisor")
+	if s.GetCallerRole() != "supervisor" {
+		t.Errorf("callerRole = %q, want %q", s.GetCallerRole(), "supervisor")
 	}
-	if s.internalSessionID != "session-1" {
-		t.Errorf("internalSessionID = %q, want %q", s.internalSessionID, "session-1")
+	if s.CreatedBy(ctx) != "supervisor" {
+		t.Error("First role should result in CreatedBy = supervisor")
 	}
 
-	// Set second session (should overwrite)
-	s.SetInternalSessionID("session-2")
-	if s.CreatedBy() != "supervisor" {
-		t.Error("Second session should still result in CreatedBy = supervisor")
+	// Set second role (should overwrite)
+	s.SetCallerRole("host")
+	if s.GetCallerRole() != "host" {
+		t.Errorf("callerRole after overwrite = %q, want %q", s.GetCallerRole(), "host")
 	}
-	if s.internalSessionID != "session-2" {
-		t.Errorf("internalSessionID after overwrite = %q, want %q", s.internalSessionID, "session-2")
+	if s.CreatedBy(ctx) != "host" {
+		t.Error("Second role should result in CreatedBy = host")
 	}
 }
 
-// TestMCPServerCreatedByThreadSafety verifies that the internal session tracking
+// TestMCPServerCreatedByThreadSafety verifies that the caller role tracking
 // is thread-safe through mutex protection. This test runs concurrent access
 // to detect data races.
 func TestMCPServerCreatedByThreadSafety(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
 	// Run concurrent access to detect data races
 	done := make(chan bool, 3)
 
-	// Goroutine 1: Repeatedly set internal session
+	// Goroutine 1: Repeatedly set caller role
 	go func() {
 		for i := 0; i < 100; i++ {
-			s.SetInternalSessionID("session-a")
+			s.SetCallerRole("supervisor")
 		}
 		done <- true
 	}()
 
-	// Goroutine 2: Repeatedly clear internal session
+	// Goroutine 2: Repeatedly clear caller role (via setting empty)
 	go func() {
 		for i := 0; i < 100; i++ {
-			s.ClearInternalSessionID()
+			s.SetCallerRole("")
 		}
 		done <- true
 	}()
@@ -102,7 +109,7 @@ func TestMCPServerCreatedByThreadSafety(t *testing.T) {
 	// Goroutine 3: Repeatedly read CreatedBy
 	go func() {
 		for i := 0; i < 100; i++ {
-			_ = s.CreatedBy()
+			_ = s.CreatedBy(ctx)
 		}
 		done <- true
 	}()
@@ -120,42 +127,56 @@ func TestMCPServerCreatedByThreadSafety(t *testing.T) {
 // service layer. This ensures end-to-end provenance consistency.
 func TestMCPServerCreatedByMapsToCorrectEventActor(t *testing.T) {
 	tests := []struct {
-		name         string
-		setInternal  bool
-		expectedBy   string
+		name          string
+		setRole       string
+		ctxOverride   string
+		expectedBy    string
 		expectedActor service.EventActor
 	}{
 		{
-			name:         "external MCP maps to ActorMCP",
-			setInternal:  false,
-			expectedBy:   "mcp",
+			name:          "external MCP maps to ActorMCP",
+			setRole:       "",
+			ctxOverride:   "",
+			expectedBy:    "mcp",
 			expectedActor: service.ActorMCP,
 		},
 		{
-			name:         "supervisor MCP maps to ActorSupervisor",
-			setInternal:  true,
-			expectedBy:   "supervisor",
+			name:          "supervisor MCP maps to ActorSupervisor",
+			setRole:       "supervisor",
+			ctxOverride:   "",
+			expectedBy:    "supervisor",
 			expectedActor: service.ActorSupervisor,
+		},
+		{
+			name:          "context override host maps to ActorHost",
+			setRole:       "supervisor",
+			ctxOverride:   "host",
+			expectedBy:    "host",
+			expectedActor: service.ActorHost,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			s := newTestServer()
+			ctx := context.Background()
 
-			if tt.setInternal {
-				s.SetInternalSessionID("test-session")
+			if tt.setRole != "" {
+				s.SetCallerRole(tt.setRole)
+			}
+			if tt.ctxOverride != "" {
+				ctx = WithCallerRole(ctx, tt.ctxOverride)
 			}
 
-			createdBy := s.CreatedBy()
+			createdBy := s.CreatedBy(ctx)
 			if createdBy != tt.expectedBy {
 				t.Errorf("CreatedBy() = %q, want %q", createdBy, tt.expectedBy)
 			}
 
 			// Verify the mapping to EventActor
-			actor := actorFromCreatedBy(createdBy)
+			actor := service.ActorFromCreatedBy(createdBy)
 			if actor != tt.expectedActor {
-				t.Errorf("actorFromCreatedBy(%q) = %v, want %v", createdBy, actor, tt.expectedActor)
+				t.Errorf("ActorFromCreatedBy(%q) = %v, want %v", createdBy, actor, tt.expectedActor)
 			}
 		})
 	}
@@ -166,63 +187,52 @@ func TestMCPServerCreatedByMapsToCorrectEventActor(t *testing.T) {
 // the plumbing works end-to-end.
 func TestMCPServerCreatedByUsedInToolHandlers(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
-	// With no internal session, CreatedBy should be "mcp"
-	if s.CreatedBy() != "mcp" {
+	// With no caller role, CreatedBy should be "mcp"
+	if s.CreatedBy(ctx) != "mcp" {
 		t.Error("Default CreatedBy should be 'mcp'")
 	}
 
-	// Set internal session (simulating supervisor)
-	s.SetInternalSessionID("supervisor-session")
+	// Set caller role (simulating supervisor)
+	s.SetCallerRole("supervisor")
 
 	// CreatedBy should now be "supervisor"
-	if s.CreatedBy() != "supervisor" {
-		t.Error("CreatedBy with internal session should be 'supervisor'")
+	if s.CreatedBy(ctx) != "supervisor" {
+		t.Error("CreatedBy with caller role should be 'supervisor'")
 	}
 
 	// The CreatedBy value is used in tool handlers:
-	// - work_update uses mcpSrv.CreatedBy()
-	// - work_note_add uses mcpSrv.CreatedBy()
-	// - work_attest uses mcpSrv.CreatedBy()
-	// - check_record_create uses mcpSrv.CreatedBy()
-	// - work_create uses mcpSrv.CreatedBy()
+	// - work_update uses mcpSrv.CreatedBy(ctx)
+	// - work_note_add uses mcpSrv.CreatedBy(ctx)
+	// - work_attest uses mcpSrv.CreatedBy(ctx)
+	// - check_record_create uses mcpSrv.CreatedBy(ctx)
+	// - work_create uses mcpSrv.CreatedBy(ctx)
 }
 
-// TestMCPServerInternalSessionTracking verifies that the internal session ID
+// TestMCPServerCallerRoleTracking verifies that the caller role
 // is correctly tracked and can be queried.
-func TestMCPServerInternalSessionTracking(t *testing.T) {
+func TestMCPServerCallerRoleTracking(t *testing.T) {
 	s := newTestServer()
 
 	// Initially empty
-	if s.internalSessionID != "" {
-		t.Errorf("initial internalSessionID should be empty, got %q", s.internalSessionID)
+	if s.GetCallerRole() != "" {
+		t.Errorf("initial callerRole should be empty, got %q", s.GetCallerRole())
 	}
 
-	// Set internal session
-	testSessionID := "supervisor-sess-123"
-	s.SetInternalSessionID(testSessionID)
+	// Set caller role
+	testRole := "supervisor"
+	s.SetCallerRole(testRole)
 
 	// Verify it's stored
-	if s.internalSessionID != testSessionID {
-		t.Errorf("internalSessionID = %q, want %q", s.internalSessionID, testSessionID)
+	if s.GetCallerRole() != testRole {
+		t.Errorf("callerRole = %q, want %q", s.GetCallerRole(), testRole)
 	}
 
-	// CreatedBy should reflect internal session
-	if s.CreatedBy() != "supervisor" {
-		t.Error("CreatedBy should return 'supervisor' when internal session is set")
-	}
-
-	// Clear internal session
-	s.ClearInternalSessionID()
-
-	// Verify it's cleared
-	if s.internalSessionID != "" {
-		t.Errorf("internalSessionID after clear should be empty, got %q", s.internalSessionID)
-	}
-
-	// CreatedBy should revert to "mcp"
-	if s.CreatedBy() != "mcp" {
-		t.Errorf("CreatedBy after clear = %q, want %q", s.CreatedBy(), "mcp")
+	// CreatedBy should reflect caller role
+	ctx := context.Background()
+	if s.CreatedBy(ctx) != "supervisor" {
+		t.Error("CreatedBy should return 'supervisor' when caller role is set")
 	}
 }
 
@@ -231,26 +241,27 @@ func TestMCPServerInternalSessionTracking(t *testing.T) {
 // (not ActorMCP) in emitted work events.
 func TestMCPServerProvenanceVALSupervisor003(t *testing.T) {
 	s := newTestServer()
+	ctx := context.Background()
 
-	// Simulate external MCP client (no supervisor session)
-	externalCreatedBy := s.CreatedBy()
+	// Simulate external MCP client (no supervisor role)
+	externalCreatedBy := s.CreatedBy(ctx)
 	if externalCreatedBy != "mcp" {
 		t.Errorf("External MCP CreatedBy = %q, want %q", externalCreatedBy, "mcp")
 	}
-	externalActor := actorFromCreatedBy(externalCreatedBy)
+	externalActor := service.ActorFromCreatedBy(externalCreatedBy)
 	if externalActor != service.ActorMCP {
 		t.Errorf("External MCP Actor = %v, want %v", externalActor, service.ActorMCP)
 	}
 
 	// Simulate supervisor starting a session
-	s.SetInternalSessionID("sess-supervisor-001")
+	s.SetCallerRole("supervisor")
 
 	// Now CreatedBy should be "supervisor"
-	supervisorCreatedBy := s.CreatedBy()
+	supervisorCreatedBy := s.CreatedBy(ctx)
 	if supervisorCreatedBy != "supervisor" {
 		t.Errorf("Supervisor MCP CreatedBy = %q, want %q", supervisorCreatedBy, "supervisor")
 	}
-	supervisorActor := actorFromCreatedBy(supervisorCreatedBy)
+	supervisorActor := service.ActorFromCreatedBy(supervisorCreatedBy)
 	if supervisorActor != service.ActorSupervisor {
 		t.Errorf("Supervisor MCP Actor = %v, want %v", supervisorActor, service.ActorSupervisor)
 	}
@@ -275,22 +286,61 @@ func TestMCPServerProvenanceVALSupervisor003(t *testing.T) {
 	}
 }
 
-// actorFromCreatedBy mirrors the service package function for testing
-func actorFromCreatedBy(createdBy string) service.EventActor {
-	switch createdBy {
-	case "housekeeping":
-		return service.ActorHousekeeping
-	case "reconciler":
-		return service.ActorReconciler
-	case "supervisor":
-		return service.ActorSupervisor
-	case "mcp":
-		return service.ActorMCP
-	case "host":
-		return service.ActorHost
-	case "service":
-		return service.ActorService
-	default:
-		return service.ActorWorker
+// TestMCPServerRequestScopedSafety verifies that concurrent servers
+// with different caller roles don't interfere with each other.
+// This is the key safety property: each server instance has its own
+// caller role, so concurrent external and supervisor traffic are
+// correctly labeled without global state interference.
+func TestMCPServerRequestScopedSafety(t *testing.T) {
+	// Create two separate server instances (simulating concurrent sessions)
+	supervisorServer := newTestServer()
+	externalServer := newTestServer()
+
+	// Only supervisor server has supervisor role
+	supervisorServer.SetCallerRole("supervisor")
+
+	ctx := context.Background()
+
+	// Supervisor server returns supervisor
+	if supervisorServer.CreatedBy(ctx) != "supervisor" {
+		t.Error("Supervisor server should return 'supervisor'")
 	}
+
+	// External server still returns mcp (not affected by supervisor server)
+	if externalServer.CreatedBy(ctx) != "mcp" {
+		t.Error("External server should return 'mcp', not affected by supervisor server")
+	}
+}
+
+// TestMCPServerCreatedByConcurrency verifies thread-safe concurrent access
+// to the caller role. This detects data races when -race flag is used.
+func TestMCPServerCreatedByConcurrency(t *testing.T) {
+	s := newTestServer()
+	ctx := context.Background()
+
+	var wg sync.WaitGroup
+
+	// Writer goroutine: repeatedly set and clear role
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			s.SetCallerRole("supervisor")
+			s.SetCallerRole("")
+		}
+	}()
+
+	// Reader goroutines: repeatedly read CreatedBy
+	for i := 0; i < 3; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 100; j++ {
+				_ = s.CreatedBy(ctx)
+			}
+		}()
+	}
+
+	wg.Wait()
+	// Test passes if no data race is detected
 }

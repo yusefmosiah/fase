@@ -13,12 +13,25 @@ import (
 	"github.com/yusefmosiah/fase/internal/service"
 )
 
+// Context keys for request-scoped provenance tracking.
+// These replace the process-global internalSessionID approach to ensure
+// concurrent external and supervisor MCP traffic is correctly labeled.
+type contextKey string
+
+const (
+	// ContextKeyCallerRole carries the caller role (e.g., "supervisor", "mcp", "host").
+	// This enables request-scoped provenance tracking instead of global state.
+	ContextKeyCallerRole contextKey = "fase.caller.role"
+	// ContextKeySessionID carries the session ID for attribution.
+	ContextKeySessionID contextKey = "fase.session.id"
+)
+
 // Server wraps the MCP server and provides channel notification support.
 type Server struct {
 	MCP *mcp.Server
 	svc *service.Service
 
-	// mu protects w, broadcastFn, stdio writes, and internalSessionID.
+	// mu protects w, broadcastFn, callerRole, and stdio writes.
 	mu sync.Mutex
 	w  io.Writer
 
@@ -26,11 +39,10 @@ type Server struct {
 	// (serve mode). When nil, events are written to w directly (stdio mode).
 	broadcastFn func(string, any)
 
-	// internalSessionID tracks the active internal session (e.g., supervisor).
-	// When set, MCP tool mutations from this session should use CreatedBy="supervisor"
-	// instead of the default "mcp". This enables proper provenance tracking for
-	// supervisor-triggered MCP mutations (VAL-SUPERVISOR-003).
-	internalSessionID string
+	// callerRole tracks the role for this server's session (e.g., "supervisor", "mcp", "host").
+	// When set, all tool mutations from this server instance use this role for provenance.
+	// This is per-server (not global) because each session has its own Server instance.
+	callerRole string
 }
 
 // New creates an MCP server backed by the given service.
@@ -47,9 +59,9 @@ func New(svc *service.Service) *Server {
 		},
 	)
 	s := &Server{MCP: mcpServer, svc: svc, w: os.Stdout}
-	// Register MCP tools with provenance tracking (VAL-SUPERVISOR-003).
-	// Tools use CreatedBy() which returns "supervisor" when an internal session
-	// is active (supervisor-triggered) or "mcp" for external MCP callers.
+	// Register MCP tools with request-scoped provenance tracking.
+	// Tools extract caller context from the request to determine proper Actor
+	// (supervisor vs mcp vs host) for emitted events.
 	registerTools(mcpServer, s)
 	registerChannelTools(mcpServer, s)
 	return s
@@ -72,36 +84,58 @@ func (s *Server) SetBroadcastFunc(fn func(string, any)) {
 	s.broadcastFn = fn
 }
 
-// SetInternalSessionID marks a session as "internal" (e.g., supervisor).
-// When set, MCP tool mutations from this session will use CreatedBy="supervisor"
-// instead of the default "mcp", enabling proper provenance tracking.
-// This implements VAL-SUPERVISOR-003: supervisor-triggered MCP mutations should
-// preserve trustworthy provenance (ActorSupervisor, not ActorMCP).
-func (s *Server) SetInternalSessionID(sessionID string) {
+// SetCallerRole sets the caller role for this server instance.
+// When set, all MCP tool mutations from this server will use this role
+// (e.g., "supervisor", "host", "mcp") for provenance tracking.
+// This is per-server (not global) because each session has its own Server instance.
+// This implements VAL-SUPERVISOR-003: supervisor-triggered MCP mutations
+// preserve trustworthy provenance without interfering with concurrent traffic.
+func (s *Server) SetCallerRole(role string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.internalSessionID = sessionID
+	s.callerRole = role
 }
 
-// ClearInternalSessionID clears the internal session ID.
-// Call this when the internal session (e.g., supervisor) stops.
-func (s *Server) ClearInternalSessionID() {
+// GetCallerRole returns the current caller role for this server instance.
+func (s *Server) GetCallerRole() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.internalSessionID = ""
+	return s.callerRole
 }
 
-// CreatedBy returns the appropriate CreatedBy value for MCP tool mutations.
-// If an internal session is active (e.g., supervisor), returns "supervisor".
-// Otherwise returns "mcp" (external MCP caller).
-// This enables proper provenance tracking: supervisor-triggered mutations
+// WithCallerRole returns a context with the caller role set.
+// Use this to mark a context as coming from a specific caller (supervisor, host, etc.)
+// so that MCP tool mutations emit events with correct Actor provenance.
+// This implements request-scoped provenance tracking (VAL-SUPERVISOR-003).
+func WithCallerRole(ctx context.Context, role string) context.Context {
+	return context.WithValue(ctx, ContextKeyCallerRole, role)
+}
+
+// WithSessionID returns a context with the session ID set for attribution.
+func WithSessionID(ctx context.Context, sessionID string) context.Context {
+	return context.WithValue(ctx, ContextKeySessionID, sessionID)
+}
+
+// CreatedBy extracts the appropriate CreatedBy value from the request context and server.
+// It checks for caller role in the context (set by WithCallerRole), then falls back
+// to the server's callerRole, and finally defaults to "mcp" for external callers.
+// This enables request-scoped provenance tracking: supervisor-triggered mutations
 // show ActorSupervisor, external MCP calls show ActorMCP.
-func (s *Server) CreatedBy() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.internalSessionID != "" {
-		return "supervisor"
+func (s *Server) CreatedBy(ctx context.Context) string {
+	// First, check if the context has an explicit role override
+	if role, ok := ctx.Value(ContextKeyCallerRole).(string); ok && role != "" {
+		return role
 	}
+
+	// Second, check the server's configured caller role
+	s.mu.Lock()
+	role := s.callerRole
+	s.mu.Unlock()
+	if role != "" {
+		return role
+	}
+
+	// Default: external MCP caller
 	return "mcp"
 }
 
@@ -354,7 +388,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 			WorkID:         input.WorkID,
 			ExecutionState: core.WorkExecutionState(input.ExecutionState),
 			Message:        input.Message,
-			CreatedBy:      mcpSrv.CreatedBy(),
+			CreatedBy:      mcpSrv.CreatedBy(ctx),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -373,7 +407,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 			Priority:          input.Priority,
 			PreferredAdapters: input.PreferredAdapters,
 			PreferredModels:   input.PreferredModels,
-			CreatedBy:         mcpSrv.CreatedBy(),
+			CreatedBy:         mcpSrv.CreatedBy(ctx),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -389,7 +423,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 			WorkID:    input.WorkID,
 			NoteType:  input.NoteType,
 			Body:      input.Body,
-			CreatedBy: mcpSrv.CreatedBy(),
+			CreatedBy: mcpSrv.CreatedBy(ctx),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -415,7 +449,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 			Summary:      input.Summary,
 			VerifierKind: verifierKind,
 			Method:       method,
-			CreatedBy:    mcpSrv.CreatedBy(),
+			CreatedBy:    mcpSrv.CreatedBy(ctx),
 		})
 		if err != nil {
 			return nil, nil, err
@@ -475,7 +509,7 @@ func registerTools(server *mcp.Server, mcpSrv *Server) {
 				Videos:       input.Videos,
 				CheckerNotes: input.CheckerNotes,
 			},
-			CreatedBy: mcpSrv.CreatedBy(),
+			CreatedBy: mcpSrv.CreatedBy(ctx),
 		})
 		if err != nil {
 			return nil, nil, err

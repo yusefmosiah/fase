@@ -100,11 +100,11 @@ func (s *agenticSupervisor) run(ctx context.Context) {
 	sessionID := result.Session.SessionID
 	s.log("started", fmt.Sprintf("session=%s job=%s", sessionID, result.Job.JobID))
 
-	// Set internal session ID for MCP provenance tracking (VAL-SUPERVISOR-003).
+	// Set caller role for MCP provenance tracking (VAL-SUPERVISOR-003).
 	// This ensures supervisor-triggered MCP mutations emit ActorSupervisor.
+	// The role is per-server (not global), so concurrent traffic is safe.
 	if s.mcpServer != nil {
-		s.mcpServer.SetInternalSessionID(sessionID)
-		defer s.mcpServer.ClearInternalSessionID()
+		s.mcpServer.SetCallerRole("supervisor")
 	}
 
 	outcome := s.waitForJob(ctx, ch, result.Job.JobID)

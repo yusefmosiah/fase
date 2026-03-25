@@ -179,9 +179,9 @@ func TestActorMCPMapping(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := actorFromCreatedBy(tt.createdBy)
+			got := ActorFromCreatedBy(tt.createdBy)
 			if got != tt.expected {
-				t.Errorf("actorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expected)
+				t.Errorf("ActorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expected)
 			}
 		})
 	}
@@ -400,9 +400,9 @@ func TestTransportBoundaryProvenanceCLI(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := actorFromCreatedBy(tt.createdBy)
+			got := ActorFromCreatedBy(tt.createdBy)
 			if got != tt.expectedAct {
-				t.Errorf("actorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expectedAct)
+				t.Errorf("ActorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expectedAct)
 			}
 
 			// Verify the event would wake supervisor (CLI is actionable)
@@ -434,7 +434,7 @@ func TestTransportBoundaryProvenanceHTTP(t *testing.T) {
 		WorkID:    "work-http-1",
 		State:     "done",
 		PrevState: "ready",
-		Actor:     actorFromCreatedBy(createdBy),
+		Actor:     ActorFromCreatedBy(createdBy),
 		Cause:     CauseWorkerTerminal,
 	}
 
@@ -466,9 +466,9 @@ func TestTransportBoundaryProvenanceMCP(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := actorFromCreatedBy(tt.createdBy)
+			got := ActorFromCreatedBy(tt.createdBy)
 			if got != tt.expectedAct {
-				t.Errorf("actorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expectedAct)
+				t.Errorf("ActorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expectedAct)
 			}
 
 			// Verify MCP events wake supervisor appropriately
@@ -516,13 +516,13 @@ func TestTransportBoundaryProvenanceHost(t *testing.T) {
 // The fix is implemented via:
 // 1. MCP server has SetInternalSessionID() to mark supervisor sessions
 // 2. MCP server's CreatedBy() returns "supervisor" when internal session is active
-// 3. actorFromCreatedBy("supervisor") maps to ActorSupervisor
+// 3. ActorFromCreatedBy("supervisor") maps to ActorSupervisor
 // 4. Native adapter tools check ctx.Value("supervisor_session") for provenance
 // 5. Supervisor agent calls SetInternalSessionID() on startup
 func TestSupervisorMCPProvenanceFix(t *testing.T) {
 	// Test that external MCP calls (without supervisor session) show as ActorMCP
 	externalMCPCreatedBy := "mcp"
-	externalMCPActor := actorFromCreatedBy(externalMCPCreatedBy)
+	externalMCPActor := ActorFromCreatedBy(externalMCPCreatedBy)
 	if externalMCPActor != ActorMCP {
 		t.Errorf("external MCP should map to ActorMCP, got %v", externalMCPActor)
 	}
@@ -530,7 +530,7 @@ func TestSupervisorMCPProvenanceFix(t *testing.T) {
 	// Test that supervisor-triggered calls show as ActorSupervisor
 	// This is the key fix: MCP server detects supervisor session context
 	supervisorCreatedBy := "supervisor"
-	supervisorActor := actorFromCreatedBy(supervisorCreatedBy)
+	supervisorActor := ActorFromCreatedBy(supervisorCreatedBy)
 	if supervisorActor != ActorSupervisor {
 		t.Errorf("supervisor should map to ActorSupervisor, got %v", supervisorActor)
 	}
@@ -610,9 +610,9 @@ func TestTransportBoundaryProvenanceAllPaths(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := actorFromCreatedBy(tt.createdBy)
+			got := ActorFromCreatedBy(tt.createdBy)
 			if got != tt.expected {
-				t.Errorf("actorFromCreatedBy(%q) for %s = %v, want %v",
+				t.Errorf("ActorFromCreatedBy(%q) for %s = %v, want %v",
 					tt.createdBy, tt.path, got, tt.expected)
 			}
 
@@ -704,9 +704,9 @@ func TestActorMappingsComplete(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.createdBy, func(t *testing.T) {
-			got := actorFromCreatedBy(tt.createdBy)
+			got := ActorFromCreatedBy(tt.createdBy)
 			if got != tt.expected {
-				t.Errorf("actorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expected)
+				t.Errorf("ActorFromCreatedBy(%q) = %v, want %v", tt.createdBy, got, tt.expected)
 			}
 		})
 	}

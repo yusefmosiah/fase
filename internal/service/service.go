@@ -862,7 +862,7 @@ func (s *Service) CreateCheckRecord(ctx context.Context, req CheckRecordCreateRe
 		Kind:   WorkEventCheckRecorded,
 		WorkID: req.WorkID,
 		State:  req.Result,
-		Actor:  actorFromCreatedBy(req.CreatedBy),
+		Actor:  ActorFromCreatedBy(req.CreatedBy),
 		Cause:  CauseCheckRecorded,
 		Metadata: map[string]string{
 			"check_id": rec.CheckID,
@@ -1830,7 +1830,7 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 					WorkID: existing.WorkID,
 					Title:  existing.Title,
 					State:  string(existing.ExecutionState),
-					Actor:  actorFromCreatedBy(req.CreatedBy),
+					Actor:  ActorFromCreatedBy(req.CreatedBy),
 					Cause:  CauseWorkCreated,
 					Metadata: map[string]string{
 						"duplicate_suppressed": "true",
@@ -1896,7 +1896,7 @@ func (s *Service) CreateWork(ctx context.Context, req WorkCreateRequest) (*core.
 		WorkID: work.WorkID,
 		Title:  work.Title,
 		State:  string(work.ExecutionState),
-		Actor:  actorFromCreatedBy(req.CreatedBy),
+		Actor:  ActorFromCreatedBy(req.CreatedBy),
 		Cause:  CauseWorkCreated,
 	})
 	return &work, nil
@@ -3152,7 +3152,7 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		State:     string(work.ExecutionState),
 		PrevState: prevState,
 		JobID:     work.CurrentJobID,
-		Actor:     actorFromCreatedBy(req.CreatedBy),
+		Actor:     ActorFromCreatedBy(req.CreatedBy),
 	}
 	if work.ExecutionState.Terminal() {
 		ev.Cause = CauseWorkerTerminal
