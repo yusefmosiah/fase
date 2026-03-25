@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -2128,15 +2129,26 @@ func newInternalRunJobCommand(root *rootOptions) *cobra.Command {
 				loadDotEnv()
 			}
 
+			// Try serve-backed execution first (preferred for multi-writer safety)
 			c, err := connectServe()
-			if err != nil {
-				return fmt.Errorf("__run-job requires fase serve: %w", err)
+			if err == nil {
+				_, err = c.doPost("/api/internal/run-job", map[string]string{
+					"job_id":  opts.jobID,
+					"turn_id": opts.turnID,
+				})
+				return err
 			}
-			_, err = c.doPost("/api/internal/run-job", map[string]string{
-				"job_id":  opts.jobID,
-				"turn_id": opts.turnID,
-			})
-			return err
+
+			// Serve not running — execute directly for tests/direct callers
+			// This provides a safe non-serve fallback that avoids multi-writer
+			// corruption by being the only writer when serve is not present.
+			svc, err := service.Open(context.Background(), root.configPath)
+			if err != nil {
+				return fmt.Errorf("__run-job cannot connect to serve and failed to open service: %w", err)
+			}
+			defer func() { _ = svc.Close() }()
+
+			return svc.ExecuteDetachedJob(context.Background(), opts.jobID, opts.turnID)
 		},
 	}
 
