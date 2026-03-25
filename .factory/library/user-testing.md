@@ -104,3 +104,39 @@ Supervisor wake assertions share the same runtime event stream and work graph, s
 2. Use HTTP API snapshots and event traces to confirm provenance and wake behavior
 3. Verify supervisor turn counts and event logs to prove no self-wake loops or missed actionable wakeups
 4. Keep the entire milestone in a single validator run so event ordering remains deterministic
+
+## Flow Validator Guidance: lifecycle-normalization
+
+### Isolation Rules
+
+Lifecycle normalization assertions test canonical lifecycle vocabulary, deprecated state handling, dispatchability, claim/lease semantics, job-to-work mapping, attestation children, and retry/reset behavior. All assertions share the same work-graph state and should run in a single serialized validator to avoid interference from concurrent state mutations.
+
+### Resources and Boundaries
+
+- Use the already-running `fase serve` on port `5380`
+- Do NOT start additional serve instances
+- Use CLI and HTTP/API for primary testing; browser UI only if explicitly required by an assertion
+- Create test work items with unique milestone-scoped identifiers (e.g., prefix with "lifecycle-norm-test-")
+- Clean up test work items after validation or leave them for synthesis inspection
+
+### Assertions to Test
+
+- **VAL-CONTRACT-001**: Canonical lifecycle vocabulary is singular. Verify that all runtime surfaces (CLI JSON, HTTP, MCP, work detail) expose only one canonical lifecycle vocabulary with one meaning per state.
+- **VAL-CONTRACT-002**: Deprecated lifecycle names are normalized or rejected. Verify that deprecated lifecycle names are either rejected on write or normalized to canonical states on read, and never survive as separate active states in normal runtime output.
+- **VAL-LIFECYCLE-001**: Ready listing returns only genuinely dispatchable work. Verify that ready/dispatchable listing contains only work currently eligible for dispatch under the explicit availability contract.
+- **VAL-LIFECYCLE-002**: Claim, lease, and release semantics match the canonical lifecycle. Verify that claiming, renewing, releasing, and expiry manipulate ownership consistently without creating illegal lifecycle transitions or bypassing review gates.
+- **VAL-LIFECYCLE-003**: Job states map deterministically to canonical work states. Verify that queued, running, completed, failed, cancelled, and retry/reset job outcomes normalize into one deterministic work-state contract with no ambiguous dependency on legacy state names.
+- **VAL-LIFECYCLE-004**: Attestation child creation and parent aggregation are first-class and idempotent. Verify that worker completion creates exactly the required child set once, links it durably in the work graph, and parent aggregation resolves deterministically from child outcomes.
+- **VAL-LIFECYCLE-005**: Retry/reset re-enters the canonical path without stale state leakage. Verify that retrying or resetting work returns it to the single canonical dispatch path without stale leases, obsolete review artifacts, deprecated active states, or stale attempt-linkage fields that make the new run look already reviewed.
+
+### Testing Approach
+
+1. Use CLI commands to create work items with various lifecycle states and attestation requirements
+2. Use HTTP API to inspect work item state, job mappings, attestation records, and attempt epochs
+3. Verify canonical vocabulary by checking CLI JSON output, HTTP responses, and work detail views for absence of deprecated state names
+4. Verify dispatchability by testing ready listings under various dependency, supersession, and review-gate scenarios
+5. Verify claim/lease/release behavior with state and claimant field read-back after each operation
+6. Verify job-to-work mapping by running jobs through various outcomes and checking resulting work states
+7. Verify attestation children by creating parent work with review policy and checking child creation and aggregation
+8. Verify retry/reset by resetting work items and confirming clean re-entry state with no stale linkage
+9. Keep the entire milestone in a single validator run to ensure deterministic state progression

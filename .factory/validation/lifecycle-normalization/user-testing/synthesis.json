@@ -1,0 +1,34 @@
+{
+  "milestone": "lifecycle-normalization",
+  "round": 1,
+  "status": "fail",
+  "assertionsSummary": {
+    "total": 7,
+    "passed": 6,
+    "failed": 1,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-CONTRACT-001",
+    "VAL-LIFECYCLE-001",
+    "VAL-LIFECYCLE-002",
+    "VAL-LIFECYCLE-003",
+    "VAL-LIFECYCLE-004",
+    "VAL-LIFECYCLE-005"
+  ],
+  "failedAssertions": [
+    {
+      "id": "VAL-CONTRACT-002",
+      "reason": "Deprecated state 'awaiting_attestation' appears in runtime output instead of being normalized to canonical 'checking' state. The Canonical() normalization method exists but is not being called consistently on read paths or during JSON serialization."
+    }
+  ],
+  "blockedAssertions": [],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance section for lifecycle-normalization milestone with isolation rules, resources, boundaries, assertions to test, and testing approach.",
+      "source": "setup"
+    }
+  ],
+  "previousRound": null
+}
