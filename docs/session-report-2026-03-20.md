@@ -1,4 +1,4 @@
-# FASE Overnight Session Report — 2026-03-20
+# Cogent Overnight Session Report — 2026-03-20
 
 **Duration**: ~13 hours (06:12 UTC – 19:00 UTC)
 **Mode**: Autonomous host agent with hourly cron checks, supervisor auto-dispatch
@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Built the entire live agent protocol stack from zero to working: 5 live adapters, event-driven agentic supervisor, renamed the project to FASE, ran eval with cheap models, and iterated twice on findings. 111 files changed, +9,406 / -1,719 lines across 12 commits.
+Built the entire live agent protocol stack from zero to working: 5 live adapters, event-driven agentic supervisor, renamed the project to Cogent, ran eval with cheap models, and iterated twice on findings. 111 files changed, +9,406 / -1,719 lines across 12 commits.
 
 ## Commits (chronological)
 
@@ -19,10 +19,10 @@ Built the entire live agent protocol stack from zero to working: 5 live adapters
 | `80e44db` | OpenCode adapter (HTTP REST + SSE) | +1,132 |
 | `9fa5f5d` | Native Go adapter (conductor/worker + channels) | +1,183 |
 | `caad063` | Gitignore .cagent/keys | +29/-1 |
-| `64b9bbc` | Rename cagent → FASE | +1,235/-890 |
+| `64b9bbc` | Rename cagent → Cogent | +1,235/-890 |
 | `47b6ab6` | Fix dispatch CWD, concurrency guard, PID liveness | +384/-10 |
 | `6a3c175` | ADR-0037: event-driven supervisor architecture | +1,106/-556 |
-| `40c7e5e` | FASE eval test projects (Go/Python/Node) | +489 |
+| `40c7e5e` | Cogent eval test projects (Go/Python/Node) | +489 |
 | `8389e4f` | Event-driven supervisor + recovery + routing engines | +1,687/-285 |
 
 ## What Was Built
@@ -48,13 +48,13 @@ Replaced the 30s polling loop with an event-driven reactor:
 - **`supervisor_routing.go`**: Scoring-based adapter selection, kind affinity, health tracking, circuit breaker (3 failures/1h = 5min open)
 - **ADR-0037**: Full architecture doc covering reactor design, 4 event sources, recovery engine, routing, phased migration
 
-### 3. FASE Rename
+### 3. Cogent Rename
 
-Full rename from `cagent` to `FASE` (Fully Automated Software Engineering):
-- Go module: `github.com/yusefmosiah/fase`
-- Binary: `cmd/fase/main.go` with `cagent` symlink for backward compat
+Full rename from `cagent` to `Cogent` (Fully Automated Software Engineering):
+- Go module: `github.com/yusefmosiah/cogent`
+- Binary: `cmd/cogent/main.go` with `cagent` symlink for backward compat
 - 81 files: package imports, CLI commands, docs, MCP server, config paths
-- State directory: `.fase/` (with `.cagent/` legacy fallback)
+- State directory: `.cogent/` (with `.cagent/` legacy fallback)
 
 ### 4. Eval with Cheap Models
 
@@ -98,14 +98,14 @@ All three cheap models produced working code with tests.
 
 4. **EventBus as nervous system**: All work graph mutations publish events. All consumers subscribe. Zero polling for state changes. The event-driven supervisor is the natural consumer.
 
-5. **DB migration issue**: The FASE rename created `.fase/` with an empty DB, splitting state from `.cagent/cagent.db`. Fixed with SQLite `.backup` command. This is exactly the kind of recovery the agentic supervisor should handle automatically.
+5. **DB migration issue**: The Cogent rename created `.cogent/` with an empty DB, splitting state from `.cagent/cagent.db`. Fixed with SQLite `.backup` command. This is exactly the kind of recovery the agentic supervisor should handle automatically.
 
 ## Operational Observations
 
 - **Worker reliability**: codex and claude workers are reliable for implementation tasks. Workers repeatedly crash on lower-priority housekeeping items (UI/JS tasks, planning tasks) — likely model capability limitations.
 - **Stale claims**: The most common failure mode is workers dying without releasing their claim. Lease reconciliation catches this but adds latency. The event-driven supervisor's process watcher addresses this.
 - **Supervisor stability**: The supervisor itself is stable. The issue is always worker processes exiting unexpectedly.
-- **Auto-bootstrap confusion**: After the rename, the supervisor auto-bootstrapped because it detected a "new" repo (`.fase/` existed but was empty). This created unnecessary work items. Mitigated by DB migration.
+- **Auto-bootstrap confusion**: After the rename, the supervisor auto-bootstrapped because it detected a "new" repo (`.cogent/` existed but was empty). This created unnecessary work items. Mitigated by DB migration.
 
 ## What's Left
 

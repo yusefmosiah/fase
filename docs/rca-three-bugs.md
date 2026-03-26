@@ -10,32 +10,32 @@
    ```go
    svc, err := service.Open(context.Background(), root.configPath)
    ```
-   This opens `*sql.DB` → `store.Open()` → `sql.Open("sqlite", path)`, creating a **second writer process** on the same `.fase/fase.db` file.
+   This opens `*sql.DB` → `store.Open()` → `sql.Open("sqlite", path)`, creating a **second writer process** on the same `.cogent/cogent.db` file.
 
 2. **Serve is also writing concurrently** — `runServe()` in `serve.go` opens `service.Open()` and writes to the same DB (work item updates, job state changes, events, etc.).
 
 3. **SQLite WAL mode allows concurrent readers but NOT concurrent writers.** The `busy_timeout = 30000` PRAGMA handles brief contention, but with two processes actively writing (e.g., subprocess appending events while serve updates work items), WAL gets corrupted.
 
-4. **Corrupt DB files exist as evidence**: `fase-corrupt3.db` and `fase-corrupt4.db` in `~/fase-evals/osint/.fase/`.
+4. **Corrupt DB files exist as evidence**: `cogent-corrupt3.db` and `cogent-corrupt4.db` in `~/cogent-evals/osint/.cogent/`.
 
-5. **The proxy command's own docs confirm this is a known pattern**: `fase mcp proxy`'s Long description says:
+5. **The proxy command's own docs confirm this is a known pattern**: `cogent mcp proxy`'s Long description says:
    > "This avoids the WAL split problem where a separate DB connection sees stale data."
 
-6. **`fase mcp stdio` has the same problem** — `internal/cli/mcp.go:27-30`:
+6. **`cogent mcp stdio` has the same problem** — `internal/cli/mcp.go:27-30`:
    ```go
    svc, err := service.Open(context.Background(), root.configPath)
    ```
-   This is why `fase mcp proxy` was created as a workaround, but `__run-job` was never updated.
+   This is why `cogent mcp proxy` was created as a workaround, but `__run-job` was never updated.
 
 7. **The store correctly sets `MaxOpenConns(1)` and WAL mode** (`store.go:47-51`), but this only controls the connection pool within a single process. Cross-process writes are not serialized.
 
 ### Additional Risk: Private DB
 
-The private DB (`fase-private.db`) is also opened by both serve and `__run-job` simultaneously. Since `__run-job` calls `OpenWithPrivate()`, it creates its own WAL readers/writers for both DBs.
+The private DB (`cogent-private.db`) is also opened by both serve and `__run-job` simultaneously. Since `__run-job` calls `OpenWithPrivate()`, it creates its own WAL readers/writers for both DBs.
 
 ### Fix
 
-**Option A (recommended)**: Make `__run-job` route all DB writes through serve's HTTP API, similar to how `fase work update`, `fase work note-add`, etc. work via `connectServe()`. Add HTTP endpoints for the operations `ExecuteDetachedJob` needs (UpsertJobRuntime, UpdateJob, AppendEvent, etc.). The subprocess would be read-only against the DB and write through serve.
+**Option A (recommended)**: Make `__run-job` route all DB writes through serve's HTTP API, similar to how `cogent work update`, `cogent work note-add`, etc. work via `connectServe()`. Add HTTP endpoints for the operations `ExecuteDetachedJob` needs (UpsertJobRuntime, UpdateJob, AppendEvent, etc.). The subprocess would be read-only against the DB and write through serve.
 
 **Option B (simpler, lower confidence)**: Open the DB in read-only mode from `__run-job` and add an HTTP API for the writes it needs. This prevents the second writer entirely.
 
@@ -74,7 +74,7 @@ The private DB (`fase-private.db`) is also opened by both serve and `__run-job` 
 
 4. **Memory leak from worktrees** — `createWorktree()` in `serve.go` creates worktrees but there's no cleanup in `runHousekeeping`. Over many dispatch cycles, orphaned worktrees accumulate. The `mergeWorktree` function does cleanup, but only on success path. Failed dispatches leave orphaned worktrees.
 
-5. **Raw log file accumulation** — `runHousekeeping` reads every file in `.fase/raw/stdout/job_*/` every 30 seconds. With many completed jobs, this is O(n) I/O per tick, though it doesn't directly leak memory.
+5. **Raw log file accumulation** — `runHousekeeping` reads every file in `.cogent/raw/stdout/job_*/` every 30 seconds. With many completed jobs, this is O(n) I/O per tick, though it doesn't directly leak memory.
 
 ### Fix
 
@@ -92,7 +92,7 @@ The private DB (`fase-private.db`) is also opened by both serve and `__run-job` 
    }()
    ```
 
-2. **Add worktree cleanup to `runHousekeeping`**: Iterate `.fase/worktrees/` and remove any worktree whose corresponding work item is in a terminal state (done/failed/cancelled).
+2. **Add worktree cleanup to `runHousekeeping`**: Iterate `.cogent/worktrees/` and remove any worktree whose corresponding work item is in a terminal state (done/failed/cancelled).
 
 3. **Add a stale-serve.json guard**: Before writing `serve.json`, check if the PID in the existing file is alive. If so, refuse to start (preventing multiple serve instances).
 
@@ -195,8 +195,8 @@ The private DB (`fase-private.db`) is also opened by both serve and `__run-job` 
 
 ## Open Questions
 
-1. **Are there other CLI commands that open direct DB connections while serve is running?** The `fase run`, `fase status`, `fase list`, etc. commands all open `service.Open()`. Most are read-only, but `fase run` also writes. These should be audited.
+1. **Are there other CLI commands that open direct DB connections while serve is running?** The `cogent run`, `cogent status`, `cogent list`, etc. commands all open `service.Open()`. Most are read-only, but `cogent run` also writes. These should be audited.
 
 2. **What triggers the serve crash — is it always a panic or sometimes an OOM?** Need to check dmesg/syslog for OOM killer events on the OSINT machine.
 
-3. **Is the OSINT Go service's SQLite DB (`articles.db` or similar) in the same directory?** If so, file-level contention could contribute. Checked — the OSINT project only has `fase.db` and `fase-private.db` in `.fase/`.
+3. **Is the OSINT Go service's SQLite DB (`articles.db` or similar) in the same directory?** If so, file-level contention could contribute. Checked — the OSINT project only has `cogent.db` and `cogent-private.db` in `.cogent/`.

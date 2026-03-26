@@ -1,8 +1,7 @@
 .DS_Store
 .direnv/
-.factory/
 .claude/
-/fase
+/cogent
 *.test
 .dogfood*/
 .dogfood/
@@ -20,43 +19,46 @@ mind-graph/SPEC.md
 mind-graph/README.md
 mind-graph/eslint.config.js
 work_seed/
-# fase local state — track DB, ignore artifacts and secrets
-.fase/raw/
-.fase/serve.json
-.fase/supervisor.json
-.fase/jobs/
-.fase/transfers/
-.fase/debriefs/
-.fase/fase.db-shm
-.fase/fase.db-wal
-.fase/fase-private.db
-.fase/fase-private.db-shm
-.fase/fase-private.db-wal
-.fase/ca.key
-.fase/ca.pub
-.fase/tokens/
-.fase/keys/
-.fase/agent-credential-*
-.fase/fase.db.corrupt
-.fase/fase.db.new
-.fase/fase-events.db
-.fase/fase-events.db-shm
-.fase/fase-events.db-wal
-.fase/allowed_signers
-.fase/serve.log
-.fase/usage.json
-.fase/adapter_health.json
+# cogent local state — track DB, ignore artifacts and secrets
+.cogent/raw/
+.cogent/serve.json
+.cogent/supervisor.json
+.cogent/jobs/
+.cogent/transfers/
+.cogent/debriefs/
+.cogent/cogent.db-shm
+.cogent/cogent.db-wal
+.cogent/cogent-private.db
+.cogent/cogent-private.db-shm
+.cogent/cogent-private.db-wal
+.cogent/ca.key
+.cogent/ca.pub
+.cogent/tokens/
+.cogent/keys/
+.cogent/agent-credential-*
+.cogent/cogent.db.corrupt
+.cogent/cogent.db.new
+.cogent/cogent-events.db
+.cogent/cogent-events.db-shm
+.cogent/cogent-events.db-wal
+.cogent/allowed_signers
+.cogent/serve.log
+.cogent/usage.json
+.cogent/adapter_health.json
+.cogent/artifacts/
+.cogent/supervisor-brief.md
+.cogent/supervisor-context.md
 
-# fase local state — track public DB, ignore private DB and artifacts
-.fase/raw/
-.fase/jobs/
-.fase/transfers/
-.fase/debriefs/
-.fase/fase.db-shm
-.fase/fase.db-wal
-.fase/fase-private.db
-.fase/fase-private.db-shm
-.fase/fase-private.db-wal
+# cogent local state — track public DB, ignore private DB and artifacts
+.cogent/raw/
+.cogent/jobs/
+.cogent/transfers/
+.cogent/debriefs/
+.cogent/cogent.db-shm
+.cogent/cogent.db-wal
+.cogent/cogent-private.db
+.cogent/cogent-private.db-shm
+.cogent/cogent-private.db-wal
 
 # legacy cagent state — preserved for compatibility
 .cagent/raw/
@@ -69,8 +71,9 @@ work_seed/
 .cagent/cagent-private.db-shm
 .cagent/cagent-private.db-wal
 .env
-.fase/native-sessions/
-.fase/worktrees/
-.fase/fase-corrupt*.db
-.fase/fase.db.corrupt-*
-.fase/fase.db
+.cogent/native-sessions/
+.cogent/worktrees/
+.cogent/cogent-corrupt*.db
+.cogent/*corrupt.db
+.cogent/cogent.db.corrupt-*
+.cogent/cogent.db

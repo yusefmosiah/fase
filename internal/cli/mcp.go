@@ -66,7 +66,7 @@ Use 'cogent mcp proxy' instead — it routes through serve's HTTP API.`,
 			sessionManager := mcpserver.NewSessionManager(svc)
 			handler := mcp.NewStreamableHTTPHandler(sessionManager.GetServerForRequest, nil)
 
-			fmt.Fprintf(cmd.OutOrStdout(), "FASE MCP server listening on %s\n", httpAddr)
+			fmt.Fprintf(cmd.OutOrStdout(), "Cogent MCP server listening on %s\n", httpAddr)
 			return http.ListenAndServe(httpAddr, handler)
 		},
 	}

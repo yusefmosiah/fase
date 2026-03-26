@@ -9,21 +9,21 @@ const execFileAsync = promisify(execFile)
 const webRoot = fileURLToPath(new URL('.', import.meta.url))
 const repoRoot = path.resolve(webRoot, '..')
 
-// FASE_TARGET_REPO sets which repo's work graph to display.
-// Defaults to the fase repo itself if not set.
-const targetRepo = globalThis.process.env.FASE_TARGET_REPO || repoRoot
+// COGENT_TARGET_REPO sets which repo's work graph to display.
+// Defaults to the cogent repo itself if not set.
+const targetRepo = globalThis.process.env.COGENT_TARGET_REPO || repoRoot
 
-function faseExecutable() {
-  // Prefer bin/fase (freshly built), then go run
-  const binaryPath = path.join(repoRoot, 'bin', 'fase')
+function cogentExecutable() {
+  // Prefer bin/cogent (freshly built), then go run
+  const binaryPath = path.join(repoRoot, 'bin', 'cogent')
   if (fs.existsSync(binaryPath)) {
     return { command: binaryPath, args: [] }
   }
-  return { command: 'go', args: ['run', './cmd/fase'] }
+  return { command: 'go', args: ['run', './cmd/cogent'] }
 }
 
-async function runFase(args) {
-  const executable = faseExecutable()
+async function runCogent(args) {
+  const executable = cogentExecutable()
   const { stdout } = await execFileAsync(
     executable.command,
     [...executable.args, '--json', ...args],
@@ -53,7 +53,7 @@ function writeJSON(res, statusCode, payload) {
   res.end(JSON.stringify(payload))
 }
 
-function faseApiPlugin() {
+function cogentApiPlugin() {
   const handler = async (req, res, next) => {
     if (!req.url?.startsWith('/api/')) {
       next()
@@ -67,7 +67,7 @@ function faseApiPlugin() {
       // Supervisor state + live diff
       if (req.method === 'GET' && url.pathname === '/api/supervisor/status') {
         try {
-          const supPath = path.join(targetRepo, '.fase', 'supervisor.json')
+          const supPath = path.join(targetRepo, '.cogent', 'supervisor.json')
           const supData = fs.existsSync(supPath) ? JSON.parse(fs.readFileSync(supPath, 'utf-8')) : null
           const { stdout: diff } = await execFileAsync('git', ['diff', '--stat'], {
             cwd: targetRepo, maxBuffer: 1024 * 1024,
@@ -95,7 +95,7 @@ function faseApiPlugin() {
       if (req.method === 'GET' && url.pathname === '/api/bash-log') {
         const jobId = url.searchParams.get('job') || 'latest'
         try {
-          const rawDir = path.join(targetRepo, '.fase', 'raw', 'stdout')
+          const rawDir = path.join(targetRepo, '.cogent', 'raw', 'stdout')
           let jobDir
           if (jobId === 'latest') {
             // Find the most recent job dir
@@ -145,7 +145,7 @@ function faseApiPlugin() {
       }
 
       if (req.method === 'GET' && url.pathname === '/api/work/items') {
-        const payload = await runFase(['work', 'list', '--limit', '500'])
+        const payload = await runCogent(['work', 'list', '--limit', '500'])
         writeJSON(res, 200, payload)
         return
       }
@@ -154,13 +154,13 @@ function faseApiPlugin() {
         const workId = parts[2]
 
         if (req.method === 'GET' && parts.length === 3) {
-          const payload = await runFase(['work', 'show', workId])
+          const payload = await runCogent(['work', 'show', workId])
           writeJSON(res, 200, payload)
           return
         }
 
         if (req.method === 'GET' && parts[3] === 'docs') {
-          const payload = await runFase(['work', 'show', workId])
+          const payload = await runCogent(['work', 'show', workId])
           writeJSON(res, 200, payload)
           return
         }
@@ -181,7 +181,7 @@ function faseApiPlugin() {
 
         if (req.method === 'GET' && parts[3] === 'hydrate') {
           const mode = url.searchParams.get('mode') ?? 'standard'
-          const payload = await runFase(['work', 'hydrate', workId, '--mode', mode])
+          const payload = await runCogent(['work', 'hydrate', workId, '--mode', mode])
           writeJSON(res, 200, payload)
           return
         }
@@ -191,12 +191,12 @@ function faseApiPlugin() {
 
           switch (parts[3]) {
             case 'lock': {
-              const payload = await runFase(['work', 'lock', workId])
+              const payload = await runCogent(['work', 'lock', workId])
               writeJSON(res, 200, payload)
               return
             }
             case 'unlock': {
-              const payload = await runFase(['work', 'unlock', workId])
+              const payload = await runCogent(['work', 'unlock', workId])
               writeJSON(res, 200, payload)
               return
             }
@@ -205,7 +205,7 @@ function faseApiPlugin() {
               if (body.message) {
                 args.push('--message', body.message)
               }
-              const payload = await runFase(args)
+              const payload = await runCogent(args)
               writeJSON(res, 200, payload)
               return
             }
@@ -214,7 +214,7 @@ function faseApiPlugin() {
               if (body.message) {
                 args.push('--message', body.message)
               }
-              const payload = await runFase(args)
+              const payload = await runCogent(args)
               writeJSON(res, 200, payload)
               return
             }
@@ -226,7 +226,7 @@ function faseApiPlugin() {
               if (body.message) {
                 args.push('--message', body.message)
               }
-              const payload = await runFase(args)
+              const payload = await runCogent(args)
               writeJSON(res, 200, payload)
               return
             }
@@ -241,7 +241,7 @@ function faseApiPlugin() {
               if (body.method) {
                 args.push('--method', body.method)
               }
-              const payload = await runFase(args)
+              const payload = await runCogent(args)
               writeJSON(res, 200, payload)
               return
             }
@@ -261,7 +261,7 @@ function faseApiPlugin() {
   }
 
   return {
-    name: 'fase-local-api',
+    name: 'cogent-local-api',
     configureServer(server) {
       server.middlewares.use(handler)
     },
@@ -273,5 +273,5 @@ function faseApiPlugin() {
 
 // https://vite.dev/config/
 export default defineConfig({
-  plugins: [faseApiPlugin()],
+  plugins: [cogentApiPlugin()],
 })

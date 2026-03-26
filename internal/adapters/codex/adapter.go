@@ -23,7 +23,7 @@ func New(binary string, enabled bool) adapterapi.Adapter {
 }
 
 func (builder) StartArgs(req adapterapi.StartRunRequest) (adapterapi.RunSpec, error) {
-	lastMessageFile, err := os.CreateTemp("", "fase-codex-last-*.txt")
+	lastMessageFile, err := os.CreateTemp("", "cogent-codex-last-*.txt")
 	if err != nil {
 		return adapterapi.RunSpec{}, fmt.Errorf("create last-message temp file: %w", err)
 	}
@@ -56,7 +56,7 @@ func (builder) StartArgs(req adapterapi.StartRunRequest) (adapterapi.RunSpec, er
 }
 
 func (builder) ContinueArgs(req adapterapi.ContinueRunRequest) (adapterapi.RunSpec, error) {
-	lastMessageFile, err := os.CreateTemp("", "fase-codex-last-*.txt")
+	lastMessageFile, err := os.CreateTemp("", "cogent-codex-last-*.txt")
 	if err != nil {
 		return adapterapi.RunSpec{}, fmt.Errorf("create last-message temp file: %w", err)
 	}

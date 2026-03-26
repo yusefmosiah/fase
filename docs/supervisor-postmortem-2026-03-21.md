@@ -44,7 +44,7 @@ First overnight run of the agentic supervisor (ADR-0041). The supervisor dispatc
 
 ### Bug 3: Workers don't update work item state (moderate, caused stalls)
 
-**What**: Workers write code and exit without calling `fase work update <id> --state done`. The supervisor waits for state-change events that never arrive. Supervisor stalls until host manually nudges it.
+**What**: Workers write code and exit without calling `cogent work update <id> --state done`. The supervisor waits for state-change events that never arrive. Supervisor stalls until host manually nudges it.
 
 **Where**: Worker briefing contract didn't include explicit state update instructions. Fixed mid-session by adding REQUIRED commands to `CompileWorkerBriefing()` (commit `caabd99`). Workers dispatched before the fix still had the old briefing.
 
@@ -98,7 +98,7 @@ Need a cost tracking mechanism:
 2. **Attestation**: supervisor ran attestation workers and reviewed results
 3. **Session continuity**: 922 turns on a single claude session via svc.Send — the long-running session model works
 4. **Worker output**: all code compiles, all tests pass, eval projects are functional
-5. **Host messaging**: `fase supervisor send` successfully injected instructions mid-session
+5. **Host messaging**: `cogent supervisor send` successfully injected instructions mid-session
 
 ## Metrics
 

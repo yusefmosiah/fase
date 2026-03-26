@@ -5,7 +5,7 @@
 
 ## Context
 
-FASE orchestrates coding agents through adapters. Current adapters (codex, claude, opencode, pi) shell out to vendor CLI binaries. The "native" adapter was implemented as a conductor/meta-adapter that dispatches to these external adapters — it makes no LLM calls itself.
+Cogent orchestrates coding agents through adapters. Current adapters (codex, claude, opencode, pi) shell out to vendor CLI binaries. The "native" adapter was implemented as a conductor/meta-adapter that dispatches to these external adapters — it makes no LLM calls itself.
 
 This is wrong. The native adapter should be a first-class LLM client: direct HTTP API calls, tool-use loop, co-agent spawning via the live adapter protocol. It must be referentially transparent with external adapters — the conductor/supervisor orchestrates adapters (including native) identically.
 
@@ -28,7 +28,7 @@ Bedrock differences: model ID goes in URL path (`/model/{modelId}/invoke`), requ
 The ChatGPT provider uses Codex's OAuth flow to bill API usage to a ChatGPT subscription (Plus/Pro/Max) instead of metered API credits. This is how OpenCode and Pi already access OpenAI models.
 
 **Auth flow:**
-1. One-time: user runs `fase login chatgpt` which shells out to `codex login` (opens browser for ChatGPT sign-in)
+1. One-time: user runs `cogent login chatgpt` which shells out to `codex login` (opens browser for ChatGPT sign-in)
 2. Codex writes `~/.codex/auth.json` with access/refresh/id tokens
 3. Native adapter reads `auth.json`, uses `access_token` as `Bearer` token
 4. Token refresh: either shell out to `codex` to refresh, or use `https://auth.openai.com/oauth/token` directly with the refresh token
@@ -132,7 +132,7 @@ Both implement a common `LLMClient` interface that abstracts the request/respons
 │  ┌──────────────────────────────────────┐   │
 │  │            Tool Registry             │   │
 │  │                                      │   │
-│  │  fase tools:  work_list, work_create │   │
+│  │  cogent tools:  work_list, work_create │   │
 │  │    work_update, work_attest, ...     │   │
 │  │  coding tools: read_file, write_file │   │
 │  │    bash, glob, grep                  │   │
@@ -178,7 +178,7 @@ StartTurn(input) → turnID
 
 ### Tool Categories
 
-**1. FASE work graph tools** (direct service calls, no subprocess):
+**1. Cogent work graph tools** (direct service calls, no subprocess):
 - `work_list`, `work_show`, `work_create`, `work_update`
 - `work_attest`, `work_note_add`, `work_claim`
 - `ready_work`, `project_hydrate`
@@ -207,7 +207,7 @@ The Anthropic Messages API doesn't support mid-turn injection. Steering is handl
 
 1. Steer messages are queued in a channel
 2. After each tool execution (before the next LLM call), pending steers are drained
-3. Steer content is prepended to the next user message as `[fase:steer]` tagged blocks
+3. Steer content is prepended to the next user message as `[cogent:steer]` tagged blocks
 4. If no tool execution is happening (pure text generation), steers wait until the current response completes, then start a new turn
 
 ### Session Management
@@ -314,8 +314,8 @@ models = ["gpt-5.4-mini", "gpt-5.4-codex", "o3", "o4-mini"]
 ### Login Command
 
 ```bash
-fase login chatgpt    # shells out to `codex login`, stores auth.json
-fase login status     # shows active auth methods and token freshness
+cogent login chatgpt    # shells out to `codex login`, stores auth.json
+cogent login status     # shows active auth methods and token freshness
 ```
 
 ### What This Replaces
@@ -346,7 +346,7 @@ The echo session moves to a test helper.
 ### Phase 2: Tool System
 5. **Tool registry**: Define tools as Go structs with JSON schema parameters
 6. **Coding tools**: read_file, write_file, edit_file, glob, grep, bash, git ops
-7. **FASE tools**: work_list, work_create, work_update, work_attest, etc. (direct service calls)
+7. **Cogent tools**: work_list, work_create, work_update, work_attest, etc. (direct service calls)
 
 ### Phase 3: Core Loop + LiveSession
 8. **Tool-use loop**: Provider-agnostic goroutine that calls LLM, executes tools, loops
@@ -356,7 +356,7 @@ The echo session moves to a test helper.
 ### Phase 4: Integration
 11. **Co-agent tools**: Spawn/send/steer/close other LiveSessions via channels
 12. **Adapter registry**: Register native adapter, wire into supervisor dispatch
-13. **Login command**: `fase login chatgpt` flow
+13. **Login command**: `cogent login chatgpt` flow
 
 ### Phase 5: Eval
 14. **Multi-step eval tasks** through the supervisor using native adapter with cheap models

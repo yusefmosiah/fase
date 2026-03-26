@@ -1,0 +1,51 @@
+{
+  "featureId": "contract-freeze-final-success-gate-and-escalation-path",
+  "reviewedAt": "2026-03-24T23:12:00Z",
+  "commitId": "df10a03",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The implementation adds an escalate_contract proposal type that validates frozen contracts and requires stricter requirements, but has critical gaps compared to ADR-0036 design and missing test coverage for the new code paths.",
+    "issues": [
+      {
+        "file": "internal/core/types.go",
+        "line": 339,
+        "severity": "blocking",
+        "description": "ADR-0036 Phase 0 requires adding EscalatedAt, EscalationBy, and EscalationReason fields to RequiredAttestation struct. These are not implemented. The current implementation stores escalation metadata at the work item level only, which cannot distinguish which individual attestations were original vs escalated. This violates the ADR's design for per-slot audit trail."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 4313,
+        "severity": "blocking",
+        "description": "No unit tests exist for applyEscalateContractProposal, isStricterContract, or summaryAttestations functions. The handoff incorrectly lists these as 'tests added' when they are just function implementations. The validation contract requires evidence of successful escalation and rejection of weakening attempts."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 4361,
+        "severity": "non_blocking",
+        "description": "isStricterContract requires len(proposed) > len(existing) but VAL-CONTRACT-003 says post-freeze changes may 'make it stricter'. Making an existing non-blocking attestation blocking is stricter but would be rejected by this check. Example: existing=[{A,blocking=false}], proposed=[{A,blocking=true}] is stricter but rejected. May need clarification on whether 'stricter' means 'more requirements' or 'higher bar'."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 4340,
+        "severity": "non_blocking",
+        "description": "applyEscalateContractProposal replaces RequiredAttestations entirely rather than appending. While this is validated by isStricterContract, the semantics are unclear - should escalation append new slots or replace the list? The ADR says 'append-only' but implementation replaces. The current approach works if all original slots are included in the proposed list, but this should be documented."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The ADR-0036 document describes a phased implementation (Phase 0, 1, 2) with specific deliverables per phase. The worker completed Phase 0 items partially - added AttestationFrozenAt but did not add the escalation fields to RequiredAttestation. AGENTS.md does not document how to interpret ADR phases vs feature descriptions.",
+      "evidence": "ADR-0036 line 363-368 lists Phase 0 deliverables including 'Add EscalatedAt/EscalationBy/EscalationReason to RequiredAttestation'. internal/core/types.go:339 shows these fields are missing from the struct."
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill requires 'Write or extend characterization/failing tests first' and 'Implement the feature only after the targeted tests fail for the expected reason'. The worker did not follow this TDD pattern for the escalate_contract path - no tests were written for the new functions.",
+      "evidence": "Handoff lists 'tests.added' with function names rather than test case names. No matching test functions found in service_test.go for escalate_contract, isStricterContract, or summaryAttestations. control-plane-worker/SKILL.md line 22-24 prescribes TDD approach."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "FAIL: Implementation is incomplete per ADR-0036 and missing test coverage. VAL-CONTRACT-004 (terminal success gating) is correctly handled by existing guardDoneTransition. VAL-CONTRACT-003 (escalation path) has the basic proposal type and frozen-contract check, but lacks per-slot escalation fields per ADR design and has no unit tests verifying the escalation/rejection logic. The isStricterContract function may have semantic issues with its definition of 'stricter'."
+}

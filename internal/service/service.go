@@ -509,7 +509,7 @@ func Open(ctx context.Context, configPath string) (*Service, error) {
 
 // OpenWithStateDir opens the service using the given configPath for adapter/config
 // settings but overrides the database stateDir. This is used by commands like
-// `run --work` that need to share the database with a running `fase serve` instance.
+// `run --work` that need to share the database with a running `cogent serve` instance.
 func OpenWithStateDir(ctx context.Context, configPath, stateDir string) (*Service, error) {
 	return openWithStateDirOverride(ctx, configPath, stateDir)
 }
@@ -1082,7 +1082,7 @@ func (s *Service) SendSpecEscalationEmail(ctx context.Context, workID, summary, 
 	if err != nil {
 		return
 	}
-	subject := fmt.Sprintf("[FASE] spec question: %s", work.Title)
+	subject := fmt.Sprintf("[Cogent] spec question: %s", work.Title)
 	html := notify.BuildSpecEscalationEmail(s.notificationProofBundle(ctx, work), summary, recommendation)
 	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
 }
@@ -2100,24 +2100,24 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 	nextActions = append(nextActions, delegationNextAction(result.Work))
 
 	writeCommands := []string{
-		"fase work update <work-id>",
-		"fase work note-add <work-id>",
+		"cogent work update <work-id>",
+		"cogent work note-add <work-id>",
 	}
-	updateDoneCmd := fmt.Sprintf("fase work update %s --execution-state checking --message \"<summary of what you did>\"", workID)
-	gitCommitCmd := fmt.Sprintf("git add -A && git commit -m \"fase(%s): <summary>\"", workID)
-	updateFailCmd := fmt.Sprintf("fase work update %s --execution-state failed --message \"<what went wrong>\"", workID)
+	updateDoneCmd := fmt.Sprintf("cogent work update %s --execution-state checking --message \"<summary of what you did>\"", workID)
+	gitCommitCmd := fmt.Sprintf("git add -A && git commit -m \"cogent(%s): <summary>\"", workID)
+	updateFailCmd := fmt.Sprintf("cogent work update %s --execution-state failed --message \"<what went wrong>\"", workID)
 	contractRules := []string{
 		"Do the work, add notes as you go, then commit and update state before exiting.",
 		fmt.Sprintf("REQUIRED before exit: %s", gitCommitCmd),
 		fmt.Sprintf("REQUIRED on success: %s", updateDoneCmd),
 		fmt.Sprintf("REQUIRED on failure: %s", updateFailCmd),
 		"You MUST call one of the above before exiting. The supervisor cannot see your work otherwise.",
-		"REQUIRED: Report your results before exiting. Use 'fase report \"<summary of what you did, files changed, test results>\"'. This notifies whoever dispatched you (supervisor or host).",
+		"REQUIRED: Report your results before exiting. Use 'cogent report \"<summary of what you did, files changed, test results>\"'. This notifies whoever dispatched you (supervisor or host).",
 		"Record notes for findings, risks, and open questions.",
 		"Run verification (tests, builds) and report results as notes.",
 		"If the work involves a web UI: you MUST add e2e tests (default: Playwright) covering all interactive features (buttons, drag, resize, navigation). Backend tests alone are insufficient — they cannot catch broken UI behavior.",
 		"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
-		"Do NOT call fase work attest — an independent agent handles attestation.",
+		"Do NOT call cogent work attest — an independent agent handles attestation.",
 		delegationNextAction(result.Work),
 	}
 
@@ -2126,10 +2126,10 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		if parent != nil {
 			parentWorkID = parent.WorkID
 		}
-		attestCmd := fmt.Sprintf("fase work attest %s --result [passed|failed] --message \"<summary>\"", parentWorkID)
+		attestCmd := fmt.Sprintf("cogent work attest %s --result [passed|failed] --message \"<summary>\"", parentWorkID)
 		writeCommands = append(writeCommands, attestCmd)
 		attestInstruction := fmt.Sprintf(
-			"REQUIRED: After completing your review, you MUST call: fase work attest %s --result passed|failed --message \"<your finding summary>\"",
+			"REQUIRED: After completing your review, you MUST call: cogent work attest %s --result passed|failed --message \"<your finding summary>\"",
 			parentWorkID,
 		)
 		nextActions = append(nextActions, attestInstruction)
@@ -2138,10 +2138,10 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 			"Record notes for your findings before attesting.",
 			"If the work involves a web UI: run Playwright e2e tests with 'cd mind-graph && npx playwright test'. Screenshots and videos are saved to mind-graph/test-results/ and will be attached to the attestation email automatically.",
 			"If no Playwright tests exist for web UI work, FAIL the attestation — backend-only tests are insufficient for web UI work.",
-			fmt.Sprintf("REQUIRED: You MUST call 'fase work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
+			fmt.Sprintf("REQUIRED: You MUST call 'cogent work attest %s --result passed|failed --message \"<your finding summary>\"' to submit your attestation result.", parentWorkID),
 			"Use --result passed if the work meets its objective; use --result failed if it does not.",
 			"Do NOT create new work items, proposals, or child work. Only do what was assigned.",
-			"Do NOT call fase work complete or fase work fail.",
+			"Do NOT call cogent work complete or cogent work fail.",
 			delegationNextAction(result.Work),
 		}
 	}
@@ -2182,7 +2182,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 	}
 
 	return WorkHydrateResult{
-		"schema_version": "fase.worker_briefing.v1",
+		"schema_version": "cogent.worker_briefing.v1",
 		"briefing_kind":  "assignment",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339Nano),
 		"runtime":        runtimeSection,
@@ -2221,10 +2221,10 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		},
 		"worker_contract": map[string]any{
 			"read_commands": []string{
-				"fase work show <work-id>",
-				"fase work notes <work-id>",
-				"fase artifacts list --work <work-id>",
-				"fase history search --query <text>",
+				"cogent work show <work-id>",
+				"cogent work notes <work-id>",
+				"cogent artifacts list --work <work-id>",
+				"cogent history search --query <text>",
 			},
 			"write_commands": writeCommands,
 			"rules":          contractRules,
@@ -2368,7 +2368,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 	}
 
 	result := ProjectHydrateResult{
-		"schema_version": "fase.project_briefing.v1",
+		"schema_version": "cogent.project_briefing.v1",
 		"briefing_kind":  "project",
 		"generated_at":   time.Now().UTC().Format(time.RFC3339Nano),
 		"mode":           mode,
@@ -2391,25 +2391,25 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 
 	contract := map[string]any{
 		"read_commands": []string{
-			"fase work show <work-id>",
-			"fase work notes <work-id>",
-			"fase work hydrate <work-id>",
-			"fase work list",
-			"fase work ready",
-			"fase project hydrate",
+			"cogent work show <work-id>",
+			"cogent work notes <work-id>",
+			"cogent work hydrate <work-id>",
+			"cogent work list",
+			"cogent work ready",
+			"cogent project hydrate",
 		},
 		"write_commands": []string{
-			"fase work create",
-			"fase work update <work-id>",
-			"fase work note-add <work-id>",
-			"fase work attest <work-id>",
-			"fase dispatch [work-id]",
+			"cogent work create",
+			"cogent work update <work-id>",
+			"cogent work note-add <work-id>",
+			"cogent work attest <work-id>",
+			"cogent dispatch [work-id]",
 		},
 		"rules": []string{
-			"Build: run 'make install' before running fase commands. Always use 'fase' (on PATH), never './fase'.",
-			"CLI routes through fase serve — serve must be running for all commands.",
-			"All persistent state belongs in the FASE work queue (notes, updates, conventions).",
-			"Do not use Claude memory system — all state in FASE work queue.",
+			"Build: run 'make install' before running cogent commands. Always use 'cogent' (on PATH), never './cogent'.",
+			"CLI routes through cogent serve — serve must be running for all commands.",
+			"All persistent state belongs in the Cogent work queue (notes, updates, conventions).",
+			"Do not use Claude memory system — all state in Cogent work queue.",
 			"Do not create memory files, CLAUDE.md, or .claude hidden state files.",
 			"One code-writer per environment, unlimited readers — plan/research/attest tasks can run concurrently.",
 			"Host agent role: delegate and review, never write code directly.",
@@ -2623,14 +2623,14 @@ func RenderProjectHydrateMarkdown(r ProjectHydrateResult) string {
 }
 
 func supervisorRolePrompt() string {
-	return `You are the FASE supervisor. Your job is to manage the work queue using SEQUENTIAL dispatch:
+	return `You are the Cogent supervisor. Your job is to manage the work queue using SEQUENTIAL dispatch:
 1. NEVER dispatch multiple features in parallel. Complete one feature at a time.
 2. Dispatch a single ready work item to a worker agent (choosing the right adapter and model).
 3. Monitor worker progress. When a worker signals "checking", a checker is auto-dispatched.
 4. When [check:pass] or [check:fail] events arrive, use work_show to review the canonical evidence bundle (work state, checks, attestations, artifacts, docs, approvals, promotions).
 5. A passing check is evidence only. NEVER call work update <id> --execution-state done just because a check passed.
 6. If check result is FAIL: count failures with check_record_list. If < 3: use session_send to send feedback to original worker; do NOT mark done. If >= 3: use send_escalation_email to notify human; mark work failed.
-7. Ensure one code-writing feature at a time per the FASE sequential model.
+7. Ensure one code-writing feature at a time per the Cogent sequential model.
 
 You are NOT a worker — you never write code directly. You delegate to worker agents
 via the dispatch system and verify their output before allowing the next feature.`
@@ -2643,8 +2643,8 @@ func supervisorDispatchProtocol() map[string]any {
 			"1. Check active_work — if any item is in_progress or checking, wait for it to complete.",
 			"2. Only when no active work: select the next highest-priority ready item.",
 			"3. For the selected item, choose adapter+model based on preferred_adapters/preferred_models, or round-robin.",
-			"4. Claim the work item (fase work claim <work-id>).",
-			"5. Hydrate the worker briefing (fase work hydrate <work-id>).",
+			"4. Claim the work item (cogent work claim <work-id>).",
+			"5. Hydrate the worker briefing (cogent work hydrate <work-id>).",
 			"6. Dispatch: spawn a worker session on the chosen adapter with the briefing as prompt.",
 			"7. Monitor the worker. When they signal 'checking', a checker is auto-dispatched.",
 			"8. Wait for [check:pass] or [check:fail] events.",
@@ -2654,7 +2654,7 @@ func supervisorDispatchProtocol() map[string]any {
 			"REQUIRED STEP: Checks produce evidence, the canonical review/completion path makes decisions.",
 			"When you see [check:pass] or [check:fail] event:",
 			"1. Call work_show <work-id> to review the canonical evidence bundle (work state, checks, attestations, artifacts, docs, approvals, promotions). Use check_record_show only when you need one standalone check report.",
-			"2. If result is 'pass': do NOT call 'fase work update <work-id> --execution-state done'. Passing checks are evidence only; wait for the canonical attestation/review gate to resolve and then follow the resulting approval/promote path if required.",
+			"2. If result is 'pass': do NOT call 'cogent work update <work-id> --execution-state done'. Passing checks are evidence only; wait for the canonical attestation/review gate to resolve and then follow the resulting approval/promote path if required.",
 			"3. If result is 'fail': call check_record_list <work-id> to count how many checks have failed.",
 			"   - If failure count < 3: call session_send to send failure context back to the worker (they will fix and re-check).",
 			"   - If failure count >= 3: call send_escalation_email to notify the human (spec may need updating).",
@@ -2665,7 +2665,7 @@ func supervisorDispatchProtocol() map[string]any {
 			"REQUIRED: After each action (dispatch, attest), call the report tool with a structured status update.",
 			"Format: '[action] work_title — result.' Example: '[dispatched] Fix RSS sources — sent to claude/haiku.' '[attested:passed] Search fix — passed all tests, merging.'",
 			"On errors or repeated failures, report with type=escalation.",
-			"Use the report MCP tool or 'fase report \"message\"' CLI command.",
+			"Use the report MCP tool or 'cogent report \"message\"' CLI command.",
 		},
 		"model_preferences": []string{
 			"Workers: prefer zai/glm-5-turbo (fast, unlimited, excellent at implementation including UI). claude/claude-haiku-4-5 as secondary. claude/claude-sonnet-4-6 for complex work.",
@@ -5565,15 +5565,15 @@ func (s *Service) detachedWorkerEnv(exePath string) []string {
 		envMap[key] = value
 	}
 
-	envMap["FASE_EXECUTABLE"] = exePath
+	envMap["COGENT_EXECUTABLE"] = exePath
 	if s.ConfigPath != "" {
-		envMap["FASE_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
+		envMap["COGENT_CONFIG_DIR"] = filepath.Dir(s.ConfigPath)
 	}
 	if s.Paths.StateDir != "" {
-		envMap["FASE_STATE_DIR"] = s.Paths.StateDir
+		envMap["COGENT_STATE_DIR"] = s.Paths.StateDir
 	}
 	if s.Paths.CacheDir != "" {
-		envMap["FASE_CACHE_DIR"] = s.Paths.CacheDir
+		envMap["COGENT_CACHE_DIR"] = s.Paths.CacheDir
 	}
 	if exeDir := filepath.Dir(exePath); exeDir != "" {
 		if pathValue, ok := envMap["PATH"]; ok && pathValue != "" {
@@ -5841,11 +5841,11 @@ func detachedExecutablePath() (string, error) {
 			return path, nil
 		}
 	}
-	if explicit := os.Getenv("FASE_EXECUTABLE"); explicit != "" {
+	if explicit := os.Getenv("COGENT_EXECUTABLE"); explicit != "" {
 		return explicit, nil
 	}
 	if err != nil {
-		return "", fmt.Errorf("resolve fase executable: %w", err)
+		return "", fmt.Errorf("resolve cogent executable: %w", err)
 	}
 	return path, nil
 }
@@ -5858,7 +5858,7 @@ type nativeServiceInjector interface {
 func (s *Service) resolveAdapter(ctx context.Context, name string) (adapterapi.Adapter, adapters.Diagnosis, error) {
 	adapter, descriptor, ok := adapters.Resolve(ctx, s.Config, name)
 	if ok {
-		// Inject service into adapters that need it (native adapter for FASE tools).
+		// Inject service into adapters that need it (native adapter for Cogent tools).
 		if injector, ok := adapter.(nativeServiceInjector); ok {
 			injector.SetService(s)
 		}
@@ -6273,7 +6273,7 @@ Slot: %d (%s/%s)
 3. Run go build ./... and go test for changed packages to verify correctness.
 %s
 After verification, record exactly one attestation on the parent:
-   fase work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
+   cogent work attest %s --nonce %s --result [passed|failed] --summary "<your finding>" --verifier-kind %s --method %s
 
 Do not record more than one attestation. Do not spawn extra work.`, parent.WorkID, parent.Title, parent.Objective, job.Adapter, workerModel, job.JobID, slotIndex, slot.VerifierKind, slot.Method, workerFindings, uiGuidance, parent.WorkID, nonce, slot.VerifierKind, slot.Method, slot.Method)
 }

@@ -1,0 +1,40 @@
+{
+  "featureId": "contract-freeze-escalation-fields-and-tests-fix",
+  "reviewedAt": "2026-03-24T23:55:00Z",
+  "commitId": "67f59eebb45db880dc1027b1c4108a434457eb18",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix commit added unit tests but failed to address the core scrutiny finding. The escalation fields (EscalatedAt, EscalationBy, EscalationReason) do NOT exist on RequiredAttestation in the committed code. The tests reference these fields and don't compile against the committed version of types.go. The fix is incomplete - critical changes to types.go and the escalation field setting logic in service.go remain uncommitted.",
+    "issues": [
+      {
+        "file": "internal/core/types.go",
+        "line": 337,
+        "severity": "blocking",
+        "description": "ADR-0036 Phase 0 requires EscalatedAt, EscalationBy, EscalationReason fields on RequiredAttestation struct. These fields are MISSING in commit 67f59ee. The types.go in that commit only has VerifierKind, Method, Blocking, and Metadata fields. The handoff incorrectly claims 'RequiredAttestation already has ADR-0036-compliant escalation fields - the scrutiny finding was incorrect.' This is false - the scrutiny finding was correct and the fields are still missing in committed code."
+      },
+      {
+        "file": "internal/service/service_test.go",
+        "line": 2929,
+        "severity": "blocking",
+        "description": "TestEscalationFieldsRoundTrip references att.EscalatedAt, att.EscalationBy, and att.EscalationReason which do not exist on core.RequiredAttestation in the committed version. Test does not compile against committed code: 'att.EscalatedAt undefined (type core.RequiredAttestation has no field or method EscalatedAt)'"
+      },
+      {
+        "file": "internal/service/service_test.go",
+        "line": 3112,
+        "severity": "blocking",
+        "description": "Test case constructs RequiredAttestation with EscalatedAt, EscalationBy, EscalationReason fields that don't exist in committed types.go. Build fails with 'unknown field EscalatedAt in struct literal of type core.RequiredAttestation'"
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 4349,
+        "severity": "blocking",
+        "description": "The escalation field setting logic (setting EscalatedAt, EscalationBy, EscalationReason on new attestation slots) is present in the working directory but NOT committed. The commit 67f59ee only added tests - the actual field-setting code and the RequiredAttestation struct changes are uncommitted."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "FAIL - The fix did not address the original scrutiny finding. Commit 67f59ee added tests that reference escalation fields, but those fields do NOT exist in the committed types.go. The tests don't even compile against the committed code. The worker incorrectly claimed in the handoff that 'RequiredAttestation already has ADR-0036-compliant escalation fields' - this is false. The uncommitted changes in types.go and service.go are required for the tests to work. The fix is incomplete: escalation fields must be added to RequiredAttestation struct, and the escalation field-setting logic must be committed."
+}

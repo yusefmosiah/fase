@@ -1,0 +1,152 @@
+{
+  "groupId": "contract-freeze-assertions",
+  "testedAt": "2026-03-24T23:59:45Z",
+  "isolation": {
+    "appUrl": "http://localhost:5380",
+    "repoRoot": "/Users/wiz/cogent",
+    "cliBinary": "./build/cogent",
+    "workItemPrefix": "utest-contract-freeze-"
+  },
+  "toolsUsed": ["./build/cogent CLI", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-003",
+      "title": "Review contract freezes and can only become stricter after first live execution",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work item with required attestation (human review, blocking=true)",
+          "expected": "Work item created with required_attestations field populated",
+          "observed": "Work item work_01KMH4H7CEQBQ0X4K1182J8P8W created with required_attestations=[{verifier_kind: human, method: review, blocking: true}], attestation_frozen_at=null"
+        },
+        {
+          "action": "Dispatch work item to trigger first live execution",
+          "expected": "Work transitions through claimed -> in_progress, and attestation_frozen_at gets set",
+          "observed": "Work transitioned claimed -> in_progress -> failed. attestation_frozen_at set to 2026-03-24T23:58:05.940085Z during in_progress state (frozen at job starting)"
+        },
+        {
+          "action": "Attempt to weaken contract via escalate_contract proposal (blocking: true -> blocking: false)",
+          "expected": "Proposal acceptance rejected with error indicating weakening is not allowed",
+          "observed": "Error: 'contract escalation must add stricter requirements, not weaken existing contract'"
+        },
+        {
+          "action": "Add stricter requirement via escalate_contract proposal (add new blocking attestation)",
+          "expected": "Proposal accepted, new requirement added with escalation audit fields",
+          "observed": "Proposal accepted (state=accepted). required_attestations now has 2 entries. New entry has escalated_at, escalation_by, escalation_reason fields set. Metadata includes contract_escalated_at and contract_escalation_proposal"
+        },
+        {
+          "action": "Verify audit trail for escalation",
+          "expected": "Escalation metadata persists on work item and in proposals list",
+          "observed": "Work metadata has contract_escalated_at=2026-03-24T23:58:34Z, contract_escalation_proposal=wprop_01KMH4J8PRYZMJG4BTB00ZFXA9. Proposals list shows accepted escalation proposal with rationale."
+        }
+      ],
+      "evidence": {
+        "cliOutputFiles": [
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-before-dispatch.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-dispatch-result.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-after-dispatch.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-weakening-proposal.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-weakening-accept-result.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-stricter-proposal.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-stricter-accept-result.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-003-after-escalation.json"
+        ],
+        "consoleErrors": "none",
+        "network": "CLI -> HTTP API localhost:5380"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CONTRACT-004",
+      "title": "Terminal success is gated by one frozen completion contract",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work item with required attestation (human review, blocking=true)",
+          "expected": "Work item created in ready state",
+          "observed": "Work item work_01KMH4JYGTS6JBA0D6GZZNJP1H created in ready state with required_attestations=[{verifier_kind: human, method: review, blocking: true}]"
+        },
+        {
+          "action": "Attempt to transition to done state without satisfying attestation requirements",
+          "expected": "Transition rejected with error about unresolved attestations",
+          "observed": "Error: 'work item work_01KMH4JYGTS6JBA0D6GZZNJP1H has unresolved required attestations'"
+        },
+        {
+          "action": "Transition work to in_progress state",
+          "expected": "State changes to in_progress",
+          "observed": "execution_state changed to in_progress"
+        },
+        {
+          "action": "Submit attestation matching required slot (verifier_kind=human, method=review, result=passed)",
+          "expected": "Attestation recorded, work transitions to done with approval_state=pending",
+          "observed": "Attestation created. Work transitioned to execution_state=done, approval_state=pending"
+        },
+        {
+          "action": "Approve work item",
+          "expected": "approval_state changes to verified",
+          "observed": "approval_state changed to verified"
+        }
+      ],
+      "evidence": {
+        "cliOutputFiles": [
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-work-create.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-premature-done-attempt.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-in-progress-state.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-attestation.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-after-done.json",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-004-approval.json"
+        ],
+        "consoleErrors": "none",
+        "network": "CLI -> HTTP API localhost:5380"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CONTRACT-005",
+      "title": "Code, docs, and persisted work-graph state share one explicit precedence rule",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check README.md for explicit precedence rule",
+          "expected": "README contains explicit 'Contract Precedence' section stating runtime code is canonical",
+          "observed": "README has '### Contract Precedence' section clearly stating: 'When runtime code, committed documentation, and persisted work-graph state disagree, runtime code is the canonical source of truth'"
+        },
+        {
+          "action": "Verify precedence rule covers all three sources (code, docs, persisted state)",
+          "expected": "Rule explicitly mentions all three: runtime code, committed documentation, and persisted work-graph state",
+          "observed": "Rule explicitly lists: (1) Work execution states - internal/core/types.go, (2) CLI/API contracts - runtime implementation, (3) Attestation semantics - code's AttestationRecord structure"
+        },
+        {
+          "action": "Check that docs reference the precedence rule",
+          "expected": "Proposal/spec docs contain contract notes pointing to types.go and README",
+          "observed": "docs/spec-check-flow.md has contract note: 'The canonical work execution states are defined in internal/core/types.go... See the README for the precedence rule'. docs/review-simplify-worker-contract.md has same contract note."
+        },
+        {
+          "action": "Verify CLI help text aligns with code definitions",
+          "expected": "CLI help for 'cogent work update --execution-state' lists valid states matching types.go",
+          "observed": "CLI help shows: 'Valid execution states: ready, claimed, in_progress, checking, blocked, done, failed, cancelled, archived' and notes 'awaiting_attestation is deprecated'. Code defines all these states including WorkExecutionStateAwaitingAttestation with comment 'deprecated alias for checking'"
+        },
+        {
+          "action": "Verify code is authoritative source",
+          "expected": "types.go defines all states, including deprecated ones with clear comments",
+          "observed": "internal/core/types.go defines WorkExecutionState constants with WorkExecutionStateAwaitingAttestation marked as 'deprecated alias for checking'"
+        }
+      ],
+      "evidence": {
+        "cliOutputFiles": [
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-005-cli-help.txt",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-005-code-states.txt",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-005-readme-precedence.txt",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-005-spec-check-flow-contract-note.txt",
+          "contract-freeze/contract-freeze-assertions/VAL-CONTRACT-005-review-contract-note.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "N/A - local file inspection"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 3 assertions: all passed. VAL-CONTRACT-003 confirmed that attestation contracts freeze at first dispatch, weakening is blocked, and escalation creates audited stricter requirements. VAL-CONTRACT-004 confirmed that terminal success (done state) is gated by attestation requirements. VAL-CONTRACT-005 confirmed that the precedence rule is explicitly documented in README, referenced by proposal docs, and CLI help aligns with code definitions."
+}

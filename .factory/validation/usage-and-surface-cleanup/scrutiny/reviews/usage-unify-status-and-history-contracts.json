@@ -1,0 +1,31 @@
+{
+  "featureId": "usage-unify-status-and-history-contracts",
+  "reviewedAt": "2026-03-25T08:30:00.000Z",
+  "commitId": "5403c12",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Comprehensive implementation that successfully unifies usage and cost reporting across status, catalog, and history surfaces. The code introduces a canonical per-job usage contract with deterministic multi-model aggregation, cost provenance tracking, and explicit retry/verifier attribution. All verification steps passed and test coverage is strong. No blocking issues found.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker reported that the `control-plane-worker` skill was not available via the Skill tool during execution, forcing deviation from the documented two-phase procedure (base setup + feature skill invocation). The worker completed the feature directly after base setup.",
+      "evidence": "Handoff skillFeedback.followedProcedure: false. Deviation: 'The `Skill` tool returned `Error: Skill \"control-plane-worker\" not found`, so I followed the mission contract and completed the implementation without the unavailable skill.' Worker session f6166d82-7377-4c53-bfbd-ac84d3ef5f42."
+    },
+    {
+      "area": "conventions",
+      "observation": "Worker added serve auto-start helper (`ensureServeForCommand`) in CLI e2e tests to handle serve-backed execution model. This testing pattern is not documented in AGENTS.md or services.yaml but may be useful for other e2e tests.",
+      "evidence": "cmd/cogent/e2e_test.go:1707-1760 adds `ensureServeForCommand` and `shouldAutoStartServe` helpers. Handoff notes: 'updated CLI tests to assert estimated-cost provenance while auto-starting serve in the e2e helper so the scoped cmd/cogent validator runs in the current serve-backed CLI model.'"
+    },
+    {
+      "area": "conventions",
+      "observation": "Usage attribution is persisted in job.Summary metadata using the pattern `job.Summary[\"usage_attribution\"]`. This is consistent with existing summary field usage (usage, cost, vendor_cost, estimated_cost) but the attribution stamping convention wasn't explicitly documented before this feature.",
+      "evidence": "internal/service/service.go:7487-7503 `stampJobUsageAttribution` function stamps attribution into job.Summary. The pattern follows existing summary field conventions but is a new semantic (role, attempt epoch, parent/worker linkage)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature PASS. Implementation fully satisfies all expected behaviors: (1) status exposes canonical usage object with deterministic per-model aggregation (sorted by provider then model), (2) vendor cost wins when present with estimated cost preserving observed_at provenance, (3) catalog/history rollups derive from the same canonical job usage contract, (4) usage and cost remain attributable across retries and verifier fan-out via UsageAttribution type. All verification steps passed including focused service tests, CLI e2e tests, lint, and build. Code follows existing patterns, has strong test coverage (435 new lines in service_test.go, updated e2e tests), and includes comprehensive catalog/history attribution tests. Worker skill availability gap noted in skillFeedback but did not affect implementation quality. Recommended for acceptance."
+}

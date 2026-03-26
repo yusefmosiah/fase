@@ -9,9 +9,9 @@ import (
 
 func TestResolvePathsUsesCogentOverrides(t *testing.T) {
 	env := map[string]string{
-		"FASE_CONFIG_DIR": "/tmp/fase-config",
-		"FASE_STATE_DIR":  "/tmp/fase-state",
-		"FASE_CACHE_DIR":  "/tmp/fase-cache",
+		"COGENT_CONFIG_DIR": "/tmp/cogent-config",
+		"COGENT_STATE_DIR":  "/tmp/cogent-state",
+		"COGENT_CACHE_DIR":  "/tmp/cogent-cache",
 	}
 
 	paths, err := ResolvePathsFromEnv("/Users/tester", func(key string) string { return env[key] })
@@ -19,16 +19,16 @@ func TestResolvePathsUsesCogentOverrides(t *testing.T) {
 		t.Fatalf("ResolvePathsFromEnv returned error: %v", err)
 	}
 
-	if paths.ConfigDir != "/tmp/fase-config" {
+	if paths.ConfigDir != "/tmp/cogent-config" {
 		t.Fatalf("expected config override, got %q", paths.ConfigDir)
 	}
-	if paths.StateDir != "/tmp/fase-state" {
+	if paths.StateDir != "/tmp/cogent-state" {
 		t.Fatalf("expected state override, got %q", paths.StateDir)
 	}
-	if paths.CacheDir != "/tmp/fase-cache" {
+	if paths.CacheDir != "/tmp/cogent-cache" {
 		t.Fatalf("expected cache override, got %q", paths.CacheDir)
 	}
-	if paths.DBPath != "/tmp/fase-state/cogent.db" {
+	if paths.DBPath != "/tmp/cogent-state/cogent.db" {
 		t.Fatalf("expected DB path under state dir, got %q", paths.DBPath)
 	}
 }
@@ -85,55 +85,49 @@ func TestResolveRepoStateDirFromReturnsCogentDir(t *testing.T) {
 	}
 }
 
-func TestMigrateLegacyRepoStateDirFromRenamesLegacyState(t *testing.T) {
+func TestMigrateLegacyRepoStateDirFromLeavesCogentStateUntouched(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
 	}
 
-	legacyDir := filepath.Join(root, ".fase")
-	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
-		t.Fatalf("mkdir legacy state dir: %v", err)
+	stateDir := filepath.Join(root, ".cogent")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
 	}
-	dbPath := filepath.Join(legacyDir, "fase.db")
-	privateDBPath := filepath.Join(legacyDir, "fase-private.db")
+	dbPath := filepath.Join(stateDir, "cogent.db")
+	privateDBPath := filepath.Join(stateDir, "cogent-private.db")
 	if err := os.WriteFile(dbPath, []byte("public-db"), 0o644); err != nil {
-		t.Fatalf("write legacy db: %v", err)
+		t.Fatalf("write db: %v", err)
 	}
 	if err := os.WriteFile(privateDBPath, []byte("private-db"), 0o644); err != nil {
-		t.Fatalf("write legacy private db: %v", err)
+		t.Fatalf("write private db: %v", err)
 	}
 
 	var logs []string
 	if err := MigrateLegacyRepoStateDirFrom(root, func(format string, args ...any) {
 		logs = append(logs, fmt.Sprintf(format, args...))
 	}); err != nil {
-		t.Fatalf("migrate legacy state dir: %v", err)
+		t.Fatalf("migrate repo state dir: %v", err)
 	}
-
-	if _, err := os.Stat(legacyDir); !os.IsNotExist(err) {
-		t.Fatalf("expected legacy state dir to be removed, got err=%v", err)
-	}
-
-	stateDir := filepath.Join(root, ".cogent")
 	if _, err := os.Stat(stateDir); err != nil {
-		t.Fatalf("expected new state dir to exist: %v", err)
+		t.Fatalf("expected state dir to exist: %v", err)
 	}
 	data, err := os.ReadFile(filepath.Join(stateDir, "cogent.db"))
 	if err != nil {
-		t.Fatalf("read migrated db: %v", err)
+		t.Fatalf("read db: %v", err)
 	}
 	if string(data) != "public-db" {
-		t.Fatalf("unexpected migrated db contents: %q", string(data))
+		t.Fatalf("unexpected db contents: %q", string(data))
 	}
 	data, err = os.ReadFile(filepath.Join(stateDir, "cogent-private.db"))
 	if err != nil {
-		t.Fatalf("read migrated private db: %v", err)
+		t.Fatalf("read private db: %v", err)
 	}
 	if string(data) != "private-db" {
-		t.Fatalf("unexpected migrated private db contents: %q", string(data))
+		t.Fatalf("unexpected private db contents: %q", string(data))
 	}
-	if len(logs) == 0 {
-		t.Fatal("expected migration log output")
+	if len(logs) != 0 {
+		t.Fatalf("expected no migration log output, got %v", logs)
 	}
 }

@@ -1,0 +1,70 @@
+{
+  "milestone": "docs-as-verification",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "build": {
+      "passed": true,
+      "command": "make build",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    },
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "docs-authoritative-linking-and-ingest-semantics",
+      "severity": "non_blocking",
+      "description": "New /api/work/doc-set endpoint lacks automated HTTP API test coverage. Manual validation passed, and CLI e2e test exercises the same service logic, but a dedicated HTTP handler test would strengthen the suite.",
+      "file": "internal/cli/serve.go",
+      "line": 814
+    },
+    {
+      "featureId": "docs-authoritative-linking-and-ingest-semantics",
+      "severity": "non_blocking",
+      "description": "GetDocContentByPath query uses defensive 'ORDER BY updated_at DESC LIMIT 1' for potential duplicate paths, but lacks database UNIQUE constraint. Service layer prevents conflicting work linkage, making this defensive behavior correct but not strictly necessary. Consider adding UNIQUE constraint migration in future hardening.",
+      "file": "internal/store/store.go",
+      "line": 1139
+    },
+    {
+      "featureId": "docs-align-runtime-briefings-and-proof-reporting",
+      "severity": "non_blocking",
+      "description": "notificationProofBundle function silently swallows errors when fetching related records. While likely intentional for best-effort delivery, there's no indication when proof bundles are incomplete, which could make debugging harder. Consider adding optional debug logging.",
+      "file": "internal/service/service.go",
+      "line": 5417
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document a pattern for using manifest-equivalent commands with isolated temporary state during manual validation. Workers should be able to validate CLI/API behavior without mutating the real repository state (e.g., using isolated COGENT_STATE_DIR and temp project directory on approved mission ports).",
+      "evidence": "Feature docs-authoritative-linking-and-ingest-semantics: Worker deviated from contract-alignment-worker skill Phase 1.7 by launching 'build/cogent serve' with isolated temporary COGENT_STATE_DIR instead of manifest repo-local state. Worker justified: 'The manifest start command would have written validation work items into the real repository state; using an isolated temp state preserved the user's local repo data while still validating the actual CLI/API behavior on an approved mission port.' Worker completed successfully and suggested: 'Allow an explicitly documented pattern for using manifest-equivalent commands with isolated temporary state during manual validation.'",
+      "isSystemic": true
+    },
+    {
+      "target": "mission-infrastructure",
+      "suggestion": "Investigate control-plane-worker skill availability. Feature docs-machine-readable-policy-and-completion-gates was assigned control-plane-worker but the skill was not found in the worker environment, forcing fallback to mission-worker-base. Worker completed successfully but this indicates a skill installation or availability gap that should be addressed.",
+      "evidence": "Feature docs-machine-readable-policy-and-completion-gates handoff skillFeedback shows: followedProcedure=false with deviation 'functions.Skill returned Skill \"control-plane-worker\" not found'. Worker transcript skeleton confirms attempted skill invocation followed by direct implementation using mission-worker-base fallback.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null,
+  "completionSummary": "All 3 implementation features for milestone docs-as-verification passed scrutiny review. Validators (build, lint, test) all passed. No blocking issues found, only 3 non-blocking observations around test coverage and error logging. All features successfully implement the documentation-as-verification contract: (1) tracked docs link to work items with authoritative repo paths; (2) machine-readable policy gates completion on required docs; (3) duplicate verification docs removed and reporting surfaces use canonical proof bundles. Two guidance recommendations for orchestrator: documenting isolated-temp-state validation pattern, and investigating control-plane-worker skill availability."
+}

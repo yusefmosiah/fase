@@ -15,7 +15,7 @@ Date: 2025-06-27
    ```go
    svc, err := service.Open(context.Background(), root.configPath)
    ```
-   Every detached worker spawned by `launchDetachedWorker` (`internal/service/service.go:4770`) runs `fase __run-job --job <id> --turn <id>`, which calls `service.Open()` and opens a **second** `*sql.DB` connection to the same `fase.db` file.
+   Every detached worker spawned by `launchDetachedWorker` (`internal/service/service.go:4770`) runs `cogent __run-job --job <id> --turn <id>`, which calls `service.Open()` and opens a **second** `*sql.DB` connection to the same `cogent.db` file.
 
 2. **`launchDetachedWorker` does NOT set `cmd.Dir`** (`internal/service/service.go:4791-4797`):
    ```go
@@ -25,7 +25,7 @@ Date: 2025-06-27
    cmd.Stdin = devNull
    // NO cmd.Dir = ...
    ```
-   The worker inherits serve's CWD (the main repo root), so `ResolvePathsForRepo()` resolves to the **same** `.fase/fase.db` as serve.
+   The worker inherits serve's CWD (the main repo root), so `ResolvePathsForRepo()` resolves to the **same** `.cogent/cogent.db` as serve.
 
 3. **WAL mode is properly configured** (`internal/store/store.go:2632`):
    ```go
@@ -34,11 +34,11 @@ Date: 2025-06-27
    ```
    WAL allows concurrent readers but **not** safe concurrent writers without application-level coordination. The `busy_timeout = 30000` (30s) handles short contention but under sustained concurrent writes (e.g., multiple workers updating jobs, events, and work items simultaneously), WAL can still produce corruption.
 
-4. **`fase mcp stdio` also opens its own DB** (`internal/cli/mcp.go:34`):
+4. **`cogent mcp stdio` also opens its own DB** (`internal/cli/mcp.go:34`):
    ```go
    svc, err := service.Open(context.Background(), root.configPath)
    ```
-   When Claude Code uses `fase mcp stdio` directly (not via proxy), it creates yet another writer.
+   When Claude Code uses `cogent mcp stdio` directly (not via proxy), it creates yet another writer.
 
 5. **CLI fallback creates additional writers** (`internal/cli/root.go:993`):
    ```go
@@ -50,14 +50,14 @@ Date: 2025-06-27
    ```
    If serve is briefly unreachable, CLI commands fall back to direct DB writes.
 
-6. **Physical evidence confirms corruption** — 4+ `fase-corrupt*.db` files in the OSINT project:
+6. **Physical evidence confirms corruption** — 4+ `cogent-corrupt*.db` files in the OSINT project:
    ```
-   ~/fase-evals/osint/.fase/fase-corrupt3.db  (1.9MB, Mar 23)
-   ~/fase-evals/osint/.fase/fase-corrupt4.db  (7.7MB, Mar 23)
+   ~/cogent-evals/osint/.cogent/cogent-corrupt3.db  (1.9MB, Mar 23)
+   ~/cogent-evals/osint/.cogent/cogent-corrupt4.db  (7.7MB, Mar 23)
    ```
-   Worktree directories also have their own `fase-corrupt*.db` files, confirming that workers in worktrees also experience corruption.
+   Worktree directories also have their own `cogent-corrupt*.db` files, confirming that workers in worktrees also experience corruption.
 
-7. **The OSINT project's own `osint.db` and `graph.db` are separate files** — they do NOT conflict with fase's SQLite.
+7. **The OSINT project's own `osint.db` and `graph.db` are separate files** — they do NOT conflict with cogent's SQLite.
 
 8. **serve does NOT check for existing `serve.json` before starting** (`internal/cli/serve.go:264`):
    ```go
@@ -98,7 +98,7 @@ if data, err := os.ReadFile(servePath); err == nil {
     var existing serveInfo
     if json.Unmarshal(data, &existing) == nil && existing.PID > 0 {
         if syscall.Kill(existing.PID, 0) == nil {
-            return fmt.Errorf("fase serve is already running (pid %d)", existing.PID)
+            return fmt.Errorf("cogent serve is already running (pid %d)", existing.PID)
         }
     }
 }
@@ -237,7 +237,7 @@ go func() {
        }
    }
    ```
-   If any SSE `data:` line exceeds 64KB (e.g., a large tool result from `fase work hydrate` or `fase project hydrate`), the scanner fails with `token too long` and stops reading. The error is **silently swallowed** — the function just returns without logging or propagating the error.
+   If any SSE `data:` line exceeds 64KB (e.g., a large tool result from `cogent work hydrate` or `cogent project hydrate`), the scanner fails with `token too long` and stops reading. The error is **silently swallowed** — the function just returns without logging or propagating the error.
 
 2. **No HTTP client timeout** (`internal/cli/mcp.go:runMCPProxy`):
    ```go

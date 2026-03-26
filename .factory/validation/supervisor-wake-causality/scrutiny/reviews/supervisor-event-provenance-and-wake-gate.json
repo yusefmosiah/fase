@@ -1,0 +1,51 @@
+{
+  "featureId": "supervisor-event-provenance-and-wake-gate",
+  "reviewedAt": "2026-03-25T01:30:00Z",
+  "commitId": "bab1931",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The implementation introduces a seen-set mechanism that successfully prevents immediate supervisor self-wake loops via (WorkID, State) filtering. However, there is a critical provenance gap: MCP tool calls from the supervisor use CreatedBy: 'mcp', which maps to ActorWorker instead of ActorSupervisor. This breaks trustworthy provenance for supervisor-originated events via MCP tools. While the seen-set provides a fallback defense against self-wake, it does not satisfy VAL-SUPERVISOR-003's requirement that 'wake-relevant events carry trustworthy provenance' across all transport boundaries including MCP.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server.go",
+        "line": 321,
+        "severity": "blocking",
+        "description": "MCP tool work_update uses CreatedBy: \"mcp\" which maps to ActorWorker via actorFromCreatedBy(). When the supervisor (running as an agentic session) calls work_update through MCP tools to mutate work state, the resulting events have Actor: ActorWorker instead of Actor: ActorSupervisor. This breaks VAL-SUPERVISOR-003 'wake-relevant events carry trustworthy provenance' for MCP-originated supervisor mutations. The actorFromCreatedBy() function needs to handle \"mcp\" as a case that should resolve to ActorSupervisor when the caller is the supervisor session, OR the MCP tools need to receive context about the caller's identity."
+      },
+      {
+        "file": "internal/service/events.go",
+        "line": 150,
+        "severity": "blocking",
+        "description": "actorFromCreatedBy() does not handle \"mcp\" as a valid actor source. It maps \"mcp\" (and any unknown value) to ActorWorker, which incorrectly classifies supervisor-originated MCP calls as worker events. This breaks provenance tracking required by VAL-SUPERVISOR-003."
+      },
+      {
+        "file": "internal/cli/supervisor_agent.go",
+        "line": 426,
+        "severity": "non_blocking",
+        "description": "filterNovelEvents uses only (WorkID, State) pairs for echo filtering. While this works for preventing immediate self-wake loops, it could incorrectly suppress a legitimate external event that happens to repeat a previously-seen state transition (e.g., if two different workers both try to mark the same work as 'done'). The filter should ideally incorporate Actor provenance to distinguish supervisor's own mutations from external events with same (WorkID, State). However, this is mitigated by the fact that in normal operation, only one worker processes a work item at a time."
+      },
+      {
+        "file": "internal/service/events_test.go",
+        "line": 171,
+        "severity": "non_blocking",
+        "description": "Test case 'new worker terminal after supervisor mutation wakes' tests RequiresSupervisorAttention() but does not test the seen-set filtering scenario. The test should verify that when the seen-set contains a prior supervisor mutation, a NEW external event with same (WorkID, State) still passes through filterNovelEvents. This would provide coverage for VAL-SUPERVISOR-006."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The CreatedBy field for MCP tool calls is set to \"mcp\" but actorFromCreatedBy() doesn't map this to any specific actor. This creates a gap where supervisor-originated MCP calls are misclassified as worker events. AGENTS.md should document that CreatedBy values must be one of: \"supervisor\", \"housekeeping\", \"reconciler\", \"worker\", or a new canonical source identifier.",
+      "evidence": "internal/mcpserver/server.go:321 sets CreatedBy: \"mcp\" but internal/service/events.go:150 maps only \"housekeeping\", \"reconciler\", \"supervisor\" to their respective actors; everything else becomes ActorWorker."
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill correctly guided the worker to use seen-set filtering for self-wake prevention, but the worker did not verify that MCP tool calls correctly propagate supervisor provenance. The skill could be enhanced to remind workers to check provenance fields across all transport boundaries (CLI, HTTP, MCP).",
+      "evidence": "Skill says 'Write or extend real _test.go characterization/failing tests first' - worker did this, but tests only cover the filtering mechanism, not the provenance source correctness for MCP-originated events."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "FAIL: The seen-set mechanism correctly prevents immediate supervisor self-wake (partially satisfying VAL-SUPERVISOR-002 and VAL-SUPERVISOR-001), but MCP tool calls use CreatedBy: 'mcp' which maps to ActorWorker, breaking trustworthy provenance for supervisor-originated mutations. This violates VAL-SUPERVISOR-003 which requires 'wake-relevant events carry trustworthy provenance' that survives 'CLI, HTTP, and MCP transport boundaries.' The Actor field is currently wrong for MCP-originated supervisor events, and this provenance gap must be fixed to satisfy the validation contract."
+}

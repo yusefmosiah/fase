@@ -49,7 +49,7 @@ func TestReportCommandUsesWorkerReportContract(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
 	serveData, err := json.Marshal(serveInfo{
 		PID:  os.Getpid(),
 		Port: port,
@@ -117,7 +117,7 @@ func TestCheckCreateCommandIncludesArtifacts(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
 	serveData, err := json.Marshal(serveInfo{
 		PID:  os.Getpid(),
 		Port: port,
@@ -202,7 +202,7 @@ func TestCheckListCommandUsesCanonicalDefaultLimit(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
 	serveData, err := json.Marshal(serveInfo{
 		PID:  os.Getpid(),
 		Port: port,
@@ -271,7 +271,7 @@ func TestWorkCheckCommandUsesCanonicalCheckResponse(t *testing.T) {
 	}
 
 	stateDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
 	serveData, err := json.Marshal(serveInfo{
 		PID:  os.Getpid(),
 		Port: port,

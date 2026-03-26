@@ -41,7 +41,7 @@ It has **zero operational awareness**. Concrete gaps from overnight runs:
 
 #### `serve_health`
 
-Returns operational health of the fase serve process.
+Returns operational health of the cogent serve process.
 
 ```go
 type serveHealthInput struct{}
@@ -50,10 +50,10 @@ type ServeHealthResult struct {
     Uptime          string            `json:"uptime"`           // "2h34m"
     ActiveJobs      int               `json:"active_jobs"`      // running job count
     ActiveWorktrees []WorktreeStatus  `json:"active_worktrees"` // list with work_id, path, branch, age
-    StaleBranches   []string          `json:"stale_branches"`   // fase/work/* branches with no worktree
+    StaleBranches   []string          `json:"stale_branches"`   // cogent/work/* branches with no worktree
     EventBusStats   EventBusStats     `json:"event_bus_stats"`  // published, drops, subscriber count
     RecentErrors    []RecentError     `json:"recent_errors"`    // last 10 errors from error ring buffer
-    DBSize          int64             `json:"db_size_bytes"`    // .fase/fase.db file size
+    DBSize          int64             `json:"db_size_bytes"`    // .cogent/cogent.db file size
     WorkerProcesses []WorkerProcess   `json:"worker_processes"` // PID, job_id, work_id, alive, age
 }
 
@@ -83,10 +83,10 @@ type RecentError struct {
 - `time.Since(startTime)` for uptime (store start time on serve init)
 - `ListJobs(state=running)` for active jobs
 - `git worktree list --porcelain` for worktrees
-- `git branch --list 'fase/work/*'` cross-referenced with worktrees for stale branches
+- `git branch --list 'cogent/work/*'` cross-referenced with worktrees for stale branches
 - `EventBus.Stats()` (already exists)
 - New error ring buffer (`internal/service/errors.go`, capacity 50)
-- `os.Stat(.fase/fase.db)` for DB size
+- `os.Stat(.cogent/cogent.db)` for DB size
 - `GetJobRuntime` + `isProcessAlive` for worker processes
 
 #### `worker_logs`
@@ -100,7 +100,7 @@ type workerLogsInput struct {
 }
 ```
 
-**Returns**: Last N lines from `.fase/raw/stdout/<job_id>/*.jsonl`, parsed to extract text content (tool calls, assistant messages, errors). Truncated to 10KB to prevent context overflow.
+**Returns**: Last N lines from `.cogent/raw/stdout/<job_id>/*.jsonl`, parsed to extract text content (tool calls, assistant messages, errors). Truncated to 10KB to prevent context overflow.
 
 **Implementation**: New `Service.WorkerLogs(jobID, tailN)` that reads the raw stdout JSONLs, extracts `content` fields, and returns the tail.
 
@@ -122,7 +122,7 @@ type dispatchErrorsInput struct {
 
 #### `worktree_status`
 
-List all FASE worktrees with their state.
+List all Cogent worktrees with their state.
 
 ```go
 type worktreeStatusInput struct{}
@@ -203,7 +203,7 @@ type jobKillInput struct {
 
 #### `dispatch_work`
 
-Dispatch a work item with operational error reporting (replaces the current pattern of calling `fase dispatch` via bash).
+Dispatch a work item with operational error reporting (replaces the current pattern of calling `cogent dispatch` via bash).
 
 ```go
 type dispatchWorkInput struct {
@@ -318,19 +318,19 @@ The error ring lives on `*Service` and is written to by dispatch, worktree creat
 ## Choiros-rs Hypervisor Mapping
 
 The choiros-rs hypervisor monitors sandbox health and intervenes:
-- **Sandbox heartbeat** → FASE equivalent: `isProcessAlive()` in housekeeping (already exists)
-- **Resource limits** → FASE equivalent: cost budget in `cost_report` tool (proposed)
-- **Sandbox restart** → FASE equivalent: `job_kill` + `dispatch_work` (kill stalled worker, redispatch)
-- **Health dashboard** → FASE equivalent: `serve_health` tool (proposed)
-- **Intervention protocol** → FASE equivalent: supervisor LLM reads health, decides action
+- **Sandbox heartbeat** → Cogent equivalent: `isProcessAlive()` in housekeeping (already exists)
+- **Resource limits** → Cogent equivalent: cost budget in `cost_report` tool (proposed)
+- **Sandbox restart** → Cogent equivalent: `job_kill` + `dispatch_work` (kill stalled worker, redispatch)
+- **Health dashboard** → Cogent equivalent: `serve_health` tool (proposed)
+- **Intervention protocol** → Cogent equivalent: supervisor LLM reads health, decides action
 
-Key difference: choiros-rs hypervisor is deterministic Go/Rust code. FASE supervisor is an LLM. The operational tools give the LLM the same information the hypervisor would have, but the LLM decides the intervention. This is consistent with ADR-0041's philosophy.
+Key difference: choiros-rs hypervisor is deterministic Go/Rust code. Cogent supervisor is an LLM. The operational tools give the LLM the same information the hypervisor would have, but the LLM decides the intervention. This is consistent with ADR-0041's philosophy.
 
-One area where choiros-rs is better: **fatal infrastructure recovery** (e.g., serve process crash, DB corruption). An LLM can't fix its own process dying. For that, FASE should have a **watchdog** — a separate process (systemd, launchd, or a Go goroutine in the parent) that restarts serve if it crashes. This is outside the MCP tool scope but worth noting.
+One area where choiros-rs is better: **fatal infrastructure recovery** (e.g., serve process crash, DB corruption). An LLM can't fix its own process dying. For that, Cogent should have a **watchdog** — a separate process (systemd, launchd, or a Go goroutine in the parent) that restarts serve if it crashes. This is outside the MCP tool scope but worth noting.
 
 ## How CI/CD Systems Auto-Remediate
 
-| System | Pattern | FASE Analog |
+| System | Pattern | Cogent Analog |
 |--------|---------|-------------|
 | GitHub Actions | Retry failed steps with `continue-on-error` | `dispatch_work` with retry count |
 | Kubernetes | Pod restart on liveness probe failure | `job_kill` + `dispatch_work` on stall detection |
@@ -338,7 +338,7 @@ One area where choiros-rs is better: **fatal infrastructure recovery** (e.g., se
 | Buildkite | Automatic retry with agent selection | Supervisor picks different adapter on retry |
 | Datadog Watchdog | Anomaly detection → alert | `serve_health` recent_errors → supervisor decides |
 
-The common pattern: **detect** (health check) → **decide** (retry? different agent? escalate?) → **act** (redispatch/kill/alert). FASE already has decent detect (housekeeping events) and act (dispatch), but the supervisor lacks the **observe** step — it can't inspect what went wrong. The proposed tools fill this gap.
+The common pattern: **detect** (health check) → **decide** (retry? different agent? escalate?) → **act** (redispatch/kill/alert). Cogent already has decent detect (housekeeping events) and act (dispatch), but the supervisor lacks the **observe** step — it can't inspect what went wrong. The proposed tools fill this gap.
 
 ## Implementation Priority
 
@@ -386,7 +386,7 @@ The supervisor's initial hydration should include the operational tools in its c
 
 1. **Should `serve_health` be called automatically at turn start (injected by Go code) or on-demand (supervisor decides)?** Recommendation: on-demand. The supervisor should learn to check health when things look wrong, not waste tokens on health checks when everything is fine.
 
-2. **Should `dispatch_work` replace the current bash-based `fase dispatch`?** Recommendation: yes. The MCP tool gives structured error reporting. The bash approach loses error context.
+2. **Should `dispatch_work` replace the current bash-based `cogent dispatch`?** Recommendation: yes. The MCP tool gives structured error reporting. The bash approach loses error context.
 
 3. **Should there be a `serve_restart` tool for the supervisor to restart the serve process itself?** Recommendation: no. Self-restart is dangerous — if the supervisor's judgment is impaired (e.g., by a context overflow), letting it restart serve could cause loops. Fatal recovery should be external (watchdog).
 

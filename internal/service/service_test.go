@@ -27,9 +27,9 @@ func TestRunPersistsFailedJobForUnavailableAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	setTestExecutable(t)
 	setTestExecutable(t)
@@ -86,9 +86,9 @@ func TestRunCompletesWithFakeCodexAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	setTestExecutable(t)
 	setTestExecutable(t)
@@ -168,9 +168,9 @@ func TestRunStatusEstimatesCostWhenModelPricingKnown(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -224,9 +224,9 @@ func TestClaudeRunStatusUsesVendorCost(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "claude"))
@@ -283,9 +283,9 @@ func TestOpenCodeStructuredErrorMarksJobFailed(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -333,9 +333,9 @@ func TestWaitStatusReturnsTerminalState(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -382,9 +382,9 @@ func TestSendContinuesFakeCodexSession(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -447,9 +447,9 @@ func TestRunCompletesWithFakeFactoryAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "droid"))
@@ -496,9 +496,9 @@ func TestRunAndSessionWithFakePiAdapter(t *testing.T) {
 	cacheDir := t.TempDir()
 	piDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	t.Setenv("PI_CODING_AGENT_DIR", piDir)
 	setTestExecutable(t)
 
@@ -572,9 +572,9 @@ func TestRunCompletesWithFakeGeminiAdapter(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "gemini"))
@@ -620,9 +620,9 @@ func TestSendContinuesFakeOpenCodeSession(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -676,9 +676,9 @@ func TestDebriefContinuesSessionAndWritesArtifact(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeBinary, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -790,9 +790,9 @@ func TestRuntimeIncludesAdapterTraits(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -833,9 +833,9 @@ func TestSyncAndShowCatalog(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
 	setTestExecutable(t)
 
@@ -959,9 +959,9 @@ func TestReadyWorkUsesCatalogModelTraitsAndModelPreferences(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -1055,9 +1055,9 @@ func TestProbeCatalogClassifiesEntries(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 	t.Setenv("GEMINI_API_KEY", "test-gemini-key")
 
@@ -1116,9 +1116,9 @@ func TestCatalogReflectsRecentModelHistory(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeOpenCode, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "opencode"))
@@ -1603,9 +1603,9 @@ func TestSearchHistoryFindsTurnsAndArtifacts(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1690,9 +1690,9 @@ func TestTransferExportAndRun(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1775,9 +1775,9 @@ func TestExportAndRunTransfer(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	fakeCodex, err := filepath.Abs(filepath.Join("..", "..", "testdata", "fake_clis", "codex"))
@@ -1866,10 +1866,10 @@ func TestExportAndRunTransfer(t *testing.T) {
 
 func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 	svc := &Service{
-		ConfigPath: "/tmp/fase-config/config.toml",
+		ConfigPath: "/tmp/cogent-config/config.toml",
 		Paths: core.Paths{
-			StateDir: "/tmp/fase-state",
-			CacheDir: "/tmp/fase-cache",
+			StateDir: "/tmp/cogent-state",
+			CacheDir: "/tmp/cogent-cache",
 		},
 	}
 
@@ -1886,16 +1886,16 @@ func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 		envMap[key] = value
 	}
 
-	if got := envMap["FASE_EXECUTABLE"]; got != "/opt/cogent/bin/cogent" {
+	if got := envMap["COGENT_EXECUTABLE"]; got != "/opt/cogent/bin/cogent" {
 		t.Fatalf("expected executable path to be propagated, got %q", got)
 	}
-	if got := envMap["FASE_CONFIG_DIR"]; got != "/tmp/fase-config" {
+	if got := envMap["COGENT_CONFIG_DIR"]; got != "/tmp/cogent-config" {
 		t.Fatalf("expected config dir to be propagated, got %q", got)
 	}
-	if got := envMap["FASE_STATE_DIR"]; got != "/tmp/fase-state" {
+	if got := envMap["COGENT_STATE_DIR"]; got != "/tmp/cogent-state" {
 		t.Fatalf("expected state dir to be propagated, got %q", got)
 	}
-	if got := envMap["FASE_CACHE_DIR"]; got != "/tmp/fase-cache" {
+	if got := envMap["COGENT_CACHE_DIR"]; got != "/tmp/cogent-cache" {
 		t.Fatalf("expected cache dir to be propagated, got %q", got)
 	}
 	if got := envMap["EXISTING_VAR"]; got != "present" {
@@ -1907,7 +1907,7 @@ func TestDetachedWorkerEnvIncludesRuntimePaths(t *testing.T) {
 }
 
 func TestDetachedExecutablePathPrefersCurrentBinaryOutsideGoTest(t *testing.T) {
-	t.Setenv("FASE_EXECUTABLE", "/stale/fase")
+	t.Setenv("COGENT_EXECUTABLE", "/stale/cogent")
 	original := osExecutable
 	osExecutable = func() (string, error) { return "/opt/cogent/bin/cogent", nil }
 	defer func() { osExecutable = original }()
@@ -1954,9 +1954,9 @@ func TestBootstrapCreateSeedsWorkAndBootstrapNote(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	projectRoot := t.TempDir()
@@ -2002,9 +2002,9 @@ func TestReviewWorkProposalRejectsSecondParentEdge(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -2068,9 +2068,9 @@ func TestReviewWorkProposalRejectsParentCycleOnReparent(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -2134,9 +2134,9 @@ func TestAttestationSignatureFieldsRoundTrip(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 
 	svc, err := Open(context.Background(), "")
 	if err != nil {
@@ -2183,12 +2183,12 @@ func setTestExecutable(t *testing.T) {
 	t.Helper()
 
 	testBinaryOnce.Do(func() {
-		dir, err := os.MkdirTemp("", "fase-service-test-*")
+		dir, err := os.MkdirTemp("", "cogent-service-test-*")
 		if err != nil {
 			testBinaryErr = err
 			return
 		}
-		testBinaryPath = filepath.Join(dir, "fase")
+		testBinaryPath = filepath.Join(dir, "cogent")
 		cmd := exec.Command("go", "build", "-o", testBinaryPath, "./cmd/cogent")
 		cmd.Dir = filepath.Join("..", "..")
 		output, err := cmd.CombinedOutput()
@@ -2201,7 +2201,7 @@ func setTestExecutable(t *testing.T) {
 		t.Fatalf("build cogent binary: %v", testBinaryErr)
 	}
 
-	t.Setenv("FASE_EXECUTABLE", testBinaryPath)
+	t.Setenv("COGENT_EXECUTABLE", testBinaryPath)
 }
 
 func mustWriteFile(t *testing.T, path, body string) {
@@ -2689,7 +2689,7 @@ func TestSupervisorReviewGuidanceKeepsChecksEvidenceOnly(t *testing.T) {
 		}
 	}
 	for _, old := range []string{
-		"2. If result is 'pass': call 'fase work update <work-id> --execution-state done'. This emails automatically with the report.",
+		"2. If result is 'pass': call 'cogent work update <work-id> --execution-state done'. This emails automatically with the report.",
 		"Only mark work as done when a check passes.",
 	} {
 		if strings.Contains(joined, old) {
@@ -2723,9 +2723,9 @@ func newTestService(t *testing.T) *Service {
 	stateDir := t.TempDir()
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	svc, err := Open(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)
@@ -2740,9 +2740,9 @@ func newRepoBackedTestService(t *testing.T) (*Service, string) {
 	stateDir := filepath.Join(repoRoot, ".cogent")
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	svc, err := Open(context.Background(), "")
 	if err != nil {
 		t.Fatalf("Open returned error: %v", err)
@@ -3534,9 +3534,9 @@ func TestPersistCheckScreenshots(t *testing.T) {
 	configDir := t.TempDir()
 	cacheDir := t.TempDir()
 
-	t.Setenv("FASE_STATE_DIR", stateDir)
-	t.Setenv("FASE_CONFIG_DIR", configDir)
-	t.Setenv("FASE_CACHE_DIR", cacheDir)
+	t.Setenv("COGENT_STATE_DIR", stateDir)
+	t.Setenv("COGENT_CONFIG_DIR", configDir)
+	t.Setenv("COGENT_CACHE_DIR", cacheDir)
 	setTestExecutable(t)
 
 	configPath := filepath.Join(configDir, "config.toml")
@@ -3714,7 +3714,7 @@ func TestGitMainRepoRoot(t *testing.T) {
 		t.Fatalf("mkdir: %v", err)
 	}
 	worktreeDir := filepath.Join(worktreesDir, workID)
-	branch := "fase/work/" + workID
+	branch := "cogent/work/" + workID
 	if out, err := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", branch, worktreeDir).CombinedOutput(); err != nil {
 		t.Fatalf("git worktree add: %v\n%s", err, out)
 	}

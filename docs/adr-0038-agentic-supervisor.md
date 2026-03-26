@@ -59,7 +59,7 @@ the same class of anomaly is handled autonomously next time.
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────┐
-│                         fase serve                                       │
+│                         cogent serve                                       │
 │                                                                          │
 │  ┌────────────────────────────────────────────────────────────────────┐  │
 │  │               Event-Driven Supervisor Loop (ADR-0037)              │  │
@@ -94,7 +94,7 @@ the same class of anomaly is handled autonomously next time.
 ### 1. Invocation Model
 
 The agentic supervisor is not a separate process. It runs in-process within
-`fase serve` as a stateful goroutine that the deterministic reactor calls when
+`cogent serve` as a stateful goroutine that the deterministic reactor calls when
 reasoning is needed. This keeps the system simple: one process, one work
 graph connection, one capability token, one source of truth.
 
@@ -159,7 +159,7 @@ is a superset of `worker` and `planner`, excluding host-only operations.
   must never archive items; only the host can collapse completed work into
   the graph history.
 
-**Token issuance:** The supervisor token is issued at `fase serve` startup,
+**Token issuance:** The supervisor token is issued at `cogent serve` startup,
 not per-invocation. It has a 24-hour expiry (matching the serve session) and is
 renewed on lease renewal. The token is held in memory, not written to disk —
 the supervisor is a trusted in-process component, not an external agent.
@@ -229,7 +229,7 @@ on the next invocation and adjusts behavior accordingly.
 After resolving an escalation, the host can append a policy note to the
 supervisor's hydration brief. The brief is stored as a convention note on a
 designated policy anchor work item (created at project bootstrap) and emitted
-by `fase project hydrate` as part of the project conventions.
+by `cogent project hydrate` as part of the project conventions.
 
 **Policy note format:**
 
@@ -394,7 +394,7 @@ This means:
 - Escalations are signed — the host can verify the escalation was created by
   the trusted supervisor, not by a worker attempting to inject a false anomaly.
 
-**Audit query:** `fase work history --actor supervisor` shows all write
+**Audit query:** `cogent work history --actor supervisor` shows all write
 operations performed by the supervisor across the work graph.
 
 ### 7. Learning Loop
@@ -451,8 +451,8 @@ establishes the overseer capability token and its enforcement.
 - `escalation` work item kind
 - Blocking edge auto-insertion on escalation creation
 - Auto-resolution: blocking edge removed when escalation transitions to `done`
-- Overseer token issuance at `fase serve` startup (requires ADR-0035 phases 1-3)
-- `fase work attest` with overseer token (supervisor-driven deterministic checks)
+- Overseer token issuance at `cogent serve` startup (requires ADR-0035 phases 1-3)
+- `cogent work attest` with overseer token (supervisor-driven deterministic checks)
 
 #### Phase 2: Structured Anomaly Triage
 
@@ -511,14 +511,14 @@ insertion pattern (§5a) and stale edge removal (§5b).
 #### Phase 5: Learning Loop Tooling
 
 Add tooling to support the learning loop (§7). Extract policy cases from
-resolved escalations. Provide a `fase supervisor policy` command for the host
+resolved escalations. Provide a `cogent supervisor policy` command for the host
 to review, add, and remove policy notes.
 
 **Deliverables:**
-- `fase supervisor policy list` — show current policy notes
-- `fase supervisor policy add <trigger> <action>` — add policy note
-- `fase supervisor escalations` — show unresolved and recently-resolved escalations
-- Escalation analytics: `fase supervisor stats` shows anomaly class frequency
+- `cogent supervisor policy list` — show current policy notes
+- `cogent supervisor policy add <trigger> <action>` — add policy note
+- `cogent supervisor escalations` — show unresolved and recently-resolved escalations
+- Escalation analytics: `cogent supervisor stats` shows anomaly class frequency
 
 ### 9. Interaction with ADR-0035 (Cryptographic Agent Identity)
 
@@ -567,7 +567,7 @@ set — the same enforcement that applies to workers applies to the supervisor.
 |------|------------|
 | Supervisor creates too many escalations (alert fatigue) | Phase 2 hardcodes deterministic resolution for common patterns; LLM invoked only for unknown anomalies |
 | Agent makes wrong call (bad edge removal, wrong recovery) | All actions are recorded in audit trail with rationale; host can reverse via `work:update` or edge restoration; `host:manual` flag protects host-created edges |
-| Overseer token stolen / misused | Token held in memory only (never written to disk); 24h expiry; all actions attributed in audit trail; host can revoke by restarting `fase serve` |
+| Overseer token stolen / misused | Token held in memory only (never written to disk); 24h expiry; all actions attributed in audit trail; host can revoke by restarting `cogent serve` |
 | Policy brief grows too large (context window limit) | Policy notes are versioned; stale/superseded notes are archived by host; brief is designed for consumption in a single context window |
 | Agent invocation latency blocks reactor | Agent calls are async; reactor does not block on agent response; if agent times out, the anomaly is escalated using the deterministic path |
 | Circular escalation (escalation about an escalation) | Escalations of kind `escalation` are never blocked by other escalations; detection: if escalation graph depth > 2, emit a warning and go straight to host |

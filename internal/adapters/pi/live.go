@@ -196,7 +196,7 @@ func (t *transport) readLoop(scanner *bufio.Scanner) {
 }
 
 func (t *transport) nextID() string {
-	return fmt.Sprintf("fase-%d", t.nextReqID.Add(1))
+	return fmt.Sprintf("cogent-%d", t.nextReqID.Add(1))
 }
 
 func (t *transport) call(ctx context.Context, cmdType string, params map[string]any) (json.RawMessage, error) {
@@ -637,7 +637,7 @@ func (s *piSession) steerLoop() {
 				continue
 			}
 
-			msg := fmt.Sprintf("[fase:message from=\"supervisor\" type=\"info\"]\n%s\n[/fase:message]", ev.Message)
+			msg := fmt.Sprintf("[cogent:message from=\"supervisor\" type=\"info\"]\n%s\n[/cogent:message]", ev.Message)
 			switch mode {
 			case DeliveryFollowUp:
 				_ = s.t.followUp(s.ctx, msg)

@@ -1,0 +1,70 @@
+{
+  "milestone": "supervisor-wake-causality",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go test ./internal/... -run '^$'",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 1,
+    "failed": 3,
+    "failedFeatures": [
+      "supervisor-event-provenance-and-wake-gate",
+      "supervisor-mcp-provenance-and-regression-fix",
+      "supervisor-mcp-session-provenance-fix"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "supervisor-mcp-provenance-and-regression-fix",
+      "severity": "blocking",
+      "description": "The fix documents the MCP provenance gap instead of restoring trustworthy supervisor provenance. Supervisor-triggered MCP mutations still do not emit ActorSupervisor, so VAL-SUPERVISOR-003 remains unsatisfied."
+    },
+    {
+      "featureId": "supervisor-mcp-session-provenance-fix",
+      "severity": "blocking",
+      "description": "The session/role propagation fix is still missing. MCP mutation handlers continue to stamp CreatedBy=\"mcp\", so supervisor-originated MCP work remains ActorMCP rather than ActorSupervisor."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add a boundary stating that provenance must be verified across CLI, HTTP, MCP, and service-generated follow-on paths, and that MCP-created events need explicit caller/session context when the supervisor is the true caller.",
+      "evidence": "Both MCP provenance fix reviews passed helper-level assertions but left the production MCP mutation path unresolved.",
+      "isSystemic": true
+    },
+    {
+      "target": "skill",
+      "suggestion": "Update control-plane-worker guidance to require end-to-end transport-boundary provenance checks, not just helper mapping assertions.",
+      "evidence": "The MCP provenance fixes relied on synthetic helper tests and did not exercise the live MCP handlers or caller/session plumbing.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The library already documents the MCP provenance gap as a known limitation in contracts.md.",
+      "reason": "already-documented"
+    },
+    {
+      "observation": "The supervisor timing values (30-second debounce / 10-second idle backoff) are already recorded in contracts.md.",
+      "reason": "already-documented"
+    }
+  ],
+  "previousRound": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/synthesis.round1.json"
+}

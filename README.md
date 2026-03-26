@@ -1,6 +1,6 @@
-# FASE
+# Cogent
 
-`fase` is the command-line entrypoint for FASE, the Fully Automated Software Engineering local work-control plane for governed agent work.
+`cogent` is the command-line entrypoint for Cogent, the Fully Automated Software Engineering local work-control plane for governed agent work.
 
 It gives you:
 - a **work graph** (SQLite) that tracks work items, dependency edges, attestations, approvals, and promotions,
@@ -25,7 +25,7 @@ When runtime code, committed documentation, and persisted work-graph state disag
 - **CLI/API contracts**: The runtime implementation defines the authoritative surface; docs are derivatives.
 - **Attestation semantics**: The code's `AttestationRecord` structure and guard logic define the contract.
 
-Workers should reference `fase work update --execution-state` with the values from `internal/core/types.go` for valid states. Any doc that contradicts the code's state definitions should be treated as historical.
+Workers should reference `cogent work update --execution-state` with the values from `internal/core/types.go` for valid states. Any doc that contradicts the code's state definitions should be treated as historical.
 
 ### Canonical Lifecycle
 
@@ -65,10 +65,10 @@ All machine-facing surfaces (CLI `--json`, HTTP API, MCP tools) expose the same 
 - Usage attribution tracks per-model token counts for multi-model jobs.
 
 Key specs:
-- [docs/fase-v0-local-control-plane.md](docs/fase-v0-local-control-plane.md) — product direction and v0 scope
-- [docs/fase-work-runtime.md](docs/fase-work-runtime.md) — work runtime design
-- [docs/fase-work-api-and-schema.md](docs/fase-work-api-and-schema.md) — work CLI/API schema
-- [docs/fase-worker-briefing-schema.md](docs/fase-worker-briefing-schema.md) — hydration contract
+- [docs/cogent-v0-local-control-plane.md](docs/cogent-v0-local-control-plane.md) — product direction and v0 scope
+- [docs/cogent-work-runtime.md](docs/cogent-work-runtime.md) — work runtime design
+- [docs/cogent-work-api-and-schema.md](docs/cogent-work-api-and-schema.md) — work CLI/API schema
+- [docs/cogent-worker-briefing-schema.md](docs/cogent-worker-briefing-schema.md) — hydration contract
 - [schemas/worker-briefing.schema.json](schemas/worker-briefing.schema.json) — briefing JSON schema
 
 ## Status
@@ -96,7 +96,7 @@ Practical summary:
 
 ## Intended Use
 
-`fase` is a local runtime for governed agent work. The operator experience:
+`cogent` is a local runtime for governed agent work. The operator experience:
 - capture ideas and work from the terminal (`work create`, `inbox`)
 - define or bootstrap work locally
 - inspect the work graph via CLI or mind-graph UI
@@ -144,26 +144,26 @@ Readiness mission milestones (all complete):
 ## Implemented
 
 Commands currently wired:
-- `fase run`
-- `fase serve`
-- `fase status`
-- `fase logs`
-- `fase send`
-- `fase debrief`
-- `fase artifacts list`
-- `fase artifacts show`
-- `fase history search`
-- `fase cancel`
-- `fase list`
-- `fase session`
-- `fase transfer export`
-- `fase transfer run`
-- `fase adapters`
-- `fase catalog sync`
-- `fase catalog show`
-- `fase catalog probe`
-- `fase runtime`
-- `fase version`
+- `cogent run`
+- `cogent serve`
+- `cogent status`
+- `cogent logs`
+- `cogent send`
+- `cogent debrief`
+- `cogent artifacts list`
+- `cogent artifacts show`
+- `cogent history search`
+- `cogent cancel`
+- `cogent list`
+- `cogent session`
+- `cogent transfer export`
+- `cogent transfer run`
+- `cogent adapters`
+- `cogent catalog sync`
+- `cogent catalog show`
+- `cogent catalog probe`
+- `cogent runtime`
+- `cogent version`
 
 Canonical persistence currently wired:
 - sessions
@@ -190,7 +190,7 @@ Testing currently in repo:
 - unit tests for core/store/service paths
 - fixture-based translation tests
 - fake CLI integration tests for all implemented adapters
-- staged orchestration E2E tests, including recursive `fase` workflows
+- staged orchestration E2E tests, including recursive `cogent` workflows
 - env-gated live low-cost smoke tests
 - live smoke tests already exercised against real installed CLIs
 
@@ -205,7 +205,7 @@ Remaining gaps versus the spec:
 ## Repository Layout
 
 Main code locations:
-- [cmd/fase/main.go](cmd/fase/main.go)
+- [cmd/cogent/main.go](cmd/cogent/main.go)
 - [internal/cli/root.go](internal/cli/root.go)
 - [internal/service/service.go](internal/service/service.go)
 - [internal/store/store.go](internal/store/store.go)
@@ -227,8 +227,8 @@ Requirements:
 Build:
 
 ```bash
-make build        # produces build/fase
-make install      # installs to ~/.local/bin/fase
+make build        # produces build/cogent
+make install      # installs to ~/.local/bin/cogent
 ```
 
 Test:
@@ -241,28 +241,28 @@ make lint         # go vet ./...
 Serve (UI + API + supervisor):
 
 ```bash
-fase serve                        # UI + API + housekeeping on default port
-fase serve --auto                 # also auto-dispatch ready work
-fase serve --host 0.0.0.0        # accessible via Tailscale/LAN
-fase serve --no-browser           # don't open browser on start
+cogent serve                        # UI + API + housekeeping on default port
+cogent serve --auto                 # also auto-dispatch ready work
+cogent serve --host 0.0.0.0        # accessible via Tailscale/LAN
+cogent serve --no-browser           # don't open browser on start
 ```
 
 Run:
 
 ```bash
-fase run --adapter codex --cwd . --prompt "Reply with exactly OK."
-fase status --wait <job-id>
-fase logs --follow <job-id>
-fase artifacts list --job <job-id>
-fase history search --query "provider outage" --adapter claude
-fase work create --title "Implement X" --objective "Do the work"
-fase work claim-next --claimant worker-a
-fase work release <work-id> --claimant worker-a
-fase adapters --json
-fase catalog sync --json
-fase catalog show --json
-fase catalog probe --json --adapter opencode --provider openai
-fase runtime --json
+cogent run --adapter codex --cwd . --prompt "Reply with exactly OK."
+cogent status --wait <job-id>
+cogent logs --follow <job-id>
+cogent artifacts list --job <job-id>
+cogent history search --query "provider outage" --adapter claude
+cogent work create --title "Implement X" --objective "Do the work"
+cogent work claim-next --claimant worker-a
+cogent work release <work-id> --claimant worker-a
+cogent adapters --json
+cogent catalog sync --json
+cogent catalog show --json
+cogent catalog probe --json --adapter opencode --provider openai
+cogent runtime --json
 ```
 
 ## Catalog
@@ -290,25 +290,25 @@ The staged release matrix for contract, fake, live low-cost, recovery, and recur
 
 ## History
 
-`history search` is the lightweight canonical search path over `fase`'s own local store.
+`history search` is the lightweight canonical search path over `cogent`'s own local store.
 
 It searches existing jobs, turns, events, and persisted artifacts without requiring a separate index or importer.
 
 Use it for:
-- recalling prior work launched through `fase`,
+- recalling prior work launched through `cogent`,
 - finding debrief/transfer artifacts by content,
 - mining recent canonical sessions before deciding whether adapter-native import is needed.
 
-Adapter-native history import remains a future special case for sessions that were never created by `fase`.
+Adapter-native history import remains a future special case for sessions that were never created by `cogent`.
 
 ## Configuration
 
 Config is loaded from the default XDG-style path or `--config`.
 
 Environment overrides:
-- `FASE_CONFIG_DIR`
-- `FASE_STATE_DIR`
-- `FASE_CACHE_DIR`
+- `COGENT_CONFIG_DIR`
+- `COGENT_STATE_DIR`
+- `COGENT_CACHE_DIR`
 
 Current default adapter config is defined in [internal/core/config.go](internal/core/config.go).
 

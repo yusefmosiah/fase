@@ -1,0 +1,222 @@
+{
+  "groupId": "supervisor-wake-causality",
+  "testedAt": "2026-03-25T03:33:27.944899+00:00",
+  "isolation": {
+    "repoRoot": "/Users/wiz/cogent",
+    "missionDir": "/Users/wiz/.factory/missions/c19aa64a-e3f7-4a93-a71f-17a81e7c5e30",
+    "serveUrl": "http://localhost:5380",
+    "portRange": "5380-5389"
+  },
+  "toolsUsed": [
+    "cli",
+    "http",
+    "go test"
+  ],
+  "assertions": [
+    {
+      "id": "VAL-SUPERVISOR-001",
+      "title": "Only actionable events wake the supervisor",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "CLI work update on work_01KMHGF1AT0YX4BNSZQT0PFGWH with execution_state=ready",
+          "expected": "Same-state refresh should be noise",
+          "observed": "Work update recorded with execution_state=ready and created_by=cli"
+        },
+        {
+          "action": "CLI claim, renew-lease, and in_progress update on the same work",
+          "expected": "Claim/change and worker progress transitions appear only when state changes",
+          "observed": "Claim, lease renew, and progress updates were recorded in the live trace"
+        },
+        {
+          "action": "Focused service tests for wake/no-wake cases",
+          "expected": "Lease renewals, same-state progress, claim churn, and housekeeping noise do not wake",
+          "observed": "Truth-table tests passed for non-actionable cases"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-service.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/work/<id>/update, POST /api/work/<id>/claim, POST /api/work/<id>/renew-lease"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SUPERVISOR-002",
+      "title": "Supervisor-originated mutations never self-wake",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "CLI attestation on work_01KMHGF1AX37ASFZ5DTW2BT0E9 after check pass",
+          "expected": "Attestation should record without self-wake loop",
+          "observed": "Attestation recorded and work advanced to done"
+        },
+        {
+          "action": "HTTP job run with label=supervisor and linked WorkID on work_01KMHGQH9ANGQF769KKW13QMAM",
+          "expected": "Supervisor-labeled completion should remain supervisor provenance and not re-wake itself",
+          "observed": "Job completed with label supervisor; work moved to awaiting_attestation and spawned one attestation child"
+        },
+        {
+          "action": "Focused provenance tests",
+          "expected": "Supervisor mutations are classified as non-waking",
+          "observed": "Supervisor provenance tests passed"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace-fixes.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-service.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-mcpserver.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/job/run, GET /api/job/<id>/status, GET /api/work/<id>"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SUPERVISOR-003",
+      "title": "Wake-relevant events carry trustworthy provenance",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "CLI update/claim/renew-lease on work_01KMHGF1AT0YX4BNSZQT0PFGWH",
+          "expected": "CLI-originated events should show CLI provenance",
+          "observed": "Work updates were recorded with created_by=cli"
+        },
+        {
+          "action": "CLI check and attestation on work_01KMHGF1AX37ASFZ5DTW2BT0E9",
+          "expected": "Checker/attester provenance survives the HTTP surface",
+          "observed": "Check created_by=cli and attestation created_by=cli; work transitioned through awaiting_attestation to done"
+        },
+        {
+          "action": "MCP provenance tests across external and supervisor contexts",
+          "expected": "Actor mapping survives transport boundaries",
+          "observed": "CLI/HTTP/MCP/host/service mappings passed"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace-fixes.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-service.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-mcpserver.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/work/<id>/check, POST /api/work/<id>/attest, POST /api/job/run"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SUPERVISOR-004",
+      "title": "External worker, checker, attestation, host, and housekeeping signals wake exactly when needed",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Live check pass on work_01KMHGF1AX37ASFZ5DTW2BT0E9",
+          "expected": "Checker result should wake the supervisor path",
+          "observed": "Work moved to awaiting_attestation and check record persisted"
+        },
+        {
+          "action": "Live attestation pass on the same work",
+          "expected": "Attestation result should wake the supervisor path",
+          "observed": "Attestation recorded and work moved to done"
+        },
+        {
+          "action": "Service tests for worker completion, host/manual, stall, and orphan cases",
+          "expected": "Each category should map to a wake-relevant event",
+          "observed": "All targeted wake-category tests passed"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace-fixes.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-service.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/work/<id>/check, POST /api/work/<id>/attest"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SUPERVISOR-005",
+      "title": "Idle suppression, burst batching, and recovery avoid churn without losing context",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "CLI duplicate same-state updates and lease renew on work_01KMHGF1AT0YX4BNSZQT0PFGWH",
+          "expected": "Non-actionable chatter should not create extra supervisor churn",
+          "observed": "Same-state refresh, renew-lease, and duplicate in-progress update were recorded without additional behavioral regressions"
+        },
+        {
+          "action": "Supervisor loop unit tests",
+          "expected": "Idle backoff and burst batching should preserve context and avoid churn",
+          "observed": "Burst batching, idle backoff, and no-churn tests passed"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-cli.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/work/<id>/update, POST /api/work/<id>/renew-lease"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SUPERVISOR-006",
+      "title": "Self-wake suppression never hides later legitimate external events",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Supervisor-labeled job completion on work_01KMHGQH9ANGQF769KKW13QMAM after earlier self-caused transitions",
+          "expected": "A later external event with new provenance should still be delivered once",
+          "observed": "Linked job completed and work moved to awaiting_attestation with new attestation child work"
+        },
+        {
+          "action": "Service and streamable HTTP provenance tests",
+          "expected": "Repeated same-state external events still wake when genuinely actionable",
+          "observed": "External-after-supervisor wake tests passed"
+        }
+      ],
+      "evidence": {
+        "artifacts": [
+          "supervisor-wake-causality/supervisor-wake-causality/live-trace-fixes.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-service.txt",
+          "supervisor-wake-causality/supervisor-wake-causality/tests-mcpserver.txt"
+        ],
+        "consoleErrors": "none",
+        "network": "POST /api/job/run, GET /api/job/<id>/status, GET /api/work/<id>"
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [
+    {
+      "description": "The first attestation attempt used the wrong verifier/method tuple and was rejected by the API.",
+      "resolved": true,
+      "resolution": "Reran the attestation with verifier_kind=attestation and method=automated_review.",
+      "affectedAssertions": [
+        "VAL-SUPERVISOR-002",
+        "VAL-SUPERVISOR-003",
+        "VAL-SUPERVISOR-004"
+      ]
+    },
+    {
+      "description": "The first linked job run omitted the correct WorkID JSON field and the codex adapter hit an account usage limit.",
+      "resolved": true,
+      "resolution": "Reran the job with WorkID set and switched to the factory adapter, which completed successfully.",
+      "affectedAssertions": [
+        "VAL-SUPERVISOR-002",
+        "VAL-SUPERVISOR-003",
+        "VAL-SUPERVISOR-006"
+      ]
+    }
+  ],
+  "blockers": [],
+  "summary": "All six supervisor wake assertions were exercised via live CLI/HTTP flows and supporting focused tests; no blockers remain."
+}

@@ -1,4 +1,4 @@
-# Deep Review: Simplify FASE Around a Singular Worker Contract
+# Deep Review: Simplify Cogent Around a Singular Worker Contract
 
 **Work ID:** `work_01KMF31JMH9SCZRH8E9PM72DKZ`
 **Date:** 2026-03-24
@@ -11,7 +11,7 @@
 
 ### 1. Communication Paths
 
-FASE has **7 distinct communication paths** where there should be **1 pattern**:
+Cogent has **7 distinct communication paths** where there should be **1 pattern**:
 
 | Path | Mechanism | Entry Point | Notes |
 |------|-----------|-------------|-------|
@@ -29,7 +29,7 @@ FASE has **7 distinct communication paths** where there should be **1 pattern**:
 
 | Concept | Worker calls it | Supervisor calls it | CLI calls it | Service calls it |
 |---------|----------------|-------------------|-------------|-----------------|
-| "Tell the orchestrator something" | `notify_host` | `notifyHost()` | `fase notify` | `SendChannelEvent()` |
+| "Tell the orchestrator something" | `notify_host` | `notifyHost()` | `cogent notify` | `SendChannelEvent()` |
 | "Send work to agent" | N/A | `svc.Send()` | `POST /api/dispatch` | `Run()` / `queueContinuation()` |
 | "Receive messages" | MCP stdin | `hostCh` channel | N/A | EventBus.Subscribe() |
 
@@ -51,7 +51,7 @@ FASE has **7 distinct communication paths** where there should be **1 pattern**:
 | check record create | Y | Y | Y | - |
 | check record list | Y | - | Y | CLI missing |
 | check record show | Y | - | Y | CLI missing |
-| notify_host | Y | Y (`fase notify`) | Y (`/api/channel/send`) | - |
+| notify_host | Y | Y (`cogent notify`) | Y (`/api/channel/send`) | - |
 | session_send | Y | - | Y (`/api/supervisor/send`) | CLI missing |
 | send_escalation_email | Y | - | - | CLI+HTTP missing |
 | work block | - | Y | via update | MCP missing |
@@ -128,7 +128,7 @@ The supervisor has **5 interacting mechanisms:**
 
 **Aspirational only (9):**
 1. Git commit before exit — not validated
-2. `fase work update` to `checking`/`failed` — not validated (worker can just exit)
+2. `cogent work update` to `checking`/`failed` — not validated (worker can just exit)
 3. `notify_host` before exit — not validated
 4. Record notes — not validated
 5. Run verification — not validated
@@ -168,12 +168,12 @@ ReadyWork() -> HTTP POST /api/dispatch -> HydrateWork() -> ClaimWork()
 
 ### The Singular Contract
 
-Every FASE agent (worker, supervisor, checker) follows ONE pattern:
+Every Cogent agent (worker, supervisor, checker) follows ONE pattern:
 
 ```
 1. RECEIVE work via briefing (prompt with work_id, instructions, context)
 2. DO the work (code, review, check — whatever the kind requires)
-3. REPORT via `fase report <work_id> --state <next_state> --message "<summary>"`
+3. REPORT via `cogent report <work_id> --state <next_state> --message "<summary>"`
 4. EXIT
 ```
 
@@ -185,7 +185,7 @@ That's it. Three verbs: **receive, do, report.**
 |------------------------|-------------------|
 | `notify_host` MCP tool | `report` MCP tool |
 | `notifyHost()` supervisor method | `report()` |
-| `fase notify` CLI | `fase report` CLI |
+| `cogent notify` CLI | `cogent report` CLI |
 | `work_update` for state changes | `report` (combines state + message + notification) |
 | `session_send` | `message` (send message to running session) |
 | `SendChannelEvent()` | `Report()` service method |
@@ -235,7 +235,7 @@ All operations defined once in `Service`, exposed identically on all three surfa
 ```
 Service.Report(ctx, ReportRequest) -> exposed as:
   - MCP tool: report
-  - CLI: fase report <work_id> --state X --message Y
+  - CLI: cogent report <work_id> --state X --message Y
   - HTTP: POST /api/work/report
 ```
 
@@ -257,7 +257,7 @@ New operations added to `Service` get auto-generated handlers via a registry pat
 
 6. **Create `Service.Report()` method** — atomic operation that: updates state, adds message, publishes event, sends notification. One call replaces three.
 7. **Rename `notify_host` MCP tool to `report`** — update `tools_channel.go`. Keep `notify_host` as alias for one release.
-8. **Update `fase notify` CLI to `fase report`** — update `cli/check.go`. Keep `notify` as alias.
+8. **Update `cogent notify` CLI to `cogent report`** — update `cli/check.go`. Keep `notify` as alias.
 9. **Update worker briefing** — simplify rules from 12 to 3: do work, report state, exit.
 
 ### Phase 3: API Surface Consolidation (Medium impact, medium risk)
@@ -276,7 +276,7 @@ New operations added to `Service` get auto-generated handlers via a registry pat
 
 ### Phase 5: Briefing Simplification (Lower impact, low risk)
 
-18. **Reduce worker rules to 3** — (1) do the work, (2) `fase report` with state, (3) exit. All other guidance moves to project conventions discoverable via `project hydrate`.
+18. **Reduce worker rules to 3** — (1) do the work, (2) `cogent report` with state, (3) exit. All other guidance moves to project conventions discoverable via `project hydrate`.
 19. **Remove static `docs/checker-briefing.md`** — checker briefing is already auto-generated from `CompileWorkerBriefing()` for kind="attest". The static doc is stale.
 20. **Unify checker and worker briefing generation** — single `CompileBriefing(kind)` function, no special cases.
 

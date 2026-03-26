@@ -66,5 +66,5 @@ func resolveSessionPath(sessionID string) (string, error) {
 		}
 		base = filepath.Join(home, ".pi", "agent")
 	}
-	return filepath.Join(base, "sessions", "fase-"+sessionID+".jsonl"), nil
+	return filepath.Join(base, "sessions", "cogent-"+sessionID+".jsonl"), nil
 }

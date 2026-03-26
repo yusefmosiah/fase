@@ -313,7 +313,7 @@ func execWebFetch(ctx context.Context, args json.RawMessage) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	req.Header.Set("User-Agent", "fase-native-adapter/1.0")
+	req.Header.Set("User-Agent", "cogent-native-adapter/1.0")
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

@@ -20,7 +20,7 @@ import (
 type Adapter struct {
 	binary  string
 	enabled bool
-	svc     any // service instance for FASE tools (set via SetService)
+	svc     any // service instance for Cogent tools (set via SetService)
 }
 
 func New(binary string, enabled bool) *Adapter {
@@ -28,7 +28,7 @@ func New(binary string, enabled bool) *Adapter {
 }
 
 // SetService injects the service instance so the native adapter can
-// register FASE tools (work_list, dispatch, etc.) in its sessions.
+// register Cogent tools (work_list, dispatch, etc.) in its sessions.
 func (a *Adapter) SetService(svc any) {
 	a.svc = svc
 }
@@ -328,7 +328,7 @@ func (a *LiveAdapter) buildRegistry(cwd string, manager *coAgentManager) (*ToolR
 		_ = registry.Register(WebFetchTool())
 	}
 	if a.svc != nil {
-		if err := RegisterFASETools(registry, a.svc); err != nil {
+		if err := RegisterCogentTools(registry, a.svc); err != nil {
 			return nil, err
 		}
 	}

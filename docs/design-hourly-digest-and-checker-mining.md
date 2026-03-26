@@ -109,7 +109,7 @@ tick (every hour)
   │   Output: DigestInsights (see below)
   │
   └─ Send email (fire-and-forget)
-      Subject: "[FASE] digest: 18:00–19:00 · 4 done · 2 failed"
+      Subject: "[Cogent] digest: 18:00–19:00 · 4 done · 2 failed"
       Body: BuildDigestEmail(data, insights)
 ```
 
@@ -122,7 +122,7 @@ If there were zero completions and zero check records in the window: **skip** �
 ### Input Prompt (structured)
 
 ```
-You are analyzing FASE work queue activity for the past hour.
+You are analyzing Cogent work queue activity for the past hour.
 
 ## Completed Work Items (${N} total)
 ${list of titles, check results, and diff stats}
@@ -163,10 +163,10 @@ If synthesis fails/times out: send digest without the intelligence section. The 
 ## Digest Email Structure
 
 ```
-Subject: [FASE] digest 18:00–19:00 · 4 done · 1 failed
+Subject: [Cogent] digest 18:00–19:00 · 4 done · 1 failed
 
 ┌─────────────────────────────────────────────────────┐
-│ FASE Hourly Digest                                   │
+│ Cogent Hourly Digest                                   │
 │ 2026-03-24 18:00 – 19:00                            │
 ├─────────────────────────────────────────────────────┤
 │ HIGHLIGHT (LLM one-liner)                           │
@@ -248,7 +248,7 @@ The mining pass examines the `CheckerNotes` field from `CheckReport` across a ro
 
 ## Integration with Serve
 
-In `cmd/fase/main.go` (or wherever `serve` initializes):
+In `cmd/cogent/main.go` (or wherever `serve` initializes):
 
 ```go
 if os.Getenv("DIGEST_ENABLED") == "true" {
@@ -282,7 +282,7 @@ No changes to supervisor briefing or check flow. The digest worker is a complete
 ## Open Questions / Risks
 
 **Q: What if serve restarts mid-hour?**
-The lookback query covers the full period since the last digest. On restart, the next tick will cover everything since the last email, not just since the restart. This requires tracking "last digest sent at" — either in a small state file (`.fase/digest-last-run.txt`) or in the DB (a new `system_state` KV table). Simplest: env var `DIGEST_LAST_RUN` or a file.
+The lookback query covers the full period since the last digest. On restart, the next tick will cover everything since the last email, not just since the restart. This requires tracking "last digest sent at" — either in a small state file (`.cogent/digest-last-run.txt`) or in the DB (a new `system_state` KV table). Simplest: env var `DIGEST_LAST_RUN` or a file.
 
 **Q: What if the native LLM client isn't configured (no Bedrock/Anthropic keys)?**
 Synthesis gracefully fails; digest is sent with structured data only (no narrative section). Log a warning. Don't skip the digest.

@@ -1,8 +1,8 @@
-# FASE Overnight Autonomous Run Report — 2026-03-22
+# Cogent Overnight Autonomous Run Report — 2026-03-22
 
 ## Summary
 
-First sustained autonomous run of FASE managing a real project (OSINT intelligence feed aggregator). The supervisor ran for ~15 hours with periodic host oversight via hourly cron checks. The system produced a working Go service with 19,486 lines across 64 files and 12 test packages — all passing.
+First sustained autonomous run of Cogent managing a real project (OSINT intelligence feed aggregator). The supervisor ran for ~15 hours with periodic host oversight via hourly cron checks. The system produced a working Go service with 19,486 lines across 64 files and 12 test packages — all passing.
 
 ## Timeline
 
@@ -63,7 +63,7 @@ Workers rotated across z.ai (GLM), Bedrock (Claude), ChatGPT (GPT), and Claude C
 After the spec was complete, the supervisor autonomously created and dispatched work items for LLM intelligence analysis, entity extraction, graph databases, cross-source correlation, trend detection, and alerting — going well beyond the original spec.
 
 ### 5. Infrastructure improvements discovered and fixed in production
-The overnight run surfaced and fixed 8+ FASE bugs that wouldn't have been found in unit testing: context overflow, event loss, housekeeping races, stale workers, session lock conflicts.
+The overnight run surfaced and fixed 8+ Cogent bugs that wouldn't have been found in unit testing: context overflow, event loss, housekeeping races, stale workers, session lock conflicts.
 
 ## Failures
 
@@ -100,12 +100,12 @@ Workers created 64 files and 19K+ lines but never committed. All changes are uns
 
 **Fix needed**: worker briefing should include `git add && git commit` as a required step, or the supervisor should commit after attestation.
 
-## FASE Bugs Found and Fixed During Run
+## Cogent Bugs Found and Fixed During Run
 
 | Bug | Fix | Commit |
 |-----|-----|--------|
 | Housekeeping kills current job from stale job failure | Check `currentJobID` before failing work item | `b7546ec` |
-| Native adapter has no FASE tools | `SetService` injection via `resolveAdapter` | `c3a1913` |
+| Native adapter has no Cogent tools | `SetService` injection via `resolveAdapter` | `c3a1913` |
 | Tool output unbounded (17MB) | Cap bash 50KB, read_file 100KB, loop 100KB | `785a6f5` |
 | Session history unbounded | Trim at 2MB, rotate every 10 turns | `38c1e51` |
 | Supervisor waits for events that never come | 2-minute poll timer | `2732e35` |
@@ -136,7 +136,7 @@ Workers created 64 files and 19K+ lines but never committed. All changes are uns
 5. **Worktree isolation** — concurrent workers on main worked but required self-healing. Worktrees would prevent conflicts entirely.
 6. **Session context summarization** — instead of hard trim at 2MB, use a cheap LLM call to summarize old turns
 7. **Cost tracking per session** — track actual API spend, not just turn count
-8. **Supervisor state persistence** — the supervisor loses all context on restart. A persistent state file (`.fase/supervisor-state.md`) would survive restarts.
+8. **Supervisor state persistence** — the supervisor loses all context on restart. A persistent state file (`.cogent/supervisor-state.md`) would survive restarts.
 
 ### Process
 9. **Spec completeness gates** — don't create advanced features until all spec items are verified complete (not just "done" status)

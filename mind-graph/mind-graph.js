@@ -1,5 +1,5 @@
 // ═══════════════════════════════════════════════════════════
-// fase mind-graph: Poincaré disk hyperbolic work graph
+// cogent mind-graph: Poincaré disk hyperbolic work graph
 // ═══════════════════════════════════════════════════════════
 
 // ── Data Loading ────────────────────────────────────────────
@@ -1875,7 +1875,7 @@ async function boot() {
     initSimulation(items);
   } else {
     // No data — show empty state
-    document.getElementById("loading").textContent = "no work items — create some with: fase inbox \"your idea\"";
+    document.getElementById("loading").textContent = "no work items — create some with: cogent inbox \"your idea\"";
     return;
   }
   document.getElementById("loading").style.display = "none";

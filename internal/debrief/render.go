@@ -10,7 +10,7 @@ import (
 func RenderPrompt(session core.SessionRecord, adapter, reason string) string {
 	var b strings.Builder
 
-	b.WriteString("You are writing a fase debrief for your current session.\n")
+	b.WriteString("You are writing a cogent debrief for your current session.\n")
 	b.WriteString("Do not continue working, do not make more changes, and do not run more tools.\n")
 	b.WriteString("Your job is to land the plane and export your current world model for a host agent.\n\n")
 

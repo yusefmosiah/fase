@@ -17,7 +17,7 @@ import (
 )
 
 // agenticSupervisor runs the supervisor as a regular adapter session (ADR-0041).
-// The LLM has FASE MCP tools and handles all dispatch/attestation logic.
+// The LLM has Cogent MCP tools and handles all dispatch/attestation logic.
 // The Go code just manages the session lifecycle.
 type agenticSupervisor struct {
 	svc            *service.Service

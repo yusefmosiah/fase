@@ -5,20 +5,20 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 BIN="${BIN:-$ROOT_DIR/bin/cogent}"
-ADAPTER="${FASE_DOGFOOD_ADAPTER:-opencode}"
-MODEL="${FASE_DOGFOOD_MODEL:-zai-coding-plan/glm-5}"
-CWD_TARGET="${FASE_DOGFOOD_CWD:-$ROOT_DIR}"
-TITLE="${FASE_DOGFOOD_TITLE:-Dogfood Web Desktop}"
-OBJECTIVE="${FASE_DOGFOOD_OBJECTIVE:-Build and verify a tiny web desktop app using only cogent workers.}"
-SKILL_PATH="$ROOT_DIR/skills/fase/SKILL.md"
+ADAPTER="${COGENT_DOGFOOD_ADAPTER:-opencode}"
+MODEL="${COGENT_DOGFOOD_MODEL:-zai-coding-plan/glm-5}"
+CWD_TARGET="${COGENT_DOGFOOD_CWD:-$ROOT_DIR}"
+TITLE="${COGENT_DOGFOOD_TITLE:-Dogfood Web Desktop}"
+OBJECTIVE="${COGENT_DOGFOOD_OBJECTIVE:-Build and verify a tiny web desktop app using only cogent workers.}"
+SKILL_PATH="$ROOT_DIR/skills/cogent/SKILL.md"
 SEED_PATH="$ROOT_DIR/docs/dogfood-web-desktop-seed.md"
-DOGFOOD_DIR="${FASE_DOGFOOD_DIR:-$ROOT_DIR/.dogfood}"
-CONFIG_DIR="${FASE_DOGFOOD_CONFIG_DIR:-$DOGFOOD_DIR/config}"
-CONFIG_PATH="${FASE_DOGFOOD_CONFIG:-$CONFIG_DIR/config.toml}"
-STATE_DIR="${FASE_DOGFOOD_STATE_DIR:-$DOGFOOD_DIR/state}"
-CACHE_DIR="${FASE_DOGFOOD_CACHE_DIR:-$DOGFOOD_DIR/cache}"
-BIN_DIR="${FASE_DOGFOOD_BIN_DIR:-$DOGFOOD_DIR/bin}"
-WRAPPER_PATH="${FASE_DOGFOOD_WRAPPER:-$BIN_DIR/cogent}"
+DOGFOOD_DIR="${COGENT_DOGFOOD_DIR:-$ROOT_DIR/.dogfood}"
+CONFIG_DIR="${COGENT_DOGFOOD_CONFIG_DIR:-$DOGFOOD_DIR/config}"
+CONFIG_PATH="${COGENT_DOGFOOD_CONFIG:-$CONFIG_DIR/config.toml}"
+STATE_DIR="${COGENT_DOGFOOD_STATE_DIR:-$DOGFOOD_DIR/state}"
+CACHE_DIR="${COGENT_DOGFOOD_CACHE_DIR:-$DOGFOOD_DIR/cache}"
+BIN_DIR="${COGENT_DOGFOOD_BIN_DIR:-$DOGFOOD_DIR/bin}"
+WRAPPER_PATH="${COGENT_DOGFOOD_WRAPPER:-$BIN_DIR/cogent}"
 
 if [[ ! -x "$BIN" ]]; then
   go build -o "$BIN" ./cmd/cogent
@@ -41,10 +41,10 @@ exec "$BIN" "\$@"
 EOF
 chmod +x "$WRAPPER_PATH"
 
-export FASE_CONFIG_DIR="$CONFIG_DIR"
-export FASE_STATE_DIR="$STATE_DIR"
-export FASE_CACHE_DIR="$CACHE_DIR"
-export FASE_EXECUTABLE="$BIN"
+export COGENT_CONFIG_DIR="$CONFIG_DIR"
+export COGENT_STATE_DIR="$STATE_DIR"
+export COGENT_CACHE_DIR="$CACHE_DIR"
+export COGENT_EXECUTABLE="$BIN"
 export PATH="$BIN_DIR:$PATH"
 
 root_json="$("$BIN" --config "$CONFIG_PATH" --json work create \
@@ -62,9 +62,9 @@ Read these files first:
 - $SKILL_PATH
 
 Only read these additional docs if you are blocked on the work API shape:
-- $ROOT_DIR/docs/fase-work-runtime.md
-- $ROOT_DIR/docs/fase-work-api-and-schema.md
-- $ROOT_DIR/docs/fase-worker-briefing-schema.md
+- $ROOT_DIR/docs/cogent-work-runtime.md
+- $ROOT_DIR/docs/cogent-work-api-and-schema.md
+- $ROOT_DIR/docs/cogent-worker-briefing-schema.md
 
 Then:
 1. inspect the local runtime and model inventory with cogent
@@ -75,7 +75,7 @@ Then:
 6. ensure Playwright verification emits screenshots and video artifacts when possible
 
 Runtime scoping:
-- this worker already has isolated FASE_* env vars set for the correct runtime
+- this worker already has isolated Cogent_* env vars set for the correct runtime
 - bare "cogent" and "./bin/cogent" should both land in the same isolated runtime
 - prefer bare "cogent" for runtime operations
 

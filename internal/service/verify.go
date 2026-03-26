@@ -133,7 +133,7 @@ func (s *Service) VerifyWork(ctx context.Context, workID string) (*WorkVerifyRes
 		}
 		if token == nil {
 			agent.TokenStatus = "missing"
-			agent.Reason = "FASE_AGENT_TOKEN not set"
+			agent.Reason = "COGENT_AGENT_TOKEN not set"
 			report.Agents = append(report.Agents, agent)
 			continue
 		}

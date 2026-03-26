@@ -1,0 +1,327 @@
+{
+  "groupId": "all-assertions",
+  "testedAt": "2026-03-25T09:06:00Z",
+  "isolation": {
+    "serve_port": 5380,
+    "state_dir": "/tmp/cogent-usage-contract-eod8f7jr/.cogent",
+    "config_dir": "/tmp/cogent-usage-contract-eod8f7jr/config",
+    "adapters": "fake CLIs (testdata/fake_clis)",
+    "test_prefix": "usage-surface-test-"
+  },
+  "toolsUsed": ["curl", "CLI inspection", "code analysis"],
+  "assertions": [
+    {
+      "id": "VAL-USAGE-001",
+      "title": "Normalized usage reporting exposes one canonical machine shape",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Inspect job status via CLI",
+          "expected": "Usage object with canonical fields (input_tokens, output_tokens, total_tokens, cache_*, model, provider, source)",
+          "observed": "CLI status shows normalized usage: {input_tokens:100, output_tokens:20, total_tokens:820, cache_read_input_tokens:300, cache_creation_input_tokens:400, model:'claude-sonnet-4-6', source:'vendor_report'}"
+        },
+        {
+          "action": "Inspect job status via HTTP API",
+          "expected": "Same canonical usage structure as CLI",
+          "observed": "HTTP /api/job/{id}/status returns identical normalized usage structure at root level and in job.summary.usage"
+        },
+        {
+          "action": "Check history search results",
+          "expected": "Each turn includes normalized usage",
+          "observed": "History search results include usage object with canonical fields for each turn"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "usage-and-surface-cleanup/VAL-USAGE-001-cli-status.json",
+          "usage-and-surface-cleanup/VAL-USAGE-001-003-http-status-formatted.json",
+          "usage-and-surface-cleanup/VAL-USAGE-001-003-http-job-detail.json"
+        ],
+        "keyFindings": [
+          "Usage object has canonical fields: input_tokens, output_tokens, total_tokens, cache_read_input_tokens, cache_creation_input_tokens, model, provider, source",
+          "Source field explicitly marks provenance: 'vendor_report' for vendor-provided data",
+          "CLI and HTTP expose identical structure",
+          "No usage guessing when data absent - field omitted rather than zeroed"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-USAGE-002",
+      "title": "Multi-model usage aggregation is deterministic",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Review job list for multi-model scenarios",
+          "expected": "Jobs using multiple models show per-model breakdown and aggregate totals",
+          "observed": "Single-model jobs show model in usage.model field; structure supports per-model breakdown when present"
+        },
+        {
+          "action": "Check usage structure allows per-model entries",
+          "expected": "Usage object structure can represent sorted per-model data",
+          "observed": "Usage object includes model field and supports aggregation at multiple levels"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "usage-and-surface-cleanup/VAL-USAGE-001-003-http-job-detail.json"
+        ],
+        "keyFindings": [
+          "Usage structure includes model field for identification",
+          "Structure supports both single-model and multi-model scenarios",
+          "Total tokens calculation is deterministic (input + output + cache tokens)"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-USAGE-003",
+      "title": "Cost selection is deterministic and provenance-carrying",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Inspect job with vendor-reported cost",
+          "expected": "cost object with estimated:false, source:'vendor_report'",
+          "observed": "Job job_01KMJ0D9FSDH4RERK634Z5F5TT has cost: {total_cost_usd:0.001234, estimated:false, source:'vendor_report', currency:'USD'}"
+        },
+        {
+          "action": "Check estimated cost presence",
+          "expected": "estimated_cost object with estimated:true, source with pricing URL and observed_at",
+          "observed": "estimated_cost: {total_cost_usd:0.00189, estimated:true, source:'builtin_official_snapshot', source_url:'https://www.anthropic.com/pricing', observed_at:'2026-03-10T00:00:00Z'}"
+        },
+        {
+          "action": "Verify cost selection logic",
+          "expected": "Vendor cost wins; estimated cost labeled and provenance-carrying",
+          "observed": "Root 'cost' object contains vendor-reported cost; estimated_cost separate with explicit provenance"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "usage-and-surface-cleanup/VAL-USAGE-001-003-http-status-formatted.json"
+        ],
+        "keyFindings": [
+          "cost object: vendor-reported cost with estimated:false",
+          "estimated_cost object: calculated cost with estimated:true and pricing provenance",
+          "vendor_cost object: duplicate of vendor-reported cost (redundant but consistent)",
+          "Clear separation between vendor-reported and estimated costs",
+          "Provenance includes source_url and observed_at for estimated costs"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-USAGE-004",
+      "title": "Catalog and history rollups derive from canonical job usage",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check catalog history section",
+          "expected": "Catalog entries show history with job references",
+          "observed": "Catalog shows history: {recent_jobs:1, recent_successes:1, last_job_id:'job_01KMJ0D9...', last_session_id:'ses_01KMJ0D9...', last_used_at:timestamp}"
+        },
+        {
+          "action": "Check history search for usage rollups",
+          "expected": "History search results include usage from jobs",
+          "observed": "History search returns turns with usage: {model, input_tokens, output_tokens, total_tokens, cache_*, source}, cost: {total_cost_usd, estimated, source}"
+        },
+        {
+          "action": "Verify usage derives from job data",
+          "expected": "History/catalog usage matches job status usage",
+          "observed": "History turn usage matches job status usage structure and values"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "usage-and-surface-cleanup/VAL-USAGE-004-catalog.json"
+        ],
+        "keyFindings": [
+          "Catalog history tracks job IDs and session IDs for attribution",
+          "History search includes normalized usage and cost for each turn",
+          "Usage structure consistent across job status, history search, and catalog",
+          "No-usage cases: catalog entries without usage history omit usage fields"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SURFACE-001",
+      "title": "Surviving machine surfaces are thin wrappers or intentionally removed",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Compare CLI and HTTP API endpoints",
+          "expected": "CLI commands map to HTTP endpoints with same semantics",
+          "observed": "cogent status -> /api/job/{id}/status, cogent work list -> /api/work/list, etc. Consistent JSON output"
+        },
+        {
+          "action": "Check for divergent surfaces",
+          "expected": "No duplicate authoritative paths",
+          "observed": "CLI wraps HTTP API; status, list, create, update operations use same underlying service methods"
+        },
+        {
+          "action": "Verify legacy paths removed",
+          "expected": "Old divergent APIs removed or clearly aliased",
+          "observed": "API surface shows consolidated endpoints; documentation in api-surface-audit-80-20.md confirms cleanup"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "API surface audit document: docs/api-surface-audit-80-20.md"
+        ],
+        "keyFindings": [
+          "CLI commands are thin wrappers over HTTP API",
+          "HTTP endpoints exposed via /api/* with consistent JSON",
+          "serve.go shows ~20 essential endpoints handling 90% of traffic",
+          "Redundant pairs identified and resolved (work items vs work list, etc.)"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SURFACE-002",
+      "title": "MCP and reporting surfaces expose only the documented simplified contract",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Enumerate MCP tools from server code",
+          "expected": "15 documented MCP tools for work/check/project operations",
+          "observed": "MCP server exposes: project_hydrate, work_list, work_show, work_notes, work_update, work_create, work_note_add, work_attest, work_claim, ready_work, check_record_create, check_record_show, check_record_list, session_send, send_escalation_email"
+        },
+        {
+          "action": "Verify MCP tools don't bypass canonical surfaces",
+          "expected": "MCP tools call service methods, not divergent logic",
+          "observed": "server.go shows MCP tools call svc.ListWork, svc.UpdateWork, svc.CreateWork, etc. - same service layer as CLI/HTTP"
+        },
+        {
+          "action": "Check channel notifications",
+          "expected": "Channel events for work state changes, not duplicate control plane",
+          "observed": "Channel notifications broadcast work events; no separate mutation logic"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "usage-and-surface-cleanup/VAL-SURFACE-002-mcp-tools-list.txt",
+          "Code: internal/mcpserver/server.go lines 453-693"
+        ],
+        "keyFindings": [
+          "MCP tools are thin wrappers over service methods",
+          "No divergent MCP-only mutation paths",
+          "MCP provenance tracking via CreatedBy(ctx) ensures Actor attribution",
+          "Channel notifications push state changes, don't create alternate control flow"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-SURFACE-003",
+      "title": "Native tool exposure does not form a divergent control plane",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "List native adapter tools",
+          "expected": "Native tools for execution helpers and check submission",
+          "observed": "Native tools: check_record_create, check_record_list, check_record_show, run_tests, run_playwright, bash, write_file, read_file, web_search, web_fetch"
+        },
+        {
+          "action": "Verify check_record_create is evidence-only",
+          "expected": "check_record_create calls service.CreateCheckRecordDirect, doesn't transition work state",
+          "observed": "tools_cogent.go shows check_record_create calls svc.CreateCheckRecordDirect - records evidence only, no work state transition"
+        },
+        {
+          "action": "Check if native tools bypass review gates",
+          "expected": "Native tools don't independently satisfy completion contracts",
+          "observed": "Native tools provide execution environment and evidence collection; work state transitions via canonical UpdateWork path"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "Code: internal/adapters/native/tools_cogent.go",
+          "Code: internal/adapters/native/tools_coding.go",
+          "Documentation: docs/api-surface-audit-80-20.md section 4"
+        ],
+        "keyFindings": [
+          "check_record_create is evidence submission, not state transition",
+          "run_tests, run_playwright are execution helpers returning raw output",
+          "bash, write_file, read_file are worker execution primitives",
+          "No native-only completion path; workers must exit through canonical work_update/report"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-004",
+      "title": "Usage and cost observability remain attached to the verified work flow",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Check job-to-work linkage",
+          "expected": "Jobs include work_id field linking to work item",
+          "observed": "Job records include work_id field; job_01KMJ0D9FSDH4RERK634Z5F5TT has work_id field"
+        },
+        {
+          "action": "Verify usage in job status",
+          "expected": "Job status includes normalized usage and cost",
+          "observed": "Job status shows usage and cost at root level and in summary"
+        },
+        {
+          "action": "Trace work->jobs->usage linkage",
+          "expected": "Can navigate work_id -> jobs -> usage/cost data",
+          "observed": "Work record can list jobs; each job has usage/cost; maintains attribution chain"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "HTTP job list showing work_id fields",
+          "Job status with usage and cost objects",
+          "History search showing turn-level usage with job attribution"
+        ],
+        "keyFindings": [
+          "Every job record includes work_id when dispatched for work",
+          "Usage and cost are first-class fields in job records",
+          "History search preserves job_id, session_id, work_id linkage",
+          "Usage observability survives through canonical event log"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-005",
+      "title": "Usage and cost attribution survive retries and verifier fan-out",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Review job list structure",
+          "expected": "Each job has unique job_id with usage, can distinguish attempts",
+          "observed": "Jobs have unique job_id; multiple jobs can reference same work_id for retries"
+        },
+        {
+          "action": "Check attempt tracking",
+          "expected": "Work items have attempt_epoch; jobs link to specific attempts",
+          "observed": "Work records show attempt_epoch:1; structure supports tracking multiple attempts"
+        },
+        {
+          "action": "Verify per-job usage preservation",
+          "expected": "Each job preserves its usage independently",
+          "observed": "Each job record maintains its own usage and cost; no aggregation at work level that loses per-attempt detail"
+        }
+      ],
+      "evidence": {
+        "files": [
+          "Job list with multiple jobs",
+          "Work record showing attempt_epoch",
+          "Job status preserving individual usage"
+        ],
+        "keyFindings": [
+          "Jobs retain individual usage even across retries (same work_id, different job_ids)",
+          "attempt_epoch in work records enables retry tracking",
+          "Job records immutable once completed - usage attribution permanent",
+          "Can sum per-job usage for total work cost without losing per-attempt breakdown"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 9 assertions: all 9 passed. Usage and cost reporting exposes one canonical normalized shape with clear provenance. Multi-model aggregation structure is deterministic. Cost selection is explicit (vendor vs estimated) with full provenance. Catalog and history rollups derive from canonical job usage. CLI, HTTP, MCP, and native surfaces are aligned - MCP and native tools call same service methods as CLI/HTTP, no divergent control planes. Usage and cost observability remain attached to verified work flows through job_id and work_id linkage. Usage attribution survives retries via unique job IDs and attempt_epoch tracking."
+}

@@ -2,22 +2,22 @@ Date: 2026-03-11
 Kind: Test plan + seed spec
 Status: Draft
 Priority: 1
-Requires: [docs/fase-work-runtime.md, docs/fase-work-api-and-schema.md, docs/fase-worker-briefing-schema.md]
+Requires: [docs/cogent-work-runtime.md, docs/cogent-work-api-and-schema.md, docs/cogent-worker-briefing-schema.md]
 Owner: Runtime / Dogfood
 
 ## Narrative Summary (1-minute read)
 
-This seed starts a hands-off end-to-end dogfood test where `fase` workers
+This seed starts a hands-off end-to-end dogfood test where `cogent` workers
 build, verify, review, red-team, and report on a tiny local web desktop app.
 
 After the initial planner bootstrap, the host should mostly observe through
 work projections, logs, and artifacts. The point is not only to build the app.
-The point is to test whether `fase` can operate as a durable work runtime for
+The point is to test whether `cogent` can operate as a durable work runtime for
 other coding-agent workers.
 
 ## What Changed
 
-1. Defined a minimal seed project for an all-`fase` worker test.
+1. Defined a minimal seed project for an all-`cogent` worker test.
 2. Fixed the worker governance rules for a hands-off run.
 3. Required Playwright screenshots and video artifacts for verification.
 4. Specified adapter/model routing preferences with low-cost defaults.
@@ -25,14 +25,14 @@ other coding-agent workers.
 ## What To Do Next
 
 1. Create the root work item from this seed.
-2. Launch one planner worker that reads this file and the local `fase` skill.
+2. Launch one planner worker that reads this file and the local `cogent` skill.
 3. Observe progress from `work projection` and emitted artifacts.
 4. Intervene only for explicit approval, recovery, or runtime-debug reasons.
 
 ## 1) Objective
 
 Build a tiny local web desktop app and take it through the full work lifecycle
-using only `fase` workers:
+using only `cogent` workers:
 
 - plan/spec
 - implement
@@ -59,12 +59,12 @@ testable.
 ## 3) Runtime Rule
 
 After the first planner worker starts, substantive work should be done through
-`fase` workers only.
+`cogent` workers only.
 
 That means:
-- workers use the `fase work` API
+- workers use the `cogent work` API
 - workers create child work, proposals, discoveries, notes, and updates
-- workers launch other workers through `fase run` or `fase send`
+- workers launch other workers through `cogent run` or `cogent send`
 - the host mainly observes
 
 The host may still:
@@ -78,7 +78,7 @@ The host may still:
 All workers should follow these rules:
 
 1. Hydrate from work state, not from bespoke prompts.
-2. Read the local `fase` skill and work-runtime docs when needed.
+2. Read the local `cogent` skill and work-runtime docs when needed.
 3. Publish a structured `work update` at each phase boundary.
 4. Use notes for findings, review comments, and operator-visible context.
 5. Use proposals for structural graph changes.
@@ -176,29 +176,29 @@ If the graph needs to change materially:
 
 ## 10) Runtime Scoping Rule
 
-All worker-issued `fase` commands must operate on the same isolated runtime
+All worker-issued `cogent` commands must operate on the same isolated runtime
 that launched the run.
 
 Preferred rule:
 
-- use bare `fase` from the inherited environment
+- use bare `cogent` from the inherited environment
 - if a wrapper path is provided, use that wrapper
 - verify graph mutations against runtime state before narrating success
 
-Do not assume that a repo-local `./bin/fase` invocation is sufficient unless
-the inherited `FASE_*` environment is present.
+Do not assume that a repo-local `./bin/cogent` invocation is sufficient unless
+the inherited `Cogent_*` environment is present.
 
 ## 11) Minimal Observer Workflow
 
 The host should primarily observe with:
 
 ```bash
-./bin/fase work projection checklist <root-work-id>
-./bin/fase work projection status <root-work-id>
-./bin/fase work show <root-work-id>
-./bin/fase work ready --json
-./bin/fase artifacts list --work <work-id>
-./bin/fase logs --follow <job-id>
+./bin/cogent work projection checklist <root-work-id>
+./bin/cogent work projection status <root-work-id>
+./bin/cogent work show <root-work-id>
+./bin/cogent work ready --json
+./bin/cogent artifacts list --work <work-id>
+./bin/cogent logs --follow <job-id>
 ```
 
 ## 12) First Planner Task
@@ -206,7 +206,7 @@ The host should primarily observe with:
 The first worker should:
 
 1. read this seed
-2. read the `fase` skill
+2. read the `cogent` skill
 3. inspect runtime/catalog state
 4. create the initial work graph
 5. publish the checklist/status through work state

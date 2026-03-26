@@ -5,7 +5,7 @@
 
 ## Context
 
-The supervisor should not be special Go infrastructure. It should be a regular FASE session running on any adapter (claude, codex, opencode), using FASE MCP tools to manage the work queue. The supervisor is just another agent — it happens to dispatch and review instead of writing code.
+The supervisor should not be special Go infrastructure. It should be a regular Cogent session running on any adapter (claude, codex, opencode), using Cogent MCP tools to manage the work queue. The supervisor is just another agent — it happens to dispatch and review instead of writing code.
 
 The deterministic supervisor (1500+ lines of Go dispatch logic) has already been deleted. This ADR specifies its replacement: a single adapter session with a supervisor prompt.
 
@@ -13,22 +13,22 @@ The deterministic supervisor (1500+ lines of Go dispatch logic) has already been
 
 ### Supervisor = Regular Adapter Session
 
-`fase serve --auto` launches the supervisor as a regular `svc.Run` call on a configurable adapter. The supervisor is not special infrastructure — it's a work item dispatched to an adapter, same as any worker. The adapter process connects to FASE's MCP server (already exposed at `/mcp` by serve) and uses FASE tools to manage the queue.
+`cogent serve --auto` launches the supervisor as a regular `svc.Run` call on a configurable adapter. The supervisor is not special infrastructure — it's a work item dispatched to an adapter, same as any worker. The adapter process connects to Cogent's MCP server (already exposed at `/mcp` by serve) and uses Cogent tools to manage the queue.
 
 There is no Go goroutine making dispatch decisions. The LLM decides everything.
 
 ### How It Works
 
-1. `fase serve --auto` calls `svc.Run` with:
+1. `cogent serve --auto` calls `svc.Run` with:
    - **adapter**: configurable (default `claude`)
    - **model**: configurable (default `claude-sonnet-4-6`)
    - **prompt**: `project_hydrate --mode supervisor` output — role, queue state, dispatch protocol, MCP tool contract
-2. The adapter process (e.g., `claude --print`) starts with FASE MCP tools available via `.mcp.json` or the `/mcp` endpoint.
+2. The adapter process (e.g., `claude --print`) starts with Cogent MCP tools available via `.mcp.json` or the `/mcp` endpoint.
 3. The supervisor LLM reads the queue state from its prompt and uses MCP tools:
    - `ready_work` → see what's dispatchable
    - `work_show` → inspect a specific item
    - `work_claim` → claim it
-   - Dispatch workers via `fase dispatch` or by calling the dispatch API
+   - Dispatch workers via `cogent dispatch` or by calling the dispatch API
    - `work_attest` → review and attest completed work
 4. When the supervisor turn completes, serve checks EventBus for state changes since the turn started. If anything changed, it re-runs the supervisor with fresh `project_hydrate` output. If nothing is ready, it waits for EventBus events before re-running.
 
@@ -47,12 +47,12 @@ serve --auto starts
   └─ loop: wait for events → send → repeat
 ```
 
-The supervisor is a **long-running session**. The first turn (`svc.Run`) creates the session with the full supervisor hydration prompt. Subsequent turns use `svc.Send` on the same session, passing event summaries as the prompt. The LLM accumulates context across turns — it remembers what it dispatched, what's pending, what failed. This is the same session continuation protocol used by workers via `fase send`.
+The supervisor is a **long-running session**. The first turn (`svc.Run`) creates the session with the full supervisor hydration prompt. Subsequent turns use `svc.Send` on the same session, passing event summaries as the prompt. The LLM accumulates context across turns — it remembers what it dispatched, what's pending, what failed. This is the same session continuation protocol used by workers via `cogent send`.
 
 ### Supervisor Prompt (project_hydrate --mode supervisor)
 
 The initial prompt (first turn only) includes:
-1. **Role**: "You are the FASE supervisor. Dispatch ready work, monitor workers, attest completed work. Never write code directly."
+1. **Role**: "You are the Cogent supervisor. Dispatch ready work, monitor workers, attest completed work. Never write code directly."
 2. **Queue state**: Ready items (with priority, preferred adapters/models), active work, pending attestations, recent completions.
 3. **Dispatch protocol**: Step-by-step instructions for claiming, hydrating, dispatching, and attesting.
 4. **Concurrency rules**: One code-writer at a time. Plan/research/attest can run concurrently.
@@ -86,11 +86,11 @@ No dispatch logic. No adapter selection. No rotation pools. No health tracking. 
 
 ### Configuration
 
-Flags: `fase serve --auto --supervisor-adapter claude --supervisor-model claude-sonnet-4-6`
+Flags: `cogent serve --auto --supervisor-adapter claude --supervisor-model claude-sonnet-4-6`
 
 ### Pause / Resume
 
-`fase supervisor pause` sets a flag. The loop checks the flag before re-running. While paused, the current turn (if any) completes but no new turns start.
+`cogent supervisor pause` sets a flag. The loop checks the flag before re-running. While paused, the current turn (if any) completes but no new turns start.
 
 ## Consequences
 

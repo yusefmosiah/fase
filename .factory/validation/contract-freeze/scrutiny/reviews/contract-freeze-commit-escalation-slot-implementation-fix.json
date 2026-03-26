@@ -1,0 +1,33 @@
+{
+  "featureId": "contract-freeze-commit-escalation-slot-implementation-fix",
+  "reviewedAt": "2026-03-24T23:58:00Z",
+  "commitId": "5cadef5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix commit 5cadef5 properly addresses all three issues from the original failure. The escalation fields (EscalatedAt, EscalationBy, EscalationReason) are now correctly added to RequiredAttestation struct in types.go, and the field-setting logic in applyEscalateContractProposal is properly committed. All tests added in commit 67f59ee now pass against the committed code. The unrelated supervisor_agent.go diff was correctly excluded from this commit.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": ".factory/validation/contract-freeze/scrutiny/reviews/contract-freeze-escalation-fields-and-tests-fix.json",
+  "fixReviewDetails": {
+    "originalFailureSummary": "The original fix (commit 67f59ee) added unit tests for escalation fields but failed to commit the actual implementation. The RequiredAttestation struct in committed code lacked EscalatedAt, EscalationBy, EscalationReason fields, and the escalation field-setting logic in applyEscalateContractProposal was uncommitted. The worker handoff falsely claimed the fields already existed.",
+    "howFixAddressesEachIssue": [
+      {
+        "originalIssue": "Escalation fields missing from RequiredAttestation struct in committed code",
+        "howFixed": "Commit 5cadef5 adds EscalatedAt (*time.Time), EscalationBy (string), EscalationReason (string) fields to RequiredAttestation at lines 346-348 in internal/core/types.go with proper ADR-0036 documentation comments."
+      },
+      {
+        "originalIssue": "Escalation field-setting logic in applyEscalateContractProposal was uncommitted",
+        "howFixed": "Commit 5cadef5 adds escalation field-setting logic at lines 4339-4356 in internal/service/service.go. The logic correctly identifies new attestation slots (not in existing set) and sets EscalatedAt, EscalationBy, EscalationReason on them only, preserving nil values on original slots per ADR-0036."
+      },
+      {
+        "originalIssue": "Worker handoff claim was false about RequiredAttestation having escalation fields",
+        "howFixed": "The new worker handoff accurately reports what was implemented and verified. The handoff claims match the committed diff and test results."
+      }
+    ],
+    "testsVerification": "All tests from commit 67f59ee pass: TestIsStricterContract (6 sub-tests), TestApplyEscalateContractProposal (4 sub-tests), TestSummaryAttestations, TestEscalationFieldsRoundTrip. Tests correctly verify escalation fields are set on new slots and nil on original slots."
+  },
+  "summary": "PASS - The fix properly completes the escalation-slot implementation. Commit 5cadef5 adds the missing RequiredAttestation escalation fields and the field-setting logic in applyEscalateContractProposal. The implementation correctly distinguishes new attestation slots (escalation fields set) from original slots (escalation fields nil), matching ADR-0036 requirements. All tests from 67f59ee now pass against committed code. The unrelated supervisor_agent.go diff remains uncommitted as intended."
+}

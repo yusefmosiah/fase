@@ -1,0 +1,15 @@
+{
+  "featureId": "supervisor-streamablehttp-production-route-test-fix",
+  "reviewedAt": "2026-03-25T03:22:20Z",
+  "commitId": "e07e7a06e3d914491e6ed29628bc0964f061d62b",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix now drives the StreamableHTTP production path through handler.ServeHTTP with real JSON-RPC requests and checks provenance for both external and supervisor traffic. Session-isolation, broadcast propagation, and no-self-wake behavior are still covered on the live route, so the VAL-SUPERVISOR-003 proof gap is closed.",
+    "issues": []
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-streamablehttp-live-transport-and-broadcast-fix.json",
+  "summary": "PASS: the new regression exercises the actual production StreamableHTTP route and preserves the earlier isolation/broadcast behavior."
+}

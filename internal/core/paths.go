@@ -21,10 +21,8 @@ type Paths struct {
 }
 
 const (
-	projectStateDirName       = ".cogent"
-	legacyProjectStateDirName = ".fase"
-	projectSlug               = "cogent"
-	legacyProjectSlug         = "fase"
+	projectStateDirName = ".cogent"
+	projectSlug         = "cogent"
 )
 
 func ResolvePaths() (Paths, error) {
@@ -37,11 +35,11 @@ func ResolvePaths() (Paths, error) {
 }
 
 // ResolveRepoStateDir finds the git repo root from cwd and returns the
-// repository-local .cogent state directory. If FASE_STATE_DIR is set, it
+// repository-local .cogent state directory. If COGENT_STATE_DIR is set, it
 // is returned directly so that isolated environments (e.g. tests) always
 // resolve to the configured state directory.
 func ResolveRepoStateDir() string {
-	if envDir := os.Getenv("FASE_STATE_DIR"); envDir != "" {
+	if envDir := os.Getenv("COGENT_STATE_DIR"); envDir != "" {
 		return envDir
 	}
 	dir, err := os.Getwd()
@@ -65,7 +63,7 @@ func ResolveRepoStateDirFrom(startDir string) string {
 // Otherwise falls back to global XDG paths.
 func ResolvePathsForRepo() (Paths, error) {
 	// Explicit override always wins
-	if os.Getenv("FASE_STATE_DIR") != "" {
+	if os.Getenv("COGENT_STATE_DIR") != "" {
 		return ResolvePaths()
 	}
 	if cwd, err := os.Getwd(); err == nil {
@@ -87,17 +85,17 @@ func ResolvePathsFromEnv(home string, getenv func(string) string) (Paths, error)
 		return Paths{}, fmt.Errorf("home directory is required")
 	}
 
-	configDir, err := resolveDir(getenv("FASE_CONFIG_DIR"), getenv("XDG_CONFIG_HOME"), home, ".config")
+	configDir, err := resolveDir(getenv("COGENT_CONFIG_DIR"), getenv("XDG_CONFIG_HOME"), home, ".config")
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve config dir: %w", err)
 	}
 
-	stateDir, err := resolveDir(getenv("FASE_STATE_DIR"), getenv("XDG_STATE_HOME"), home, filepath.Join(".local", "state"))
+	stateDir, err := resolveDir(getenv("COGENT_STATE_DIR"), getenv("XDG_STATE_HOME"), home, filepath.Join(".local", "state"))
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve state dir: %w", err)
 	}
 
-	cacheDir, err := resolveDir(getenv("FASE_CACHE_DIR"), getenv("XDG_CACHE_HOME"), home, ".cache")
+	cacheDir, err := resolveDir(getenv("COGENT_CACHE_DIR"), getenv("XDG_CACHE_HOME"), home, ".cache")
 	if err != nil {
 		return Paths{}, fmt.Errorf("resolve cache dir: %w", err)
 	}
@@ -198,47 +196,10 @@ func stateFilePrefix(_ string) string {
 }
 
 func MigrateLegacyRepoStateDirFrom(startDir string, logf func(string, ...any)) error {
-	repoRoot := repoRootFromStartDir(startDir)
-	if repoRoot == "" {
-		return nil
-	}
-
-	legacyDir := filepath.Join(repoRoot, legacyProjectStateDirName)
-	stateDir := filepath.Join(repoRoot, projectStateDirName)
-	if fileExists(legacyDir) && !fileExists(stateDir) {
-		if err := os.Rename(legacyDir, stateDir); err != nil {
-			return fmt.Errorf("rename legacy state dir: %w", err)
-		}
-		logMigration(logf, "migrated state directory from %s to %s", legacyDir, stateDir)
-	}
-
-	return migrateLegacyStateFiles(stateDir, logf)
+	return nil
 }
 
 func migrateLegacyStateFiles(stateDir string, logf func(string, ...any)) error {
-	if !fileExists(stateDir) {
-		return nil
-	}
-
-	legacyToCurrent := [][2]string{
-		{legacyProjectSlug + ".db", projectSlug + ".db"},
-		{legacyProjectSlug + ".db-shm", projectSlug + ".db-shm"},
-		{legacyProjectSlug + ".db-wal", projectSlug + ".db-wal"},
-		{legacyProjectSlug + "-private.db", projectSlug + "-private.db"},
-		{legacyProjectSlug + "-private.db-shm", projectSlug + "-private.db-shm"},
-		{legacyProjectSlug + "-private.db-wal", projectSlug + "-private.db-wal"},
-	}
-	for _, pair := range legacyToCurrent {
-		oldPath := filepath.Join(stateDir, pair[0])
-		newPath := filepath.Join(stateDir, pair[1])
-		if !fileExists(oldPath) || fileExists(newPath) {
-			continue
-		}
-		if err := os.Rename(oldPath, newPath); err != nil {
-			return fmt.Errorf("rename legacy state file %s to %s: %w", oldPath, newPath, err)
-		}
-		logMigration(logf, "migrated state file from %s to %s", oldPath, newPath)
-	}
 	return nil
 }
 

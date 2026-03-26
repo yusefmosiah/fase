@@ -46,24 +46,24 @@ fi
 
 if [ "$mode" = "resume" ]; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
-  if printf '%s' "$prompt" | grep -qi 'writing a fase debrief'; then
+  if printf '%s' "$prompt" | grep -qi 'writing a cogent debrief'; then
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"# Objective\nExplain the current task state.\n\n# Completed\n- Finished the prior task.\n\n# Current State\nThe repository is in a recoverable state.\n\n# Outstanding Work\n- Review the latest changes.\n\n# Risks\n- The next agent should verify behavior before proceeding.\n\n# Important Files\n/tmp/fake-file.go\n\n# Recommended Next Step\nReview the recent changes and continue from there."}}'
     printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":700,"cached_input_tokens":100,"output_tokens":120}}'
   else
     printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"Codex continued the task"}}'
     printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":600,"cached_input_tokens":50,"output_tokens":40}}'
   fi
-elif printf '%s' "$prompt" | grep -qi 'recursive fase orchestration'; then
+elif printf '%s' "$prompt" | grep -qi 'recursive cogent orchestration'; then
   printf '%s\n' "{\"type\":\"thread.started\",\"thread_id\":\"$session_id\"}"
-  plan_json="$(printf '%s' 'plan stage' | "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  plan_json="$(printf '%s' 'plan stage' | "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
   plan_job="$(printf '%s' "$plan_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
-  "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json status --wait "$plan_job" >/dev/null
-  implement_json="$(printf '%s' 'implement stage' | "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json status --wait "$plan_job" >/dev/null
+  implement_json="$(printf '%s' 'implement stage' | "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
   implement_job="$(printf '%s' "$implement_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
-  "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json status --wait "$implement_job" >/dev/null
-  verify_json="$(printf '%s' 'verify stage' | "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
+  "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json status --wait "$implement_job" >/dev/null
+  verify_json="$(printf '%s' 'verify stage' | "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json run --adapter codex --cwd "$PWD" --stdin)"
   verify_job="$(printf '%s' "$verify_json" | python3 -c 'import json,sys; print(json.load(sys.stdin)["job"]["job_id"])')"
-  "$FASE_EXECUTABLE" --config "$FASE_CONFIG_PATH" --json status --wait "$verify_job" >/dev/null
+  "$COGENT_EXECUTABLE" --config "$COGENT_CONFIG_PATH" --json status --wait "$verify_job" >/dev/null
   printf '%s\n' "{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"Recursive orchestration completed. plan=$plan_job implement=$implement_job verify=$verify_job\"}}"
   printf '%s\n' '{"type":"turn.completed","usage":{"input_tokens":1800,"cached_input_tokens":500,"output_tokens":120}}'
 elif printf '%s' "$prompt" | grep -qi 'hang'; then
@@ -96,7 +96,7 @@ else
 fi
 if [ -n "$last_message" ]; then
   if [ "$mode" = "resume" ]; then
-    if printf '%s' "$prompt" | grep -qi 'writing a fase debrief'; then
+    if printf '%s' "$prompt" | grep -qi 'writing a cogent debrief'; then
       cat > "$last_message" <<'EOF'
 # Objective
 Explain the current task state.

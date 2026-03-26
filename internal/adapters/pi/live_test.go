@@ -164,7 +164,7 @@ func TestLiveAdapter_SteerCh(t *testing.T) {
 	drainUntil(t, ctx, session.Events(), adapterapi.EventKindSessionStarted)
 
 	if _, err := session.StartTurn(ctx, []adapterapi.Input{
-		adapterapi.TextInput("Wait for instructions. Reply READY when you see a fase message, then follow it."),
+		adapterapi.TextInput("Wait for instructions. Reply READY when you see a cogent message, then follow it."),
 	}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}

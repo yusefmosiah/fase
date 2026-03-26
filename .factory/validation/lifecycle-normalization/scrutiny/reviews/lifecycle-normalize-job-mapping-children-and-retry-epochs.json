@@ -1,0 +1,26 @@
+{
+  "featureId": "lifecycle-normalize-job-mapping-children-and-retry-epochs",
+  "reviewedAt": "2026-03-25T05:15:00.000Z",
+  "commitId": "d4e6a92",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Implementation is comprehensive and correctly addresses all three expected behaviors. The attempt epoch mechanism properly isolates retry attempts, attestation child fanout is idempotent within an epoch and creates fresh children after reset, and job-to-work mapping deterministically handles all job outcomes including attestation requirements. Schema migration is sound, test coverage is extensive, and the code follows existing patterns.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill referenced by this feature has no SKILL.md file, yet the handoff reports followedProcedure:true with no deviations. This suggests the skill either has no documented procedure or is minimal enough not to require one.",
+      "evidence": "Glob search for **/control-plane-worker/SKILL.md returned no results. Handoff JSON shows: skillFeedback.followedProcedure: true, deviations: []"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The attempt epoch mechanism is a significant lifecycle concept that could benefit from documentation in .factory/library/contracts.md, though the mission's precedence rule (code is canonical) may make this optional.",
+      "evidence": "Commit d4e6a92 adds AttemptEpoch field, ResetWork() method, epoch-aware child filtering, and helper functions currentAttemptEpoch(), childMatchesCurrentAttempt(). .factory/library/contracts.md currently documents state deprecations and supervisor wake semantics but not retry/epoch isolation. However, AGENTS.md states 'Runtime code is canonical' so in-code documentation may be sufficient."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "✓ PASS - Feature successfully implements attempt epoch isolation for retries/resets (VAL-LIFECYCLE-005), idempotent attestation child fanout with deterministic parent aggregation (VAL-LIFECYCLE-004), and deterministic job-to-work state mapping including attestation requirements (VAL-LIFECYCLE-003). The implementation adds persistent AttemptEpoch storage with sound schema migration, implements ResetWork() to increment epochs and clear stale state (current job/session, claims, attestation freeze, nonces), updates attestation child creation and parent aggregation to filter by current attempt epoch, and adds epoch mismatch validation to AttestWork(). Comprehensive regression tests cover reset epoch progression, attestation epoch mismatch rejection, per-epoch child fanout idempotence, deterministic job-to-work mapping for all job outcomes, parent aggregation from current-attempt children only, and historical child isolation across retries. All verification commands passed (focused service/store tests, make lint, make build, full internal baseline excluding known-red adapters/codex and mcpserver). No blocking issues found. Minor observations: control-plane-worker skill lacks SKILL.md (may be intentional if minimal), and attempt epoch knowledge could optionally be documented in .factory/library/contracts.md though code-as-canonical may suffice per mission precedence rule."
+}

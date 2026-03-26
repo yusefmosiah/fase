@@ -213,7 +213,7 @@ func TestLiveAdapter_ResumeSession(t *testing.T) {
 	t.Logf("original session: %s", threadID)
 
 	if _, err := session1.StartTurn(ctx, []adapterapi.Input{
-		adapterapi.TextInput("Remember the secret word: FASE"),
+		adapterapi.TextInput("Remember the secret word: Cogent"),
 	}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}
@@ -256,7 +256,7 @@ func TestLiveAdapter_SteerCh(t *testing.T) {
 
 	// Start a turn that waits for direction.
 	if _, err := session.StartTurn(ctx, []adapterapi.Input{
-		adapterapi.TextInput("Wait for instructions. Reply READY when you see a fase message, then follow it."),
+		adapterapi.TextInput("Wait for instructions. Reply READY when you see a cogent message, then follow it."),
 	}); err != nil {
 		t.Fatalf("StartTurn: %v", err)
 	}

@@ -1,0 +1,82 @@
+{
+  "milestone": "usage-and-surface-cleanup",
+  "round": 1,
+  "status": "pass",
+  "validatorsRun": {
+    "build": {
+      "passed": true,
+      "command": "make build",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    },
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 3,
+    "passed": 3,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "nonBlockingIssues": [
+    {
+      "featureId": "surface-cleanup-cli-http-mcp-native-contract",
+      "severity": "non_blocking",
+      "description": "MCP tool schema description for checkRecordListInput.Limit says 'default 10' but actual default is now 20 (core.DefaultCheckRecordListLimit). Should be updated to 'default 20' for consistency.",
+      "file": "internal/mcpserver/server.go",
+      "line": 433
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "orchestrator-skills-management",
+      "suggestion": "The control-plane-worker skill referenced in mission bootstrap/worker instructions is not available via the Skill tool. All 3 implementation workers in this milestone encountered 'Skill not found' errors and had to work around by reading .factory/skills/control-plane-worker/SKILL.md directly or following the mission brief without the skill procedure. Either expose control-plane-worker via the Skill tool for worker sessions, or update bootstrap instructions to tell workers to read the skill file directly when the tool entry is unavailable.",
+      "evidence": "All 3 features (usage-unify-status-and-history-contracts, surface-cleanup-cli-http-mcp-native-contract, readiness-final-full-suite-stabilization) reported skillFeedback.followedProcedure: false with deviations about missing control-plane-worker skill. Worker sessions: f6166d82-7377-4c53-bfbd-ac84d3ef5f42, 1f0be4e0-92bb-477f-a3c6-fc38d9b32a10, e61fc83b-c242-42bc-adbf-acb2a3e741fa, 9026edca-3796-4496-9ae4-364f004f0111.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document the serve auto-start helper pattern for CLI e2e tests that need serve-backed execution. The pattern (ensureServeForCommand, shouldAutoStartServe) was added in usage-unify-status-and-history-contracts and may be useful for other e2e tests, but is not documented in AGENTS.md or referenced elsewhere.",
+      "evidence": "cmd/cogent/e2e_test.go:1707-1760 adds ensureServeForCommand and shouldAutoStartServe helpers. Feature usage-unify-status-and-history-contracts handoff notes: 'updated CLI tests to assert estimated-cost provenance while auto-starting serve in the e2e helper so the scoped cmd/cogent validator runs in the current serve-backed CLI model.'",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Document the surface parity validation pattern (temporary isolated-state script comparing CLI/HTTP/native behavior) as an effective testing approach for multi-surface contract alignment features. The pattern was used successfully in surface-cleanup-cli-http-mcp-native-contract but the script was not committed and the approach is not documented.",
+      "evidence": "Feature surface-cleanup-cli-http-mcp-native-contract session 2 handoff verification: 'isolated-state parity script on port 5381 comparing check list via CLI, HTTP, and native tool execution' verified exact JSON array matches across surfaces. The script proved the canonical contract alignment but doesn't exist in committed code.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify the lifecycle normalization backward-compatibility contract: is querying for both 'checking' and 'awaiting_attestation' states (in supervisor hasActionableWork and status command) intended as permanent behavior to support legacy database rows, or a temporary bridge until a data migration removes all legacy rows? The current code handles this correctly but the intent is undocumented.",
+      "evidence": "Feature readiness-final-full-suite-stabilization review found internal/cli/supervisor_agent.go:440 queries []string{\"ready\", \"in_progress\", \"checking\", \"awaiting_attestation\"} and internal/cli/root.go:2535 includes 'awaiting_attestation' in status iteration. Lifecycle-normalization milestone established that new writes use canonical states and reads normalize via MarshalJSON, but doesn't document whether querying for both states is permanent or temporary.",
+      "isSystemic": false
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Clarify the readiness contract for Codex live tests: should external account/quota errors cause test skips (current behavior) or should they be treated as failures because external dependencies are expected to be available in CI? The current implementation in readiness-final-full-suite-stabilization makes live tests optional when Codex is unavailable, which could mask integration issues if the intent was for Codex to always be available.",
+      "evidence": "Feature readiness-final-full-suite-stabilization implemented codexUnavailableReason() and skipIfCodexUnavailable() in internal/adapters/codex/live_test.go to skip tests on usage limits, authentication, rate limits. The handoff notes 'currently failing live tests now surfaced the app-server usage-limit response as explicit skips'. This means the suite can pass even when Codex is unavailable.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "Usage attribution stamping pattern (job.Summary[\"usage_attribution\"]) introduced in usage-unify-status-and-history-contracts",
+      "reason": "This is a natural extension of existing summary field conventions (usage, cost, vendor_cost, estimated_cost). The pattern is consistent with existing code and doesn't represent a new convention that needs documentation."
+    },
+    {
+      "observation": "HTTP validation error paths in surface-cleanup-cli-http-mcp-native-contract follow established untested pattern",
+      "reason": "This is consistent with the existing codebase pattern (30+ similar cases found via grep 'writeJSONHTTP.*400'). Not a new gap introduced by this feature."
+    }
+  ],
+  "previousRound": null
+}

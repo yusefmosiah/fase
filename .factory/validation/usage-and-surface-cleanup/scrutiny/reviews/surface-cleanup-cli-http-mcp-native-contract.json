@@ -1,0 +1,38 @@
+{
+  "featureId": "surface-cleanup-cli-http-mcp-native-contract",
+  "reviewedAt": "2026-03-25T08:50:00.000Z",
+  "commitId": "87c17b680480a8cc0def541873e87d532c462eb1",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The feature was completed successfully across two worker sessions. Session 1 (b7c97a8) addressed the MCP report-tool mismatch and aligned native check contracts. Session 2 (87c17b6) unified check-list default limits across all surfaces. Implementation is clean, well-tested, and fully satisfies the feature requirements. All verification steps passed, including focused tests, lint, build, and manual surface parity validation. Minor documentation inconsistency found in MCP tool schema description.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server.go",
+        "line": 433,
+        "severity": "non_blocking",
+        "description": "The jsonschema description for checkRecordListInput.Limit still says 'default 10' but the actual default is now 20 (core.DefaultCheckRecordListLimit). This should be updated to 'default 20' for consistency."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill was unavailable in both worker sessions for this feature. Workers attempted to invoke it per the mission bootstrap but received 'Skill not found' errors both times. Workers proceeded by following the mission brief and validation contract directly, which worked, but the skill was explicitly referenced as required.",
+      "evidence": "Both handoffs report skillFeedback.followedProcedure: false with deviation 'Phase 2: invoke the feature skill control-plane-worker' → 'Skill \"control-plane-worker\" not found'. Handoff suggestedChanges: 'Ensure control-plane-worker is available to workers that are explicitly instructed to invoke it, or update the mission bootstrap to reference an available skill name.'"
+    },
+    {
+      "area": "conventions",
+      "observation": "Worker created an isolated-state parity validation script to compare check list behavior across CLI, HTTP, and native surfaces, which successfully verified the canonical contract alignment. This validation pattern (temporary script for surface parity testing) was effective but not documented as a reusable pattern in AGENTS.md, and the script was not committed to the repo.",
+      "evidence": "Session 2 handoff verification includes: 'isolated-state parity script on port 5381 comparing check list via CLI, HTTP, and native tool execution' with observation 'printed matched 2 records across CLI/HTTP/native'. The script verified exact JSON array matches but doesn't exist in the committed code."
+    },
+    {
+      "area": "conventions",
+      "observation": "HTTP endpoint validation error paths (like the limit validation added in serve.go:1680) follow an established pattern but are not covered by explicit test cases. The worker added tests for CLI default forwarding, native default/override, and MCP service-backed calls, but the HTTP handler's error validation for invalid/negative limit parameters was verified only through the manual parity script, not unit tests.",
+      "evidence": "serve.go:1677-1683 adds limit validation with 400 error for non-positive integers. No test explicitly exercises these error cases, though 30+ other endpoints in serve.go follow the same untested validation pattern (grep 'writeJSONHTTP.*400' shows consistent pattern across codebase)."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS: Feature completed successfully across two worker sessions. Session 1 resolved the MCP report-tool mismatch by aligning report acknowledgments and native check record shapes to canonical contracts. Session 2 unified check-list default limits across CLI, HTTP, MCP, and native surfaces using core.DefaultCheckRecordListLimit=20. All surfaces now use thin wrappers over the service layer with consistent behavior. Verification passed: focused tests (mcpserver, cli, native), command surface tests, lint, build, and manual isolated-state parity check. Minor documentation inconsistency found in MCP schema description (says 'default 10' should be 'default 20'). Three shared state observations noted: missing control-plane-worker skill availability, undocumented surface parity validation script pattern, and HTTP validation error paths following established untested pattern."
+}

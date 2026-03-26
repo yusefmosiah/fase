@@ -1,0 +1,39 @@
+{
+  "featureId": "supervisor-mcp-session-provenance-fix",
+  "reviewedAt": "2026-03-25T01:43:44Z",
+  "commitId": "0847067",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The reviewed commit only adds regression tests; it does not wire supervisor session/role context through the MCP mutation paths. In the committed tree, MCP tools still stamp CreatedBy/claimant as \"mcp\", and actorFromCreatedBy(\"mcp\") still resolves to ActorMCP, so supervisor-originated MCP work remains indistinguishable from external MCP clients.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server.go",
+        "line": 312,
+        "severity": "blocking",
+        "description": "The MCP mutation handlers still hard-code provenance as \"mcp\" (work_update, work_note_add, work_attest, check_record_create, and work_claim all default to \"mcp\" in this file). Because internal/service/events.go maps \"mcp\" to ActorMCP, supervisor-triggered MCP mutations will still be emitted as external MCP/worker provenance instead of ActorSupervisor. The feature's required session/role propagation is not present in this commit."
+      },
+      {
+        "file": "internal/service/events_test.go",
+        "line": 511,
+        "severity": "non_blocking",
+        "description": "The new tests only assert helper-level mappings (actorFromCreatedBy(\"supervisor\") and RequiresSupervisorAttention()) on synthetic events. They never exercise the actual MCP server/session plumbing (SetInternalSessionID, CreatedBy, or the supervisor-agent startup path), so they can pass even while the production provenance bug remains."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The mission library already documents the MCP provenance gap as requiring session context to distinguish supervisor sessions from external MCP clients, but the reviewed commit does not implement that runtime contract change.",
+      "evidence": ".factory/library/contracts.md:23-28 records the known gap; internal/mcpserver/server.go still hard-codes \"mcp\" for MCP mutation provenance."
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker procedure asks for provenance verification across all transport boundaries, but the reviewed commit only adds helper-level assertions and leaves the real MCP transport path untested.",
+      "evidence": "internal/service/events_test.go:511-609 adds synthetic mapping tests, while the transcript skeleton shows no production edits in internal/mcpserver/server.go or internal/cli/supervisor_agent.go."
+    }
+  ],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-event-provenance-and-wake-gate.json",
+  "summary": "FAIL: the commit documents the intended fix in tests, but the committed production code still does not propagate supervisor provenance through MCP mutation paths, so the original MCP provenance failure remains unresolved."
+}

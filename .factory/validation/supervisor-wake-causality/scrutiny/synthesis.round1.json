@@ -1,0 +1,65 @@
+{
+  "milestone": "supervisor-wake-causality",
+  "round": 1,
+  "status": "fail",
+  "validatorsRun": {
+    "build": { "passed": true, "command": "make build", "exitCode": 0 },
+    "test": { "passed": true, "command": "go test ./internal/cli -run 'TestAgenticSupervisor|TestSupervisor|TestWaitForSignal|TestClassifyOutcome' && go test ./internal/service -run 'TestRequiresSupervisorAttention|Test.*Housekeeping'", "exitCode": 0, "note": "Focused tests pass; full suite has pre-existing baseline issues per mission.md" },
+    "lint": { "passed": true, "command": "make lint", "exitCode": 0 }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": ["supervisor-event-provenance-and-wake-gate"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "supervisor-event-provenance-and-wake-gate",
+      "severity": "blocking",
+      "description": "MCP provenance gap: MCP tool calls use CreatedBy: \"mcp\" which maps to ActorWorker via actorFromCreatedBy(). When the supervisor calls MCP tools to mutate work state, resulting events have Actor: ActorWorker instead of Actor: ActorSupervisor. This violates VAL-SUPERVISOR-003 requiring 'wake-relevant events carry trustworthy provenance' across CLI, HTTP, and MCP transport boundaries.",
+      "files": ["internal/mcpserver/server.go:321", "internal/service/events.go:150"],
+      "suggestedFix": "Either: (1) Add context to MCP tools to pass the caller's session identity so work_update can set CreatedBy correctly, or (2) Add \"mcp\" case to actorFromCreatedBy() that resolves to ActorSupervisor when appropriate, or (3) Have MCP tools invoked by the supervisor explicitly set CreatedBy: \"supervisor\"."
+    }
+  ],
+  "nonBlockingIssues": [
+    {
+      "featureId": "supervisor-event-provenance-and-wake-gate",
+      "severity": "non_blocking",
+      "description": "filterNovelEvents uses only (WorkID, State) pairs for echo filtering. Could theoretically suppress legitimate external events with same transition, though mitigated by single-worker-per-item normal operation."
+    },
+    {
+      "featureId": "supervisor-idle-batching-and-recovery",
+      "severity": "non_blocking",
+      "description": "TestWaitForSignalBurstBatching and TestClassifyOutcome are placeholder tests that don't actually test burst batching or classification behavior."
+    },
+    {
+      "featureId": "supervisor-idle-batching-and-recovery",
+      "severity": "suggestion",
+      "description": "The 10-second backoff for idle suppression is hardcoded. Consider making configurable or using exponential backoff for extended idle periods."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "library",
+      "description": "Added Event Provenance section documenting CreatedBy canonical values and MCP provenance gap; added Supervisor Wake Semantics section documenting seen-set, idle suppression, burst batching, and wake triggers.",
+      "sourceFeature": "supervisor-wake-causality reviews"
+    }
+  ],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add boundary: When implementing provenance or event-tracking, workers must verify correct Actor/CreatedBy values across ALL transport boundaries (CLI, HTTP, MCP), not just the primary code path.",
+      "evidence": "supervisor-event-provenance-and-wake-gate implemented seen-set correctly but missed MCP provenance mapping. The CreatedBy: 'mcp' -> ActorWorker mapping breaks supervisor self-wake detection for MCP-originated mutations.",
+      "isSystemic": true
+    },
+    {
+      "target": "skill",
+      "suggestion": "control-plane-worker skill should remind workers to check provenance fields across all transport boundaries when implementing wake/event semantics.",
+      "evidence": "Worker followed skill procedure for tests but tests only covered filtering mechanism, not provenance source correctness for MCP-originated events.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": null
+}

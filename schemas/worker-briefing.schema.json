@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://github.com/yusefmosiah/fase/schemas/worker-briefing.schema.json",
-  "title": "fase Worker Briefing",
+  "$id": "https://github.com/yusefmosiah/cogent/schemas/worker-briefing.schema.json",
+  "title": "cogent Worker Briefing",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -19,7 +19,7 @@
   "properties": {
     "schema_version": {
       "type": "string",
-      "const": "fase.worker_briefing.v1"
+      "const": "cogent.worker_briefing.v1"
     },
     "briefing_kind": {
       "type": "string",

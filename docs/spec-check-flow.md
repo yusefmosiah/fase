@@ -14,8 +14,8 @@ ready → doing → checking → report → done
 
 **Worker** — does the work. Any model.
 - Writes code in a worktree
-- Commits: `fase(<work-id>): <summary>`
-- Signals: `fase work update <id> --execution-state checking`
+- Commits: `cogent(<work-id>): <summary>`
+- Signals: `cogent work update <id> --execution-state checking`
 - Does NOT decide if the work is good
 
 **Checker** — produces evidence. Different model from worker.
@@ -27,7 +27,7 @@ ready → doing → checking → report → done
 - Does NOT decide pass/fail — just reports what it sees
 
 **Supervisor** — makes decisions.
-- Reads the canonical review bundle via `fase work show`
+- Reads the canonical review bundle via `cogent work show`
 - Decides: mark done (ship) or back to doing (fix)
 - On done: merge worktree to main, email/reporting reuses the canonical proof bundle
 - On back-to-doing: sends failure context to original worker session
@@ -66,7 +66,7 @@ type CheckReport struct {
     TestsFailed   int
     TestOutput    string        // truncated to 50KB
     DiffStat      string        // files changed, insertions, deletions
-    Screenshots   []string      // paths in .fase/artifacts/<work-id>/
+    Screenshots   []string      // paths in .cogent/artifacts/<work-id>/
     Videos        []string      // paths
     CheckerNotes  string        // free-form observations from the checker
 }
@@ -75,7 +75,7 @@ type CheckReport struct {
 ## Artifact Storage
 
 ```
-.fase/artifacts/<work-id>/
+.cogent/artifacts/<work-id>/
   go-test-output.txt
   diff-stat.txt
   screenshots/
@@ -90,7 +90,7 @@ Artifacts persist even after worktree cleanup. They're the proof.
 
 ## Completion Reporting
 
-Subject: `[FASE] done: <work title>`
+Subject: `[Cogent] done: <work title>`
 
 Body: the latest passing check report rendered alongside canonical proof-bundle references for the same work item.
 - Work ID plus execution/approval state
@@ -109,9 +109,9 @@ No email on failure. Failures are internal iteration.
 
 After 3 failed checks on the same work item, supervisor emails the human:
 
-Subject: `[FASE] spec question: <work title>`
+Subject: `[Cogent] spec question: <work title>`
 
-Body: "This item has failed verification 3 times. Here's what keeps going wrong: [checker reports]." The escalation also carries canonical proof-bundle references back to the same work/check/attestation/artifact/doc records used by `fase work show`, so operators do not have to reconcile a prose-only summary.
+Body: "This item has failed verification 3 times. Here's what keeps going wrong: [checker reports]." The escalation also carries canonical proof-bundle references back to the same work/check/attestation/artifact/doc records used by `cogent work show`, so operators do not have to reconcile a prose-only summary.
 
 This is the ONLY failure email the human receives.
 
@@ -134,6 +134,6 @@ Over time: model quality matrix from real work, not benchmarks.
 4. Store check record with structured report
 5. Supervisor reads report, decides done or back-to-doing
 6. Email on done with report
-7. Artifact storage in `.fase/artifacts/`
+7. Artifact storage in `.cogent/artifacts/`
 8. Spec escalation after 3 failures
 9. Stats collection

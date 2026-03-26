@@ -1,10 +1,10 @@
-# FASE System Architecture
+# Cogent System Architecture
 
 > Generated from source: 2026-03-23. Read actual code in `internal/` for authoritative details.
 
 ## Overview
 
-FASE is a **local work control plane** for governed agent software engineering. Its core invariant: agents may always stop, the system may always resume. Work is not "done" because an agent says so — it is done when durable evidence satisfies the attestation policy.
+Cogent is a **local work control plane** for governed agent software engineering. Its core invariant: agents may always stop, the system may always resume. Work is not "done" because an agent says so — it is done when durable evidence satisfies the attestation policy.
 
 The architecture is organized around five concerns:
 
@@ -20,7 +20,7 @@ The architecture is organized around five concerns:
 
 ```mermaid
 graph TB
-    subgraph "Host Process (fase serve)"
+    subgraph "Host Process (cogent serve)"
         CLI["CLI\n(cobra commands)"]
         SVC["Service\n(orchestration)"]
         STORE["Store\n(SQLite)"]
@@ -41,7 +41,7 @@ graph TB
     subgraph "Native Adapter (in-process)"
         LIVE["LiveAdapter\n(session factory)"]
         SESSION["nativeSession\n(conversation state)"]
-        TOOLS["ToolRegistry\n(coding/web/FASE/coagent)"]
+        TOOLS["ToolRegistry\n(coding/web/Cogent/coagent)"]
         CLIENT["LLMClient\n(Anthropic/OpenAI)"]
     end
 
@@ -92,7 +92,7 @@ graph TB
 ## Package Structure
 
 ```
-cmd/fase/          Entry point → cli.Execute()
+cmd/cogent/          Entry point → cli.Execute()
 internal/
   adapterapi/      Adapter interface contract (Adapter, LiveAgentAdapter, LiveSession)
   adapters/
@@ -191,7 +191,7 @@ sequenceDiagram
 
 **File**: `internal/mcpserver/server.go`
 
-The MCP server bridges the Claude Code host and the FASE work graph. It runs as a stdio subprocess started by `fase mcp`.
+The MCP server bridges the Claude Code host and the Cogent work graph. It runs as a stdio subprocess started by `cogent mcp`.
 
 ### Architecture
 
@@ -276,7 +276,7 @@ graph LR
         TR["ToolRegistry"]
         CT["Coding Tools\n(read/write/edit file,\nrun shell)"]
         WT["Web Tools\n(search, fetch)\n[if API key set]"]
-        FT["FASE Tools\n(work_list, dispatch,\nwork_update)"]
+        FT["Cogent Tools\n(work_list, dispatch,\nwork_update)"]
         CAT["CoAgent Tools\n(dispatch to sub-agents)"]
     end
 
@@ -327,7 +327,7 @@ flowchart TD
 
 ### Session Persistence
 
-After each completed turn, `nativeSession` serializes its message history to `.fase/native-sessions/<id>.json`. On `ContinueRun`, this history is loaded from disk and injected before the new prompt. This enables resumable sessions across process boundaries.
+After each completed turn, `nativeSession` serializes its message history to `.cogent/native-sessions/<id>.json`. On `ContinueRun`, this history is loaded from disk and injected before the new prompt. This enables resumable sessions across process boundaries.
 
 ### History Compression (`history_compress.go`)
 
@@ -339,7 +339,7 @@ The native adapter registers co-agent tools that let one LLM session delegate wo
 
 ### Provider & Auth (`provider.go`, `auth.go`)
 
-Model strings use `provider/model` format (e.g. `bedrock/claude-sonnet-4-6`, `zai/glm-5-turbo`). `ParseProviderModel` resolves the provider enum and selects the correct LLM client implementation. Auth is resolved from environment variables or `~/.config/fase/auth.toml`.
+Model strings use `provider/model` format (e.g. `bedrock/claude-sonnet-4-6`, `zai/glm-5-turbo`). `ParseProviderModel` resolves the provider enum and selects the correct LLM client implementation. Auth is resolved from environment variables or `~/.config/cogent/auth.toml`.
 
 ---
 
@@ -347,7 +347,7 @@ Model strings use `provider/model` format (e.g. `bedrock/claude-sonnet-4-6`, `za
 
 **File**: `internal/cli/supervisor_agent.go`
 
-The supervisor is an LLM agent (not scripted logic) that continuously manages the work queue. It runs as a long-lived adapter session with access to FASE MCP tools.
+The supervisor is an LLM agent (not scripted logic) that continuously manages the work queue. It runs as a long-lived adapter session with access to Cogent MCP tools.
 
 ### Architecture
 
@@ -393,7 +393,7 @@ graph TD
 | **Context rotation** | After 10 productive turns, session restarts with a fresh hydration to prevent context overflow |
 | **Host messages** | `hostCh` channel delivers operator-injected prompts; breaks backoff immediately |
 | **Default adapter** | `claude` (Claude Code subprocess), model `claude-sonnet-4-6` |
-| **Supervisor tools** | Full FASE MCP tool set (work_list, work_claim, work_attest, work_create, etc.) |
+| **Supervisor tools** | Full Cogent MCP tool set (work_list, work_claim, work_attest, work_create, etc.) |
 
 The supervisor LLM is responsible for all dispatch and attestation logic. The Go code only manages session lifecycle, backoff, and context rotation. No scripted dispatch heuristics exist in Go.
 
@@ -484,7 +484,7 @@ The `EventBus` is an in-process pub/sub bus. Publishers call `Publish(WorkEvent)
 
 **File**: `internal/store/store.go`
 
-Single SQLite file at `.fase/fase.db` (pure Go via `modernc.org/sqlite`).
+Single SQLite file at `.cogent/cogent.db` (pure Go via `modernc.org/sqlite`).
 
 ### Core Tables
 
@@ -581,7 +581,7 @@ type LiveAgentAdapter interface {
 
 | Adapter | Type | HeadlessRun | NativeFork | StructuredOutput | Tool Support |
 |---|---|---|---|---|---|
-| `native` | in-process | ✓ | ✓ | ✓ | Full (coding + web + FASE + coagent) |
+| `native` | in-process | ✓ | ✓ | ✓ | Full (coding + web + Cogent + coagent) |
 | `claude` | subprocess | ✓ | — | — | Via Claude Code's built-in tools |
 | `codex` | subprocess | ✓ | — | — | Via Codex built-in tools |
 | `opencode` | subprocess | ✓ | — | — | Via OpenCode built-in tools |
@@ -589,7 +589,7 @@ type LiveAgentAdapter interface {
 | `factory` | subprocess | ✓ | — | — | Via Factory built-in tools |
 | `gemini` | subprocess | ✓ | — | — | Via Gemini built-in tools |
 
-External (subprocess) adapters communicate through stdin/stdout and have no direct access to the FASE work graph during execution. They receive a compiled briefing as their initial prompt and must call `fase work update` via shell to record progress.
+External (subprocess) adapters communicate through stdin/stdout and have no direct access to the Cogent work graph during execution. They receive a compiled briefing as their initial prompt and must call `cogent work update` via shell to record progress.
 
 ---
 

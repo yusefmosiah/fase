@@ -1,0 +1,34 @@
+{
+  "featureId": "docs-authoritative-linking-and-ingest-semantics",
+  "reviewedAt": "2026-03-25T11:30:00.000Z",
+  "commitId": "c7786481e43345e16247f4ca719ee6f69df43a3e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "High-quality implementation that fully satisfies the feature requirements. Tracked docs now link to work items with authoritative repo-relative paths, runtime records carry repo truth status (RepoFileExists/MatchesRepo), and documentation emphasizes import/bootstrap helper semantics. Comprehensive test coverage spans service layer, store layer, and CLI e2e flows. All verification steps passed including focused tests, lint, build, and manual CLI/HTTP validation.",
+    "issues": [
+      {
+        "file": "internal/cli/serve.go",
+        "line": 814,
+        "severity": "non_blocking",
+        "description": "New /api/work/doc-set endpoint lacks automated HTTP API test coverage. Manual curl validation passed (confirmed in handoff), and CLI e2e test TestWorkDocSetAutoCreatesLinkedWorkWithAuthoritativePath exercises the same service logic through both CLI and HTTP layers, but a dedicated HTTP handler test would strengthen the test suite."
+      },
+      {
+        "file": "internal/store/store.go",
+        "line": 1139,
+        "severity": "non_blocking",
+        "description": "GetDocContentByPath query now uses 'ORDER BY updated_at DESC LIMIT 1' as defensive measure for potential duplicate paths, but there's no database UNIQUE constraint preventing duplicates. Service layer now prevents conflicting work linkage (see TestSetDocContentRejectsPathLinkedToDifferentWork), making this defensive behavior correct but not strictly necessary. Consider adding a migration for a UNIQUE constraint on (path) in a future hardening feature."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker skill contract-alignment-worker Phase 1.7 guidance for service startup doesn't document the isolated-temp-state validation pattern. Worker deviated by launching 'build/cogent serve' with isolated temporary COGENT_STATE_DIR instead of using manifest repo-local state, which was justified to preserve user's local repo data during manual validation. Worker's skillFeedback.deviations explicitly noted this with good reasoning.",
+      "evidence": "Handoff skillFeedback shows: 'For manual validation I launched build/cogent serve with an isolated temporary COGENT_STATE_DIR and temp project directory instead of using the manifest's repo-local start command exactly as written' with justification 'The manifest start command would have written validation work items into the real repository state; using an isolated temp state preserved the user's local repo data while still validating the actual CLI/API behavior on an approved mission port.' Worker suggested: 'Allow an explicitly documented pattern for using manifest-equivalent commands with isolated temporary state during manual validation so workers can avoid mutating the real repo-local .cogent database.'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS - Feature 'docs-authoritative-linking-and-ingest-semantics' successfully implements authoritative repo-path linking for tracked docs. Key achievements: (1) normalizeDocPath() ensures all stored doc paths are repo-relative and validated; (2) SetDocContent() rejects conflicting work linkage for the same path; (3) enrichDocRecord() populates RepoFileExists/MatchesRepo metadata by comparing runtime records against actual repo files; (4) CLI and HTTP API both support auto-create and existing-work flows; (5) work-show exposes repo truth status to reviewers; (6) comprehensive test coverage across service (3 new tests), store (2 new tests), and CLI e2e (1 new test); (7) docs and skill descriptions updated to emphasize import/bootstrap helper semantics rather than authoritative storage. All verification steps passed (focused tests, lint, build, manual CLI/HTTP validation). Fulfills VAL-DOCS-001 (tracked docs are work-linked records with repo paths), VAL-DOCS-002 (repo files remain authoritative source of truth), and VAL-DOCS-005 (doc-ingest surfaces are helpers, not authoritative stores). Two non-blocking observations: missing automated HTTP API test (manual validation passed), and skill could document isolated-temp-state validation pattern (worker deviated with good justification). Overall implementation is clean, well-tested, and ready for integration."
+}

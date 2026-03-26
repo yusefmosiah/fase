@@ -1,0 +1,92 @@
+{
+  "featureId": "lifecycle-normalize-canonical-states-and-dispatchability",
+  "reviewedAt": "2026-03-25T04:22:34Z",
+  "commitId": "24a6d0d3592fe24c9df20bde40d4a6e492159464",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The feature adds the normalization infrastructure (IsDeprecatedState, Canonical methods, and read-time normalization in ListReadyWork/ReleaseExpiredWorkClaims), but critically fails to update the service layer to stop writing awaiting_attestation for new state transitions. The service layer (internal/service/service.go) actively writes WorkExecutionStateAwaitingAttestation at lines 3775, 3900, 6046, and 8040, directly violating the requirement that deprecated lifecycle names be rejected or normalized rather than surviving as separate live states. This means awaiting_attestation continues to be written to the database as a live state, and only specific read paths normalize it. The Valid() method correctly returns false for awaiting_attestation, but this check is never enforced—the service layer bypasses it entirely. Tests pass only because they verify the normalization infrastructure itself, not the end-to-end elimination of deprecated writes.",
+    "issues": [
+      {
+        "file": "internal/service/service.go",
+        "line": 3775,
+        "severity": "blocking",
+        "description": "Service layer writes WorkExecutionStateAwaitingAttestation when a worker job completes: 'work.ExecutionState = core.WorkExecutionStateAwaitingAttestation'. This is a new write of the deprecated state, violating the requirement that deprecated lifecycle names not survive as separate live states. Should use WorkExecutionStateChecking instead."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 3900,
+        "severity": "blocking",
+        "description": "Check submission handler writes WorkExecutionStateAwaitingAttestation on check pass: 'nextState = core.WorkExecutionStateAwaitingAttestation'. This is a new write of the deprecated state, violating the normalization contract. Should use WorkExecutionStateChecking instead."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 6046,
+        "severity": "blocking",
+        "description": "spawnAttestationChildren writes WorkExecutionStateAwaitingAttestation to parent: 'parent.ExecutionState = core.WorkExecutionStateAwaitingAttestation'. This is a new write of the deprecated state, violating the normalization contract. Should use WorkExecutionStateChecking instead."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 8040,
+        "severity": "blocking",
+        "description": "syncWorkStateFromJob writes WorkExecutionStateAwaitingAttestation when job completes with attestations required: 'workState = core.WorkExecutionStateAwaitingAttestation'. This is a new write of the deprecated state, violating the normalization contract. Should use WorkExecutionStateChecking instead."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 2317,
+        "severity": "non_blocking",
+        "description": "Code checks for awaiting_attestation state: 'if w.ExecutionState == core.WorkExecutionStateAwaitingAttestation'. While this will work during the migration, it operates on a deprecated state name. Should be updated to check for checking instead once writes are fixed."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 8065,
+        "severity": "non_blocking",
+        "description": "Code checks for awaiting_attestation state: 'if workState == core.WorkExecutionStateAwaitingAttestation'. While this will work during the migration, it operates on a deprecated state name. Should be updated to check for checking instead once writes are fixed."
+      },
+      {
+        "file": "internal/store/store.go",
+        "line": 849,
+        "severity": "non_blocking",
+        "description": "GetWorkItem does not normalize deprecated states on read. While ListReadyWork and ReleaseExpiredWorkClaims normalize, GetWorkItem returns awaiting_attestation directly from the database. This is inconsistent with the goal of exposing only canonical vocabulary in normal runtime output. Consider adding normalization to GetWorkItem and other read paths."
+      },
+      {
+        "file": "internal/cli/supervisor_agent.go",
+        "line": 440,
+        "severity": "non_blocking",
+        "description": "Supervisor includes awaiting_attestation in actionable states list. This should be updated to use checking instead once the service layer stops writing awaiting_attestation."
+      },
+      {
+        "file": "internal/service/service_test.go",
+        "line": 3459,
+        "severity": "non_blocking",
+        "description": "Test expects awaiting_attestation state: '\"completed task maps to awaiting_attestation\"'. Tests should be updated to expect checking instead once the service layer is fixed."
+      },
+      {
+        "file": "cmd/cogent/e2e_test.go",
+        "line": 632,
+        "severity": "non_blocking",
+        "description": "E2E test expects awaiting_attestation state: 'if show.Work.ExecutionState != \"awaiting_attestation\"'. This test should be updated to expect checking once the service layer is fixed."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The .factory/library/contracts.md documents that awaiting_attestation is deprecated and states 'Do not use awaiting_attestation in new code or docs', but the service layer (internal/service/service.go) still actively writes this deprecated state in at least 4 critical paths. This convention is documented but not enforced.",
+      "evidence": ".factory/library/contracts.md documents the deprecation; internal/service/service.go lines 3775, 3900, 6046, 8040 still write WorkExecutionStateAwaitingAttestation"
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill (step 8) instructs workers to 'Verify that deprecated/duplicate paths covered by the feature are actually removed or exact aliases, not just left undocumented.' The worker added normalization infrastructure but did not remove the deprecated writes in the service layer, suggesting either the skill guidance was not followed or the worker misunderstood the scope of 'removing deprecated paths' to mean only read-side normalization rather than eliminating writes.",
+      "evidence": ".factory/skills/control-plane-worker/SKILL.md step 8; internal/service/service.go still contains 4+ write sites for awaiting_attestation; handoff claims feature is complete but validation contracts are not fully satisfied"
+    },
+    {
+      "area": "conventions",
+      "observation": "The feature description specifies 'deprecated lifecycle names are rejected or normalized, never left as separate live states', but the implementation only normalizes on read (in 2 specific store methods) while continuing to write the deprecated state. This suggests a gap in understanding the difference between 'normalize on read' (which still allows the database to contain deprecated states) vs 'reject on write' (which prevents deprecated states from entering the system). The validation contract VAL-CONTRACT-002 allows either approach, but the current implementation does neither correctly—it writes deprecated states that are only sometimes normalized on read.",
+      "evidence": "Feature description and VAL-CONTRACT-002; implementation in internal/store/store.go only normalizes in ListReadyWork and ReleaseExpiredWorkClaims but not GetWorkItem or other read paths; internal/service/service.go continues writing awaiting_attestation"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "FAIL: The feature adds correct normalization infrastructure (IsDeprecatedState, Canonical methods, comprehensive unit tests) and normalizes deprecated states in ListReadyWork and ReleaseExpiredWorkClaims. However, it critically fails to complete the migration by leaving the service layer (internal/service/service.go) actively writing WorkExecutionStateAwaitingAttestation in at least 4 locations (lines 3775, 3900, 6046, 8040). This violates both the feature's expected behavior ('deprecated lifecycle names are rejected or normalized, never left as separate live states') and validation contract VAL-CONTRACT-002. The awaiting_attestation state continues to be written to the database and only specific read paths normalize it, meaning normal runtime output can still expose the deprecated state depending on the code path used. The Valid() method correctly marks awaiting_attestation as invalid, but no enforcement mechanism exists—the service layer bypasses this check entirely. The feature is approximately 50% complete: the normalization foundation is solid, but the actual migration of write paths from awaiting_attestation to checking was not performed. Tests pass because they verify the infrastructure, not the end-to-end elimination of deprecated state usage."
+}

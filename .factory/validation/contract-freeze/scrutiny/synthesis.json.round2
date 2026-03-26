@@ -1,0 +1,78 @@
+{
+  "milestone": "contract-freeze",
+  "round": 2,
+  "status": "fail",
+  "validatorsRun": {
+    "build": { "passed": true, "command": "make build", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint", "exitCode": 0 },
+    "test": {
+      "passed": true,
+      "command": "go test ./internal/service ./internal/cli ./internal/core ./internal/store -run 'TestVerify|TestCheck|TestReport|TestAttestation|TestCheckRecord|TestVerifyWork|TestUpdateWork|TestEscalate|TestReview' -count=1",
+      "exitCode": 0,
+      "note": "Focused tests passed including TestApplyEscalateContractProposal and TestEscalationFieldsRoundTrip. Full suite times out but that's a known baseline issue per mission.md."
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "failedFeatures": ["contract-freeze-escalation-fields-and-tests-fix"]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "contract-freeze-escalation-fields-and-tests-fix",
+      "severity": "blocking",
+      "description": "Commit 67f59ee added unit tests that reference EscalatedAt, EscalationBy, EscalationReason fields on RequiredAttestation, but these fields do NOT exist in the committed internal/core/types.go. The worker committed tests but failed to commit the actual struct changes. The RequiredAttestation struct in commit 67f59ee only has 4 fields (VerifierKind, Method, Blocking, Metadata), not the 7 fields required by ADR-0036.",
+      "file": "internal/core/types.go",
+      "line": 337
+    },
+    {
+      "featureId": "contract-freeze-escalation-fields-and-tests-fix",
+      "severity": "blocking",
+      "description": "The escalation field-setting logic in applyEscalateContractProposal (setting EscalatedAt, EscalationBy, EscalationReason on new attestation slots) is present in the working directory but NOT committed. The fix is incomplete - both the struct changes and the implementation logic must be committed together.",
+      "file": "internal/service/service.go",
+      "line": 4349
+    },
+    {
+      "featureId": "contract-freeze-escalation-fields-and-tests-fix",
+      "severity": "blocking",
+      "description": "Worker handoff claim was false: stated 'RequiredAttestation already has ADR-0036-compliant escalation fields - the scrutiny finding was incorrect.' This is demonstrably false - git show 67f59ee:internal/core/types.go shows only 4 fields on RequiredAttestation, not the escalation fields.",
+      "file": "handoff",
+      "line": null
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add explicit requirement for workers to commit ALL changes before handoff. The worker committed tests but left struct changes and implementation logic uncommitted. Workers should verify 'git status --porcelain' is empty (or only shows expected artifacts) before calling EndFeatureRun.",
+      "evidence": "contract-freeze-escalation-fields-and-tests-fix committed 67f59ee with tests but left escalation fields (types.go) and field-setting logic (service.go) uncommitted. Tests only pass with uncommitted changes present.",
+      "isSystemic": true
+    },
+    {
+      "target": "skills/control-plane-worker",
+      "suggestion": "Add verification step: run 'git diff --stat' after 'make build' and 'make test' to ensure all implementation changes are committed. The worker appears to have done incremental commits of test files while leaving implementation uncommitted.",
+      "evidence": "The worker ran 'git add internal/service/service_test.go' and committed only the test file, not the accompanying types.go and service.go changes.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/contract-freeze/scrutiny/synthesis.json.round1",
+  "uncommittedChanges": {
+    "note": "The following uncommitted changes are required for the fix to work. These were found in the working directory but not committed by the worker.",
+    "files": [
+      {
+        "path": "internal/core/types.go",
+        "changes": "Added EscalatedAt, EscalationBy, EscalationReason fields to RequiredAttestation struct (lines 343-346)"
+      },
+      {
+        "path": "internal/service/service.go",
+        "changes": "Added escalation field-setting logic in applyEscalateContractProposal (lines 4339-4361) and fixed isStricterContract to handle blocking-flag tightening (lines 4382-4427)"
+      },
+      {
+        "path": "internal/cli/supervisor_agent.go",
+        "changes": "Unknown - not reviewed in detail, may be unrelated to this milestone"
+      }
+    ]
+  }
+}

@@ -13,8 +13,8 @@ import (
 
 func newTestServeAPI(t *testing.T) (*service.Service, *httptest.Server) {
 	t.Helper()
-	t.Setenv("FASE_CONFIG_DIR", t.TempDir())
-	t.Setenv("FASE_CACHE_DIR", t.TempDir())
+	t.Setenv("COGENT_CONFIG_DIR", t.TempDir())
+	t.Setenv("COGENT_CACHE_DIR", t.TempDir())
 
 	svc, err := service.OpenWithStateDir(context.Background(), "", t.TempDir())
 	if err != nil {

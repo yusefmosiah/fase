@@ -1,0 +1,31 @@
+{
+  "featureId": "readiness-final-full-suite-stabilization",
+  "reviewedAt": "2026-03-25T09:00:00.000Z",
+  "commitId": "d186b7b273cae26311bb4a3c66f473d787562268",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation successfully stabilizes the full-suite readiness gate by making Codex live tests skip gracefully on external quota/account failures, adding HTTP API test coverage for both POST /api/work/doc-set flows, enforcing doc path uniqueness with defensive migration-backed deduplication, and adding debug logging for proof bundle fetch failures. All verification commands passed. The code follows existing patterns, adds comprehensive regression coverage, and properly handles backward compatibility for deprecated lifecycle states.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "Worker could not invoke control-plane-worker through the Skill tool and had to read .factory/skills/control-plane-worker/SKILL.md directly.",
+      "evidence": "handoff.skillFeedback.deviations: 'I read and followed the control-plane worker procedure from .factory/skills/control-plane-worker/SKILL.md directly after functions.Skill exposed only mission-worker-base.' Worker suggests: 'Expose control-plane-worker through the Skill tool for worker sessions, or update the bootstrap instructions to explicitly tell workers to read .factory/skills/control-plane-worker/SKILL.md when the tool entry is unavailable.'"
+    },
+    {
+      "area": "conventions",
+      "observation": "The supervisor's hasActionableWork() function (internal/cli/supervisor_agent.go:440) and the status command (internal/cli/root.go:2535) still query for 'awaiting_attestation' as a separate state alongside 'checking'. This is correct for backward compatibility with legacy database rows, but it's not documented whether this is intentional long-term behavior or a temporary bridge.",
+      "evidence": "supervisor_agent.go:440 iterates over []string{\"ready\", \"in_progress\", \"checking\", \"awaiting_attestation\"} when checking for actionable work. root.go:2535 includes 'awaiting_attestation' in status output iteration. These queries will find legacy rows with awaiting_attestation in the database, which are then normalized to 'checking' on load via MarshalJSON. The lifecycle-normalization milestone established that new writes use canonical states and reads normalize deprecated states, so this behavior appears correct but lacks explicit documentation about whether querying for both states is intended forever or until a data migration removes all legacy rows."
+    },
+    {
+      "area": "conventions",
+      "observation": "The Codex live adapter now treats external account/quota errors as test skips rather than failures. This is a reasonable defensive posture for stabilizing the test suite, but it's unclear from mission docs whether 'stabilized' means 'external failures cause skips' or 'external failures should never occur in CI'. The current implementation makes live tests optional in the presence of account issues, which may or may not match the intended readiness contract.",
+      "evidence": "internal/adapters/codex/live_test.go implements codexUnavailableReason() and skipIfCodexUnavailable() to classify and skip tests on usage limits, authentication, rate limits, etc. The handoff notes 'the currently failing live tests now surfaced the app-server usage-limit response as explicit skips instead of timing out'. This means the suite can pass even when Codex is unavailable, which could mask integration issues if the intent was for Codex to be available in all test environments."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "Feature readiness-final-full-suite-stabilization successfully stabilized the repo-wide validation gate. The worker addressed all three scrutiny-identified hardening items: (1) added HTTP API test coverage for both POST /api/work/doc-set auto-create and existing-work flows with comprehensive assertions, (2) implemented UNIQUE constraint on docs.path with migration-backed deduplication that repairs legacy duplicates and rejects new cross-work duplicates, and (3) added debug logging for failed proof bundle record fetches in notificationProofBundle. Additionally, the worker hardened Codex live tests to surface nested error messages and skip gracefully on external account/quota issues rather than hanging or timing out. All verification commands passed: make test, make lint, make build. The implementation follows existing code patterns, adds solid regression coverage, and properly handles backward compatibility. Three shared-state observations noted: (1) skill availability gap where control-plane-worker wasn't exposed via Skill tool, (2) backward-compatible but undocumented handling of deprecated 'awaiting_attestation' state in supervisor and status queries, and (3) unclear readiness contract for Codex live test availability (should external account issues cause skips or are they expected to never occur in CI?)."
+}

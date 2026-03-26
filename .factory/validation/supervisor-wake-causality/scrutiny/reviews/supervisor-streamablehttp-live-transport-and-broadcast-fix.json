@@ -1,0 +1,39 @@
+{
+  "featureId": "supervisor-streamablehttp-live-transport-and-broadcast-fix",
+  "reviewedAt": "2026-03-25T03:13:57Z",
+  "commitId": "8faafc373860b8a98895b122f6b86bac43c98ea4",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The broadcast propagation fix looks sound, but the required live transport regression is still only simulated through helper calls. The commit never actually drives handler.ServeHTTP or session.CallTool, so VAL-SUPERVISOR-003 remains unproven on the production path.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server_streamablehttp_test.go",
+        "line": 284,
+        "severity": "blocking",
+        "description": "The existing 'TestStreamableHTTPHandlerIntegration' test still only calls GetServerForRequest/GetServerInstance and inspects CreatedBy. It never invokes handler.ServeHTTP or session.CallTool, so the claimed production StreamableHTTP path is not exercised."
+      },
+      {
+        "file": "internal/mcpserver/server_streamablehttp_test.go",
+        "line": 413,
+        "severity": "blocking",
+        "description": "The new 'TestStreamableHTTPLiveTransportProvenance' test repeats the same helper-only pattern: it constructs a handler, but only uses GetServerForRequest/GetServerInstance and CreatedBy/Actor checks. No live ServeHTTP or CallTool invocation occurs, so the required end-to-end proof is still missing."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The test file now contains multiple comments that describe an 'actual StreamableHTTP handler path' while the code only exercises helper-level request selection. That naming pattern can mislead future reviewers into accepting synthetic coverage as live transport proof.",
+      "evidence": "internal/mcpserver/server_streamablehttp_test.go:282-418"
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker guidance should explicitly require a verified ServeHTTP or session.CallTool invocation when a feature claims live transport coverage; this transcript and handoff treat GetServerForRequest as sufficient, which is not enough for the stated contract.",
+      "evidence": "handoff claims the production StreamableHTTP path is proven, but the test bodies only call GetServerForRequest/GetServerInstance at internal/mcpserver/server_streamablehttp_test.go:284-450"
+    }
+  ],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-streamablehttp-session-isolation-fix.json",
+  "summary": "FAIL: broadcast propagation was fixed, but the fix still does not prove the live transport path end-to-end."
+}

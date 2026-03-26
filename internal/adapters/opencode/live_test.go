@@ -284,7 +284,7 @@ func fakeAssistantMessage(messageID, sessionID, cwd string, completed bool) open
 		ProviderID: "openai",
 		Role:       opencodesdk.AssistantMessageRoleAssistant,
 		SessionID:  sessionID,
-		System:     []string{"fase"},
+		System:     []string{"cogent"},
 		Time: opencodesdk.AssistantMessageTime{
 			Created:   1,
 			Completed: 0,

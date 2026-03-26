@@ -1,0 +1,62 @@
+{
+  "milestone": "contract-freeze",
+  "round": 3,
+  "status": "pass",
+  "validatorsRun": {
+    "build": { "passed": true, "command": "make build", "exitCode": 0 },
+    "lint": { "passed": true, "command": "make lint", "exitCode": 0 },
+    "test": {
+      "passed": true,
+      "command": "GOMAXPROCS=4 go test ./internal/service ./internal/cli ./internal/core ./internal/store -run 'TestVerify|TestCheck|TestReport|TestAttestation|TestCheckRecord|TestVerifyWork|TestUpdateWork|TestEscalate|TestReview' -count=1",
+      "exitCode": 0,
+      "note": "Focused tests passed including TestApplyEscalateContractProposal and TestEscalationFieldsRoundTrip. Full suite times out but that's a known baseline issue per mission.md."
+    }
+  },
+  "reviewsSummary": {
+    "total": 4,
+    "passed": 3,
+    "failed": 1,
+    "failedFeatures": [],
+    "reviewsByFeature": {
+      "contract-freeze-canonical-precedence-and-doc-inventory": "pass",
+      "contract-freeze-final-success-gate-and-escalation-path": "fail (superseded by fix)",
+      "contract-freeze-escalation-fields-and-tests-fix": "fail (superseded by fix)",
+      "contract-freeze-commit-escalation-slot-implementation-fix": "pass"
+    }
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Add explicit requirement for workers to commit ALL changes before handoff. The worker committed tests but left struct changes and implementation logic uncommitted. Workers should verify 'git status --porcelain' is empty (or only shows expected artifacts) before calling EndFeatureRun.",
+      "evidence": "contract-freeze-escalation-fields-and-tests-fix committed 67f59ee with tests but left escalation fields (types.go) and field-setting logic (service.go) uncommitted. Tests only pass with uncommitted changes present.",
+      "isSystemic": true,
+      "status": "suggested"
+    },
+    {
+      "target": "skills/control-plane-worker",
+      "suggestion": "Add verification step: run 'git diff --stat' after 'make build' and 'make test' to ensure all implementation changes are committed. The worker appears to have done incremental commits of test files while leaving implementation uncommitted.",
+      "evidence": "The worker ran 'git add internal/service/service_test.go' and committed only the test file, not the accompanying types.go and service.go changes.",
+      "isSystemic": false,
+      "status": "suggested"
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": ".factory/validation/contract-freeze/scrutiny/synthesis.json.round2",
+  "fixChainSummary": {
+    "originalFailure": "contract-freeze-final-success-gate-and-escalation-path failed round 1 due to missing RequiredAttestation escalation fields and no unit tests",
+    "firstFixAttempt": "contract-freeze-escalation-fields-and-tests-fix added tests but failed to commit struct fields and implementation logic (round 2 failure)",
+    "successfulFix": "contract-freeze-commit-escalation-slot-implementation-fix (commit 5cadef5) properly committed all escalation fields and logic, tests now pass against committed code"
+  },
+  "uncommittedChanges": {
+    "note": "One unrelated uncommitted change remains in working tree:",
+    "files": [
+      {
+        "path": "internal/cli/supervisor_agent.go",
+        "status": "uncommitted modification",
+        "recommendation": "Not part of contract-freeze milestone. Should be addressed separately or reverted if no longer needed."
+      }
+    ]
+  }
+}

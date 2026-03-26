@@ -213,7 +213,7 @@ func TestLiveSessionSteeringPrependsNextRequest(t *testing.T) {
 				if last.Content[0].Type != "text" {
 					t.Fatalf("expected steer text block, got %+v", last.Content[0])
 				}
-				if want := "[fase:steer]\nSay exactly: STEERED\n[/fase:steer]"; last.Content[0].Text != want {
+				if want := "[cogent:steer]\nSay exactly: STEERED\n[/cogent:steer]"; last.Content[0].Text != want {
 					t.Fatalf("unexpected steer block: %q", last.Content[0].Text)
 				}
 				if last.Content[1].Type != "tool_result" || last.Content[1].Text != "tool-finished" {

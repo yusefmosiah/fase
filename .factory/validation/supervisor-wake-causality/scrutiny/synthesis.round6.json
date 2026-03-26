@@ -1,0 +1,59 @@
+{
+  "milestone": "supervisor-wake-causality",
+  "round": 6,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go test ./internal/... -run '^$'",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 0,
+    "failed": 1,
+    "failedFeatures": [
+      "supervisor-streamablehttp-live-transport-and-broadcast-fix"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "supervisor-streamablehttp-live-transport-and-broadcast-fix",
+      "severity": "blocking",
+      "description": "The live transport regression still only uses helper selection. `TestStreamableHTTPHandlerIntegration` never invokes `handler.ServeHTTP` or `session.CallTool`, so the production StreamableHTTP path is not exercised end to end."
+    },
+    {
+      "featureId": "supervisor-streamablehttp-live-transport-and-broadcast-fix",
+      "severity": "blocking",
+      "description": "The new live transport provenance test repeats the helper-only pattern. It constructs a handler but still never drives the actual live transport path, so VAL-SUPERVISOR-003 remains unproven on the production route."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Require live StreamableHTTP regressions to invoke `handler.ServeHTTP` or `session.CallTool` when a feature claims live transport coverage; helper-level request/server selection is not sufficient.",
+      "evidence": "The reviewed fix feature and its predecessor both stopped at `GetServerForRequest` / `GetServerInstance`, leaving the actual transport path untested.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The test comments describe an 'actual StreamableHTTP handler path' even though the code still only exercises helper-level request selection.",
+      "reason": "duplicate",
+      "details": "This is the same underlying transport-coverage gap already captured in the blocking issues and guidance update."
+    }
+  ],
+  "previousRound": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/synthesis.round5.json"
+}

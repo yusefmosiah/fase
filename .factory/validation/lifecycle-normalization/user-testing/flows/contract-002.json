@@ -1,0 +1,116 @@
+{
+  "groupId": "contract-002",
+  "testedAt": "2026-03-25T05:15:00Z",
+  "isolation": {
+    "appUrl": "http://localhost:5380",
+    "testingTool": "CLI and HTTP API (curl)",
+    "missionDir": "/Users/wiz/.factory/missions/c19aa64a-e3f7-4a93-a71f-17a81e7c5e30"
+  },
+  "toolsUsed": ["cogent CLI", "curl", "sqlite3"],
+  "assertions": [
+    {
+      "id": "VAL-CONTRACT-002",
+      "title": "Deprecated lifecycle names are normalized or rejected",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Query database directly for deprecated 'awaiting_attestation' state",
+          "expected": "Find work items with 'awaiting_attestation' stored in database as legacy data",
+          "observed": "Found 1 work item (work_01KMHGQH9ANGQF769KKW13QMAM) with execution_state='awaiting_attestation' in work_items table"
+        },
+        {
+          "action": "Query same work item via CLI 'cogent work show --json'",
+          "expected": "CLI output shows canonical 'checking' state instead of 'awaiting_attestation'",
+          "observed": "CLI JSON output shows \"execution_state\": \"checking\" - normalization working correctly"
+        },
+        {
+          "action": "Query same work item via HTTP API",
+          "expected": "API response shows canonical 'checking' state instead of 'awaiting_attestation'",
+          "observed": "HTTP API response shows \"execution_state\":\"checking\" - normalization working correctly"
+        },
+        {
+          "action": "Check work list output via CLI 'cogent work list --json'",
+          "expected": "Work list shows 'checking' for work items that have 'awaiting_attestation' in database",
+          "observed": "Work list correctly shows \"execution_state\": \"checking\" for work_01KMHGQH9ANGQF769KKW13QMAM"
+        },
+        {
+          "action": "Check work updates history in database",
+          "expected": "Database may contain 'awaiting_attestation' in work_updates table as historical data",
+          "observed": "Found update wup_01KMHGS2KKXEK4HM957NQJJAXB with execution_state='awaiting_attestation' in work_updates table"
+        },
+        {
+          "action": "Verify updates are normalized in API/CLI output",
+          "expected": "Updates shown via API/CLI should display 'checking' instead of 'awaiting_attestation'",
+          "observed": "Both CLI and API show \"execution_state\": \"checking\" in the updates array - normalization working"
+        },
+        {
+          "action": "Test 'cogent work hydrate' command",
+          "expected": "Hydrated briefing should show canonical 'checking' state",
+          "observed": "Hydrate output shows \"execution_state\":\"checking\" in assignment section"
+        },
+        {
+          "action": "Test 'cogent work ready' command",
+          "expected": "Ready list should only show canonical states, no 'awaiting_attestation'",
+          "observed": "Ready list shows only canonical states (ready, blocked, etc.), work_01KMHGQH9ANGQF769KKW13QMAM not in ready list as expected since it's in checking state"
+        },
+        {
+          "action": "Test human-readable 'cogent work show' output",
+          "expected": "Human-readable output should show 'checking' not 'awaiting_attestation'",
+          "observed": "Output shows 'checking' state: 'work_01KMHGQH9ANGQF769KKW13QMAM	task	checking	none'"
+        },
+        {
+          "action": "Check /api/work/ready endpoint",
+          "expected": "API ready list should not contain deprecated states",
+          "observed": "API ready list contains only canonical states, no 'awaiting_attestation' present"
+        },
+        {
+          "action": "Check /api/dashboard endpoint",
+          "expected": "Dashboard should show all work items with normalized states",
+          "observed": "Dashboard shows work items with canonical states only, no 'awaiting_attestation' visible"
+        },
+        {
+          "action": "Verify state count in database",
+          "expected": "Database may have 'awaiting_attestation' states but no 'checking' states (normalization happens on read)",
+          "observed": "Count query confirms: 1 item with 'awaiting_attestation' in DB, 0 items with 'checking' in DB - normalization is read-time only"
+        }
+      ],
+      "evidence": {
+        "databaseQueries": [
+          "lifecycle-normalization/contract-002/database-raw-state.txt (shows 'awaiting_attestation' in DB)",
+          "lifecycle-normalization/contract-002/database-updates-raw.txt (shows 'awaiting_attestation' in updates)",
+          "lifecycle-normalization/contract-002/state-counts.txt (shows 1 awaiting_attestation, 0 checking in DB)"
+        ],
+        "cliOutputs": [
+          "lifecycle-normalization/contract-002/cli-show-normalized.json (shows 'checking' in CLI output)",
+          "lifecycle-normalization/contract-002/cli-list-normalized.json (shows 'checking' in work list)"
+        ],
+        "apiResponses": [
+          "lifecycle-normalization/contract-002/http-api-normalized.json (shows 'checking' in API response)",
+          "lifecycle-normalization/contract-002/api-ready-list.json (ready list with canonical states)",
+          "lifecycle-normalization/contract-002/api-dashboard-full.json (dashboard with normalized states)"
+        ]
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested VAL-CONTRACT-002: PASSED. The deprecated lifecycle state 'awaiting_attestation' exists in the database as legacy data but is correctly normalized to the canonical 'checking' state on all read paths (CLI JSON, CLI human-readable, HTTP API, hydrate, ready list, dashboard). The normalization happens consistently across work items, work updates, and all user-facing surfaces. No deprecated states leak into runtime output.",
+  "testDetails": {
+    "workItemTested": "work_01KMHGQH9ANGQF769KKW13QMAM",
+    "deprecatedStateInDB": "awaiting_attestation",
+    "canonicalStateInOutput": "checking",
+    "normalizationApproach": "normalize-on-read",
+    "readPathsTested": [
+      "cogent work show --json",
+      "cogent work show (human-readable)",
+      "cogent work list --json",
+      "cogent work hydrate",
+      "cogent work ready",
+      "HTTP GET /api/work/{id}",
+      "HTTP GET /api/work/ready",
+      "HTTP GET /api/dashboard"
+    ],
+    "allPathsNormalized": true
+  }
+}

@@ -4,7 +4,7 @@
 
 ## Overview
 
-FASE dispatches work to multiple AI providers. Different roles require different capabilities and cost profiles. This document defines which models to use for each role, how to handle provider depletion, and where the selection logic lives in code.
+Cogent dispatches work to multiple AI providers. Different roles require different capabilities and cost profiles. This document defines which models to use for each role, how to handle provider depletion, and where the selection logic lives in code.
 
 ## Provider Budget (2026-03-22)
 
@@ -43,7 +43,7 @@ The agentic supervisor (ADR-0041) runs as a long-lived session managing the work
 2. `codex/gpt-5.4-mini` — if native chatgpt is unavailable
 3. Pause + notify host
 
-**CLI**: `fase serve --auto --supervisor-adapter claude --supervisor-model claude-sonnet-4-6`
+**CLI**: `cogent serve --auto --supervisor-adapter claude --supervisor-model claude-sonnet-4-6`
 
 ### Planning / Design
 
@@ -180,14 +180,14 @@ From the 2026-03-22 overnight run (~$38 for 19K lines):
 
 ## Work Item Annotations
 
-To route a specific work item to a model, set `preferred_adapters` / `preferred_models` via `fase work update`:
+To route a specific work item to a model, set `preferred_adapters` / `preferred_models` via `cogent work update`:
 
 ```bash
 # Route to Claude sonnet for complex work
-fase work update <id> --preferred-adapters claude --preferred-models claude-sonnet-4-6
+cogent work update <id> --preferred-adapters claude --preferred-models claude-sonnet-4-6
 
 # Route to GLM for bulk implementation
-fase work update <id> --preferred-adapters native --preferred-models zai/glm-5-turbo
+cogent work update <id> --preferred-adapters native --preferred-models zai/glm-5-turbo
 ```
 
 The dispatch logic respects these fields (priority #1 in selection).

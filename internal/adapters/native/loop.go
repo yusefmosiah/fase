@@ -111,7 +111,7 @@ func (s *nativeSession) maybeCompressHistory(ctx context.Context) {
 }
 
 func defaultSystemPrompt() string {
-	return "You are the FASE native coding agent. Help with software tasks, use tools when needed, and keep responses concise and actionable."
+	return "You are the Cogent native coding agent. Help with software tasks, use tools when needed, and keep responses concise and actionable."
 }
 
 func (s *nativeSession) systemPrompt() string {
@@ -218,7 +218,7 @@ func (s *nativeSession) drainSteers() string {
 		select {
 		case steer := <-s.steerQ:
 			if msg := strings.TrimSpace(steer.Message); msg != "" {
-				blocks = append(blocks, fmt.Sprintf("[fase:steer]\n%s\n[/fase:steer]", msg))
+				blocks = append(blocks, fmt.Sprintf("[cogent:steer]\n%s\n[/cogent:steer]", msg))
 			}
 		default:
 			return strings.Join(blocks, "\n\n")

@@ -15,10 +15,10 @@ import (
 const (
 	// EnvCapabilityEnforcement controls audit vs enforce mode.
 	// Values: "audit" (default) or "enforce".
-	EnvCapabilityEnforcement = "FASE_CAPABILITY_ENFORCEMENT"
+	EnvCapabilityEnforcement = "COGENT_CAPABILITY_ENFORCEMENT"
 )
 
-// capabilityEnforcementMode reads FASE_CAPABILITY_ENFORCEMENT and returns the mode.
+// capabilityEnforcementMode reads COGENT_CAPABILITY_ENFORCEMENT and returns the mode.
 // Defaults to audit so interactive operator commands work without a token.
 // Set to "enforce" explicitly when the supervisor issues tokens to workers.
 func capabilityEnforcementMode() core.CapabilityEnforcementMode {
@@ -42,7 +42,7 @@ func allCapabilities() []string {
 	}
 }
 
-// loadAgentToken reads the credential file at FASE_AGENT_TOKEN and returns the token.
+// loadAgentToken reads the credential file at COGENT_AGENT_TOKEN and returns the token.
 // Returns (nil, nil) if the env var is not set (no token configured).
 // Returns (nil, err) if the env var is set but the file is unreadable or malformed.
 func loadAgentToken() (*core.CapabilityToken, error) {
@@ -61,7 +61,7 @@ func loadAgentToken() (*core.CapabilityToken, error) {
 	return &cred.Token, nil
 }
 
-// loadAgentCredential reads the credential file at FASE_AGENT_TOKEN and returns
+// loadAgentCredential reads the credential file at COGENT_AGENT_TOKEN and returns
 // the full credential including the agent's Ed25519 private key. Used by the attest
 // command to sign attestation records (Phase 3).
 func loadAgentCredential() (*core.AgentCredential, ed25519.PrivateKey, error) {
@@ -125,7 +125,7 @@ func emitCapabilityViolation(capability, reason, detail string) {
 // Audit mode (default): violations are logged to stderr as structured events but
 // the operation proceeds normally — no behavior change for existing installs.
 //
-// Enforce mode (FASE_CAPABILITY_ENFORCEMENT=enforce): violations return an error
+// Enforce mode (COGENT_CAPABILITY_ENFORCEMENT=enforce): violations return an error
 // that aborts the command.
 func checkCapability(capability string) error {
 	token, err := loadAgentToken()
@@ -229,7 +229,7 @@ func previewCapabilities() capabilityPreviewReport {
 				Capability: capability,
 				Allowed:    false,
 				Reason:     "missing_token",
-				Detail:     "FASE_AGENT_TOKEN not set",
+				Detail:     "COGENT_AGENT_TOKEN not set",
 			})
 		}
 		return report

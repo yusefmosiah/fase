@@ -13,11 +13,11 @@ The current supervisor (`internal/cli/supervisor_loop.go`) is a polling loop tha
 runs every 30 seconds (configurable via `--interval` in standalone mode, hardcoded
 in serve mode). Each cycle executes a 6-step algorithm: (0) bootstrap empty
 repos, (1) reconcile expired leases, (2-4) poll in-flight jobs via subprocess
-`fase status --json` + PID check + JSONL mtime stall detection (10-minute
+`cogent status --json` + PID check + JSONL mtime stall detection (10-minute
 threshold), (5) dispatch ready work. This design was appropriate when the system
 had no event infrastructure.
 
-The live agent protocol (ADR: `fase-live-agent-protocol.md`) introduced an
+The live agent protocol (ADR: `cogent-live-agent-protocol.md`) introduced an
 EventBus (`internal/service/events.go`) that publishes structured events on every
 work graph mutation. The EventBus has 3 active subscribers: the native conductor
 adapter (forwards events as steers to active workers), the WebSocket change
@@ -43,7 +43,7 @@ The polling loop has three structural limitations:
    JSONL mtime checks (10-minute stall threshold), both polled. A worker that
    exits cleanly but commits code without updating the work graph (the "Codex
    premature exit" case) requires the host agent to manually detect, commit,
-   and attest. Job status polling shells out to `fase status --json <job-id>`
+   and attest. Job status polling shells out to `cogent status --json <job-id>`
    as a subprocess (`supervisor.go:482`) rather than querying the DB directly,
    adding latency overhead per poll cycle.
 
@@ -99,7 +99,7 @@ a single event-driven loop.
 │                                                             │
 │  ┌─────────────────────────────────────────────────────┐   │
 │  │              Co-Agent Message Bus                    │   │
-│  │  [fase:message from="supervisor" type="..."]        │   │
+│  │  [cogent:message from="supervisor" type="..."]        │   │
 │  └─────────────────────────────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
 ```
@@ -128,7 +128,7 @@ buffered channel of size 64. Current subscribers:
 
 | Event | Trigger | Purpose |
 |-------|---------|---------|
-| `work_completed` | Worker calls `fase work update --state done` | Distinguish completion from generic update |
+| `work_completed` | Worker calls `cogent work update --state done` | Distinguish completion from generic update |
 | `work_failed` | Worker or supervisor marks failed | Trigger retry/recovery without waiting for poll |
 | `job_state_changed` | Job transitions to terminal state | Decouple job lifecycle from work lifecycle |
 
@@ -200,17 +200,17 @@ This eliminates the 30s detection delay for crashed workers. The goroutine
 blocks on `Wait()` and sends exactly one event when the process exits.
 
 **Caveat:** `os.Process.Wait()` only works for child processes. Since workers
-are spawned via a two-level process hierarchy (`supervisor` → `fase run --json`
-→ `__run-job` detached), the process watcher has a subtlety: the `fase run`
+are spawned via a two-level process hierarchy (`supervisor` → `cogent run --json`
+→ `__run-job` detached), the process watcher has a subtlety: the `cogent run`
 parent exits quickly after returning the job ID, and the actual `__run-job`
 worker is re-parented to init with `Setpgid: true` and detached I/O. The
-process watcher can only wait on the `fase run` subprocess (child of
-supervisor), not on the detached `__run-job` worker. When `fase run` exits
+process watcher can only wait on the `cogent run` subprocess (child of
+supervisor), not on the detached `__run-job` worker. When `cogent run` exits
 cleanly, the watcher learns the job was launched but not its completion status.
 
 ```
 supervisor (this process)
-  └─ fase run --json   (short-lived, returns job ID and exits)
+  └─ cogent run --json   (short-lived, returns job ID and exits)
        └─ __run-job       (detached worker, Setpgid=true, survives parent)
 ```
 
@@ -225,11 +225,11 @@ Three options:
   platform-specific syscalls do.
 
 - **Option 3 (recommended):** Eliminate the two-level process hierarchy
-  entirely. Instead of `spawnRun` → `fase run --json` → `launchDetachedWorker`,
+  entirely. Instead of `spawnRun` → `cogent run --json` → `launchDetachedWorker`,
   have the supervisor directly call `launchDetachedWorker` (service.go:3810)
   or better, migrate to the `LiveAgentAdapter` interface where the supervisor
   manages the session lifecycle and receives events directly. For the interim,
-  use `fsnotify` on the JSONL output directory (`.fase/raw/stdout/<jobID>/`)
+  use `fsnotify` on the JSONL output directory (`.cogent/raw/stdout/<jobID>/`)
   as a liveness signal. No output for 10 minutes = stall (matching the current
   `isJobStalled` threshold). Combined with job state polling on EventBus
   events, this covers the gap. Note: this adds an `fsnotify` dependency that
@@ -426,7 +426,7 @@ type AdapterHealth struct {
 }
 ```
 
-Updated on every job completion/failure. Persisted in `.fase/adapter_health.json`
+Updated on every job completion/failure. Persisted in `.cogent/adapter_health.json`
 across supervisor restarts.
 
 #### 4c. Work-Aware Routing
@@ -474,15 +474,15 @@ visible to workers or the host agent.
 #### Outbound Messages (supervisor → worker via steering)
 
 ```
-[fase:message from="supervisor" type="info"]
+[cogent:message from="supervisor" type="info"]
 Work graph update: work_01ABC attestation passed. Your blocking dependency
 is resolved — you may proceed with implementation.
-[/fase:message]
+[/cogent:message]
 
-[fase:message from="supervisor" type="request"]
+[cogent:message from="supervisor" type="request"]
 Job stall detected (no output for 8 minutes). Are you blocked? If so,
 describe the blocker and I will attempt recovery.
-[/fase:message]
+[/cogent:message]
 ```
 
 #### Status Messages (supervisor → WebSocket → UI)
@@ -503,11 +503,11 @@ describe the blocker and I will attempt recovery.
 #### Recovery Messages (supervisor → work notes)
 
 ```
-[fase:message from="supervisor" type="info"]
+[cogent:message from="supervisor" type="info"]
 Recovery: Worker exited (pid 12345, exit code 1) but 2 commits found on
 branch. Preserving committed work. Transitioning to awaiting_attestation.
 Attestation job will verify committed changes.
-[/fase:message]
+[/cogent:message]
 ```
 
 These are recorded as work notes (type=`finding`) for auditability.
@@ -533,7 +533,7 @@ type WorkEvent struct {
 ```
 
 The `JobID` and `Adapter` fields let the reactor correlate events to in-flight
-jobs without querying the database or shelling out to `fase status`.
+jobs without querying the database or shelling out to `cogent status`.
 
 #### 6b. Publish `work_lease_renewed`
 
@@ -565,7 +565,7 @@ match existing lease renewal interval of 10 minutes within the 30-minute
 lease duration) for lease renewal and stall detection. This is a ~50 line
 change.
 
-The key insight: `work_updated` fires when a worker calls `fase work update
+The key insight: `work_updated` fires when a worker calls `cogent work update
 --state done`, and `work_attested` fires when attestation completes. Both are
 already published by `UpdateWork` (service.go:2062) and `AttestWork`
 (service.go:2413). The supervisor just needs to subscribe and react.
@@ -576,11 +576,11 @@ concurrent polling loops in serve mode.
 
 #### Phase 2: Eliminate Subprocess Polling (medium risk)
 
-Replace `pollJobStatus` (which shells out to `fase status --json <job-id>`)
+Replace `pollJobStatus` (which shells out to `cogent status --json <job-id>`)
 with direct DB queries for job state. Add `os.Process.Wait()` goroutines for
-the `fase run` child process (not the detached `__run-job` worker). For
+the `cogent run` child process (not the detached `__run-job` worker). For
 detached workers, add `fsnotify` on the JSONL output directory
-(`.fase/raw/stdout/<jobID>/`) as a liveness signal with 10-minute stall
+(`.cogent/raw/stdout/<jobID>/`) as a liveness signal with 10-minute stall
 threshold matching `isJobStalled`.
 
 This phase adds an `fsnotify` dependency. The alternative (skip fsnotify,
@@ -607,7 +607,7 @@ circuit breaker.
 
 #### Phase 5: Live Session Integration (high risk)
 
-Migrate dispatch from subprocess `spawnRun` (which spawns `fase run --json`
+Migrate dispatch from subprocess `spawnRun` (which spawns `cogent run --json`
 as a child, which in turn calls `launchDetachedWorker` to fork a detached
 `__run-job`) to `LiveAgentAdapter.StartSession` + `StartTurn`. The supervisor
 manages session lifecycles directly and receives adapter events on the session
@@ -628,13 +628,13 @@ must bridge:
 
 | Tier | Interface | Used By | Events | Session Lifecycle |
 |------|-----------|---------|--------|-------------------|
-| **Subprocess** | `adapterapi.Adapter` | `supervisor_loop.go` via `spawnRun` | None — fire-and-forget | `fase run` → `__run-job` (detached) |
+| **Subprocess** | `adapterapi.Adapter` | `supervisor_loop.go` via `spawnRun` | None — fire-and-forget | `cogent run` → `__run-job` (detached) |
 | **Live** | `adapterapi.LiveAgentAdapter` | `native conductor` via `StartSession` | Per-session `Events()` channel | Supervisor manages directly |
 
 The subprocess tier (claude, codex, opencode, pi, gemini, factory adapters in
 `adapterapi.Adapter`) spawns CLI processes, returns `*RunHandle` with
 stdout/stderr pipes, and does NOT emit events on any EventBus. Job completion
-is detected via polling `fase status --json`.
+is detected via polling `cogent status --json`.
 
 The live tier (native, codex-live, opencode-live, pi-live adapters in
 `adapterapi.LiveAgentAdapter`) maintains persistent sessions and emits
@@ -692,7 +692,7 @@ subscribers ignore new fields.
 #### New: `AdapterHealthTracker`
 
 Tracks per-adapter success/failure rates, average durations, rate-limit state.
-Persisted to `.fase/adapter_health.json`.
+Persisted to `.cogent/adapter_health.json`.
 
 #### New: `RecoveryEngine`
 

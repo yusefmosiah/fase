@@ -1,0 +1,45 @@
+{
+  "featureId": "contract-freeze-canonical-precedence-and-doc-inventory",
+  "reviewedAt": "2026-03-24T23:15:00Z",
+  "commitId": "a7058b6",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation successfully establishes an explicit precedence rule in the README, aligns key docs with contract notes, and updates CLI help to show valid execution states. The feature fulfills VAL-CONTRACT-005 by documenting that runtime code is canonical and directing workers to internal/core/types.go for authoritative state definitions. Minor inconsistencies remain in other docs that could benefit from similar treatment, but these are non-blocking since the README establishes the precedence rule and the affected docs are either proposals, ADRs, or already have status markers indicating they're not canonical.",
+    "issues": [
+      {
+        "file": "docs/architecture.md",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "Architecture doc has a 'Generated from source' disclaimer but lacks the explicit 'Contract Note' header added to spec-check-flow.md and review-simplify-worker-contract.md. For full consistency with the updated docs, it could include a similar note. However, the existing disclaimer already implies code is authoritative, and the README now provides the precedence rule, so this is not blocking."
+      },
+      {
+        "file": "docs/adr-0036-monotonic-attestation-contract.md",
+        "line": 1,
+        "severity": "non_blocking",
+        "description": "This ADR (Status: Proposed) describes a state machine including awaiting_attestation without a contract note. However, ADRs are design proposals, not canonical contracts. The README now establishes the precedence rule, making this non-blocking."
+      },
+      {
+        "file": "docs/cogent-work-runtime.md",
+        "line": 121,
+        "severity": "non_blocking",
+        "description": "The work runtime design doc (Status: Implemented v0) shows the execution state machine with awaiting_attestation. It references internal/core/types.go but does not have the explicit contract note. This doc is a design document, not the primary user-facing contract. The README now provides the precedence rule, making this acceptable."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": "The worker introduced a 'Contract Note' pattern for marking docs as non-canonical: a blockquote at the top of the file with '> **Contract Note**: ...' followed by reference to internal/core/types.go and the README precedence rule. This is a useful convention that could be documented in AGENTS.md for future workers dealing with doc alignment.",
+      "evidence": "docs/spec-check-flow.md:3-5 and docs/review-simplify-worker-contract.md:6-8 show the pattern"
+    },
+    {
+      "area": "knowledge",
+      "observation": "The worker discovered that the canonical work execution states include 'awaiting_attestation' as a deprecated alias for 'checking'. This is documented in internal/core/types.go:294 with a comment. CLI help now shows this deprecation. Future workers should know that awaiting_attestation still exists in code for backward compatibility but checking is the canonical state.",
+      "evidence": "internal/core/types.go:294 shows 'WorkExecutionStateAwaitingAttestation WorkExecutionState = \"awaiting_attestation\" // deprecated alias for checking'"
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS. The feature successfully establishes the explicit precedence rule required by VAL-CONTRACT-005. README now documents that runtime code is canonical, and workers are directed to internal/core/types.go for authoritative state definitions. Key docs (spec-check-flow.md, review-simplify-worker-contract.md) are marked with contract notes. CLI help shows valid execution states and the awaiting_attestation deprecation. Minor inconsistencies remain in other docs (architecture.md, some ADRs) that could benefit from similar treatment, but these are non-blocking because: (1) the README provides the precedence rule, (2) the affected docs are proposals/ADRs/design docs already marked with status indicating they're not canonical, and (3) workers can now determine one canonical contract from the repo. The verification commands (focused tests, lint, build) all passed per the handoff."
+}

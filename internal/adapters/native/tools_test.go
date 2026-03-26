@@ -142,30 +142,30 @@ func TestCodingToolsRoundTrip(t *testing.T) {
 	}
 }
 
-func TestRegisterFASETools_NoServiceSkips(t *testing.T) {
+func TestRegisterCogentTools_NoServiceSkips(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	if err := RegisterFASETools(registry, nil); err != nil {
-		t.Fatalf("RegisterFASETools with nil svc returned error: %v", err)
+	if err := RegisterCogentTools(registry, nil); err != nil {
+		t.Fatalf("RegisterCogentTools with nil svc returned error: %v", err)
 	}
 	if len(registry.Tools()) != 0 {
 		t.Fatalf("expected no tools registered when svc is nil, got %d", len(registry.Tools()))
 	}
-	// Non-faseBridge type also skips.
-	if err := RegisterFASETools(registry, "not-a-service"); err != nil {
-		t.Fatalf("RegisterFASETools with non-service returned error: %v", err)
+	// Non-cogentBridge type also skips.
+	if err := RegisterCogentTools(registry, "not-a-service"); err != nil {
+		t.Fatalf("RegisterCogentTools with non-service returned error: %v", err)
 	}
 	if len(registry.Tools()) != 0 {
 		t.Fatalf("expected no tools registered for non-service, got %d", len(registry.Tools()))
 	}
 }
 
-func TestRegisterFASETools_WithService(t *testing.T) {
+func TestRegisterCogentTools_WithService(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	svc := &fakeFaseBridge{}
-	if err := RegisterFASETools(registry, svc); err != nil {
-		t.Fatalf("RegisterFASETools returned error: %v", err)
+	svc := &fakeCogentBridge{}
+	if err := RegisterCogentTools(registry, svc); err != nil {
+		t.Fatalf("RegisterCogentTools returned error: %v", err)
 	}
 	want := []string{"check_record_create", "check_record_list", "check_record_show", "run_playwright", "run_tests"}
 	tools := registry.Tools()
@@ -182,9 +182,9 @@ func TestRegisterFASETools_WithService(t *testing.T) {
 func TestCheckRecordCreate_ValidatesResult(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	svc := &fakeFaseBridge{}
-	if err := RegisterFASETools(registry, svc); err != nil {
-		t.Fatalf("RegisterFASETools returned error: %v", err)
+	svc := &fakeCogentBridge{}
+	if err := RegisterCogentTools(registry, svc); err != nil {
+		t.Fatalf("RegisterCogentTools returned error: %v", err)
 	}
 	// Missing work_id and invalid result should propagate error from svc.
 	out, err := registry.Execute(context.Background(), "check_record_create", mustJSON(t, map[string]any{
@@ -212,9 +212,9 @@ func TestCheckRecordCreate_ValidatesResult(t *testing.T) {
 func TestCheckRecordList_ReturnsRecords(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	svc := &fakeFaseBridge{}
-	if err := RegisterFASETools(registry, svc); err != nil {
-		t.Fatalf("RegisterFASETools returned error: %v", err)
+	svc := &fakeCogentBridge{}
+	if err := RegisterCogentTools(registry, svc); err != nil {
+		t.Fatalf("RegisterCogentTools returned error: %v", err)
 	}
 	out, err := registry.Execute(context.Background(), "check_record_list", mustJSON(t, map[string]any{
 		"work_id": "wid_test",
@@ -243,9 +243,9 @@ func TestCheckRecordList_ReturnsRecords(t *testing.T) {
 func TestCheckRecordList_RespectsRequestedLimit(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	svc := &fakeFaseBridge{}
-	if err := RegisterFASETools(registry, svc); err != nil {
-		t.Fatalf("RegisterFASETools returned error: %v", err)
+	svc := &fakeCogentBridge{}
+	if err := RegisterCogentTools(registry, svc); err != nil {
+		t.Fatalf("RegisterCogentTools returned error: %v", err)
 	}
 	if _, err := registry.Execute(context.Background(), "check_record_list", mustJSON(t, map[string]any{
 		"work_id": "wid_test",
@@ -261,9 +261,9 @@ func TestCheckRecordList_RespectsRequestedLimit(t *testing.T) {
 func TestCheckRecordShow_ReturnsCanonicalRecord(t *testing.T) {
 	t.Parallel()
 	registry := MustNewToolRegistry()
-	svc := &fakeFaseBridge{}
-	if err := RegisterFASETools(registry, svc); err != nil {
-		t.Fatalf("RegisterFASETools returned error: %v", err)
+	svc := &fakeCogentBridge{}
+	if err := RegisterCogentTools(registry, svc); err != nil {
+		t.Fatalf("RegisterCogentTools returned error: %v", err)
 	}
 	out, err := registry.Execute(context.Background(), "check_record_show", mustJSON(t, map[string]any{
 		"check_id": "chk_show",
@@ -326,12 +326,12 @@ func TestCollectPlaywrightScreenshots(t *testing.T) {
 	}
 }
 
-// fakeFaseBridge implements faseBridge for testing.
-type fakeFaseBridge struct {
+// fakeCogentBridge implements cogentBridge for testing.
+type fakeCogentBridge struct {
 	lastListLimit int
 }
 
-func (f *fakeFaseBridge) CreateCheckRecordDirect(_ context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport, createdBy string) (core.CheckRecord, error) {
+func (f *fakeCogentBridge) CreateCheckRecordDirect(_ context.Context, workID, result, checkerModel, workerModel string, report core.CheckReport, createdBy string) (core.CheckRecord, error) {
 	return core.CheckRecord{
 		CheckID: "chk_test",
 		WorkID:  workID,
@@ -340,7 +340,7 @@ func (f *fakeFaseBridge) CreateCheckRecordDirect(_ context.Context, workID, resu
 	}, nil
 }
 
-func (f *fakeFaseBridge) GetCheckRecord(_ context.Context, checkID string) (core.CheckRecord, error) {
+func (f *fakeCogentBridge) GetCheckRecord(_ context.Context, checkID string) (core.CheckRecord, error) {
 	return core.CheckRecord{
 		CheckID: checkID,
 		WorkID:  "wid_test",
@@ -349,7 +349,7 @@ func (f *fakeFaseBridge) GetCheckRecord(_ context.Context, checkID string) (core
 	}, nil
 }
 
-func (f *fakeFaseBridge) ListCheckRecords(_ context.Context, workID string, limit int) ([]core.CheckRecord, error) {
+func (f *fakeCogentBridge) ListCheckRecords(_ context.Context, workID string, limit int) ([]core.CheckRecord, error) {
 	f.lastListLimit = limit
 	return []core.CheckRecord{
 		{CheckID: "chk_1", WorkID: workID, Result: "pass"},

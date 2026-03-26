@@ -192,7 +192,7 @@ func TestExecuteToolsDrainsSteersBetweenToolExecutions(t *testing.T) {
 	if len(msg1.Content) != 2 || msg1.Content[0].Type != "text" || msg1.Content[1].Type != "tool_result" {
 		t.Fatalf("unexpected first tool message: %+v", msg1)
 	}
-	if got := msg1.Content[0].Text; got != "[fase:steer]\nfirst steer\n[/fase:steer]" {
+	if got := msg1.Content[0].Text; got != "[cogent:steer]\nfirst steer\n[/cogent:steer]" {
 		t.Fatalf("unexpected first steer text: %q", got)
 	}
 
@@ -206,7 +206,7 @@ func TestExecuteToolsDrainsSteersBetweenToolExecutions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("executeTools second: %v", err)
 	}
-	if len(msg2.Content) != 2 || msg2.Content[0].Text != "[fase:steer]\nsecond steer\n[/fase:steer]" {
+	if len(msg2.Content) != 2 || msg2.Content[0].Text != "[cogent:steer]\nsecond steer\n[/cogent:steer]" {
 		t.Fatalf("unexpected second tool message: %+v", msg2)
 	}
 	if leftover := session.drainSteers(); leftover != "" {

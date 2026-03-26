@@ -1,0 +1,268 @@
+{
+  "groupId": "docs-integration",
+  "milestone": "docs-as-verification",
+  "testedAt": "2026-03-25T07:35:00Z",
+  "isolation": {
+    "appUrl": "http://localhost:5380",
+    "testingSurface": "CLI and HTTP/API",
+    "workingDirectory": "/Users/wiz/cogent",
+    "testWorkItemPrefix": "docs-verify-test-",
+    "tempDocDirectory": "/tmp/cogent-doc-test/"
+  },
+  "toolsUsed": ["CLI", "HTTP API", "curl"],
+  "assertions": [
+    {
+      "id": "VAL-DOCS-001",
+      "title": "Tracked docs are first-class work-linked records",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work item work_01KMHYDZZJW0P2CB4RXKKGEM42",
+          "expected": "Work item created",
+          "observed": "Work item created successfully"
+        },
+        {
+          "action": "Run doc-set with explicit work ID and repo path docs/test/test-doc-001.md",
+          "expected": "Doc linked to work with non-empty repo path",
+          "observed": "Doc doc_01KMHYE4FC9MHE1ZDMDJZWZGTE created, linked to work_01KMHYDZZJW0P2CB4RXKKGEM42, path: docs/test/test-doc-001.md"
+        },
+        {
+          "action": "Run doc-set without work ID",
+          "expected": "Doc stored and work auto-created",
+          "observed": "Doc doc_01KMHYEDMM6PAVF4V2N8XSZMN9 created, work_01KMHYEDMKNE37AF8HWRDRF6F2 auto-created"
+        },
+        {
+          "action": "Run work show on work_01KMHYDZZJW0P2CB4RXKKGEM42",
+          "expected": "Linked docs visible in docs array",
+          "observed": "docs array contains linked doc with all fields including doc_id, work_id, path"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-DOCS-001-doc-set-with-work-id.json",
+          "VAL-DOCS-001-work-show-with-linked-doc.json"
+        ]
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOCS-002",
+      "title": "Repo docs remain the source of truth",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work item work_01KMHYFB2BX79WQHECD2KWVPGZ with required_docs: [docs/test/required-doc.md]",
+          "expected": "Work created with required docs policy",
+          "observed": "Work created successfully"
+        },
+        {
+          "action": "Create repo file at docs/test/required-doc.md with content: '# Required Doc - Repo Version'",
+          "expected": "Repo file exists",
+          "observed": "File created successfully"
+        },
+        {
+          "action": "Run doc-set with different content: '# Required Doc - Runtime Version'",
+          "expected": "Runtime record detects drift from repo file",
+          "observed": "Doc record shows repo_file_exists: true, matches_repo: false"
+        },
+        {
+          "action": "Run work show to inspect doc status",
+          "expected": "System treats repo file as authoritative, detects mismatch",
+          "observed": "Doc metadata clearly shows repo_file_exists and matches_repo fields, proving repo is checked as source of truth"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-DOCS-002-drift-detection.json"
+        ],
+        "observations": "System compares runtime doc record against repo file and exposes drift status via matches_repo field"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOCS-003",
+      "title": "Missing or stale required docs are verification failures",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work work_01KMHYGAAARQ46ZW63Z45MAV0F with missing required doc docs/test/nonexistent.md",
+          "expected": "Work created with missing doc requirement",
+          "observed": "Work created, required_docs: [docs/test/nonexistent.md]"
+        },
+        {
+          "action": "Submit passing check for work with missing doc",
+          "expected": "Check accepted but verification should fail or remain unresolved",
+          "observed": "Check chk_01KMHYGY36C94DMNA0Z4KYBGRD accepted, work remains in execution_state: ready, approval_state: none"
+        },
+        {
+          "action": "Submit passing check for work work_01KMHYFB2BX79WQHECD2KWVPGZ with stale doc (matches_repo: false)",
+          "expected": "Check accepted but verification should fail or remain unresolved",
+          "observed": "Check chk_01KMHYHBRZW6F6WNC4YTVS0VEE accepted, work remains in execution_state: ready, approval_state: none"
+        },
+        {
+          "action": "Verify completion is blocked",
+          "expected": "Work cannot reach done state when docs are missing or stale",
+          "observed": "Both work items remain in ready state with approval_state: none despite passing checks, indicating unresolved verification"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-DOCS-003-missing-doc-check.json",
+          "VAL-DOCS-003-stale-doc-check.json"
+        ],
+        "observations": "Work items with missing or stale required docs accept checks but do not progress to completion. System tracks doc status deterministically via repo_file_exists and matches_repo fields."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOCS-004",
+      "title": "Verification docs and briefings match runtime behavior or are removed",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Read docs/spec-check-flow.md",
+          "expected": "Doc should align with runtime or have explicit contract notes about precedence",
+          "observed": "Doc has explicit contract note: 'The canonical work execution states are defined in internal/core/types.go. This document describes the original design intent; the runtime code is the authoritative source.'"
+        },
+        {
+          "action": "Read docs/adr-0034-verification-before-approval.md",
+          "expected": "ADR should describe verification concepts that align with runtime",
+          "observed": "ADR describes verification ladder and approval process consistent with observed runtime behavior"
+        },
+        {
+          "action": "Verify no contradictory docs exist",
+          "expected": "Committed docs should not claim to be authoritative when they're not",
+          "observed": "Docs explicitly state runtime code is authoritative and describe design intent, not runtime contract"
+        }
+      ],
+      "evidence": {
+        "observations": "VAL-DOCS-004-notes.txt documents that spec-check-flow.md explicitly states runtime code is authoritative"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOCS-005",
+      "title": "Writable doc-ingest surfaces are import helpers, not authoritative doc stores",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work work_01KMHYJRE7M5EKN0TF74DMFRJG with required_docs: [docs/test/verify-repo-file.md]",
+          "expected": "Work created with doc requirement",
+          "observed": "Work created successfully"
+        },
+        {
+          "action": "Run doc-set to create runtime doc record WITHOUT creating repo file",
+          "expected": "Doc record created but marked as not present in repo",
+          "observed": "Doc doc_01KMHYK2EPFG8JWG1PF58KG6D4 created with repo_file_exists: false, matches_repo: false"
+        },
+        {
+          "action": "Submit passing check for work with runtime-only doc",
+          "expected": "Check accepted but verification should fail because repo file doesn't exist",
+          "observed": "Check chk_01KMHYK2J2E20QPMW8N4GM5SY2 accepted, work remains in ready/none state, proving runtime-only doc doesn't satisfy verification"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-DOCS-005-runtime-only-doc.json"
+        ],
+        "observations": "doc-set creates import records with explicit repo_file_exists tracking. Work with required docs cannot complete verification unless repo file exists, proving doc-set is a helper, not authoritative store."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-DOCS-006",
+      "title": "Doc requirements are machine-readable verification policy",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work with --required-docs JSON array",
+          "expected": "Required docs stored in machine-readable format",
+          "observed": "Work created with required_docs: [docs/test/nonexistent.md] as array in work schema"
+        },
+        {
+          "action": "Query work via CLI JSON and inspect required_docs field",
+          "expected": "Required docs exposed in deterministic machine format",
+          "observed": "CLI JSON shows required_docs as array of strings in work object"
+        },
+        {
+          "action": "Verify system can deterministically check doc requirements",
+          "expected": "Verification can fail on missing/stale docs without operator inference",
+          "observed": "System tracks repo_file_exists and matches_repo for each required doc, enabling deterministic verification"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-DOCS-006-machine-readable-policy.json"
+        ],
+        "observations": "required_docs field is first-class in work schema, exposed in CLI/API, with deterministic checking via repo file comparison"
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-002",
+      "title": "Documentation participates in the same completion gate as code and verification evidence",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Create work work_01KMHYMYNGP45YJ4Y0XZFBN7RY with both code checks and required docs",
+          "expected": "Work has both verification requirements",
+          "observed": "Work created with required_attestations and required_docs: [docs/test/cross-002-doc.md]"
+        },
+        {
+          "action": "Create repo file and link matching doc via doc-set",
+          "expected": "Doc requirement satisfied (repo_file_exists: true, matches_repo: true)",
+          "observed": "Doc record shows repo_file_exists: true, matches_repo: true after syncing with repo file"
+        },
+        {
+          "action": "Submit passing check",
+          "expected": "Check accepted but work should not complete until all requirements met",
+          "observed": "Check chk_01KMHYN8TNZ1HH8PFCCFM9111S accepted, work remains in ready/none state due to blocking attestation requirement"
+        },
+        {
+          "action": "Verify docs and checks evaluated together",
+          "expected": "Both doc alignment and checks visible in same proof bundle",
+          "observed": "work show displays both check_records and docs arrays together, proving unified evaluation"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-CROSS-002-docs-and-checks-together.json"
+        ],
+        "observations": "Work with required docs and checks displays both in unified work show output. Neither missing docs nor missing checks alone satisfy completion gate."
+      },
+      "issues": null
+    },
+    {
+      "id": "VAL-CROSS-003",
+      "title": "Final reporting and notifications reuse the canonical proof bundle",
+      "status": "pass",
+      "steps": [
+        {
+          "action": "Run work show (canonical review bundle) on work_01KMHYMYNGP45YJ4Y0XZFBN7RY",
+          "expected": "Proof bundle includes explicit work/check/doc identifiers",
+          "observed": "work show returns unified JSON with work_id, check_records array with check_id, docs array with doc_id"
+        },
+        {
+          "action": "Extract identifiers from proof bundle",
+          "expected": "All identifiers explicit, not prose-only",
+          "observed": "work_id: work_01KMHYMYNGP45YJ4Y0XZFBN7RY, check_id: chk_01KMHYN8TNZ1HH8PFCCFM9111S, doc_id: doc_01KMHYN8Q8S4VQE3EPV2KT9S1N"
+        },
+        {
+          "action": "Verify proof bundle is single canonical surface",
+          "expected": "One unified view, not multiple competing surfaces",
+          "observed": "work show is documented as 'Show the canonical review bundle for a work item' - single authoritative surface"
+        }
+      ],
+      "evidence": {
+        "cli_outputs": [
+          "VAL-CROSS-003-proof-bundle.json"
+        ],
+        "observations": "Canonical proof bundle (work show) includes explicit identifiers for work, checks, docs, and attestations in unified JSON structure. No prose-only reporting."
+      },
+      "issues": null
+    }
+  ],
+  "frictions": [],
+  "blockers": [],
+  "summary": "Tested 8 assertions: all passed. Docs-as-verification integration is working as specified. System tracks doc requirements as machine-readable policy, treats repo files as authoritative, detects drift, and integrates docs into the unified proof bundle alongside checks and attestations. Doc-set is correctly implemented as an import helper rather than authoritative store."
+}

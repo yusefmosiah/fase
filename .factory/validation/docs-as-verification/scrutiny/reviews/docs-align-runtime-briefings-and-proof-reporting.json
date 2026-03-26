@@ -1,0 +1,22 @@
+{
+  "featureId": "docs-align-runtime-briefings-and-proof-reporting",
+  "reviewedAt": "2026-03-25T07:30:00.000Z",
+  "commitId": "c69088b1e1d5b1bb7a890134c72c51c1bb6f900e",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The implementation fully addresses all expected behaviors: removed the duplicate static checker-briefing.md, updated spec-check-flow.md to reference runtime-generated briefings, and extended all reporting surfaces (emails, channel notifications, CLI) to use canonical proof bundles with explicit work/check/attestation/artifact/doc identifiers. Code is well-structured with proper edge case handling, HTML escaping, and comprehensive test coverage. No blocking issues found.",
+    "issues": [
+      {
+        "file": "internal/service/service.go",
+        "line": 5417,
+        "severity": "non_blocking",
+        "description": "The notificationProofBundle function silently swallows errors when fetching related records (checks, attestations, artifacts, docs). While this is likely intentional for best-effort notification delivery, there's no indication when proof bundles are incomplete, which could make debugging notification issues harder. Consider adding optional debug logging for failed fetches."
+      }
+    ]
+  },
+  "sharedStateObservations": [],
+  "addressesFailureFrom": null,
+  "summary": "PASS - The feature successfully removes duplicate verification docs and aligns committed guidance with runtime behavior. The static checker-briefing.md was deleted, and spec-check-flow.md now explicitly notes that briefings are runtime-generated. All operator-facing reporting surfaces (completion emails, escalation emails, channel notifications, CLI work-show) were extended to include canonical proof-bundle references with explicit IDs for work items, checks, attestations, artifacts, and docs. The ProofBundle type provides a clean shared data structure used consistently across all notification paths. All verification steps passed: baseline tests, focused notify/service/CLI tests, lint, build, and manual inspection confirmed proof bundle references appear in rendered outputs. The implementation fully satisfies VAL-CONTRACT-005, VAL-DOCS-004, and VAL-CROSS-003 requirements."
+}

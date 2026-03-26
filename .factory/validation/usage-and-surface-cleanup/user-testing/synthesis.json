@@ -1,0 +1,84 @@
+{
+  "milestone": "usage-and-surface-cleanup",
+  "round": 1,
+  "status": "pass",
+  "assertionsSummary": {
+    "total": 9,
+    "passed": 9,
+    "failed": 0,
+    "blocked": 0
+  },
+  "passedAssertions": [
+    "VAL-USAGE-001",
+    "VAL-USAGE-002",
+    "VAL-USAGE-003",
+    "VAL-USAGE-004",
+    "VAL-SURFACE-001",
+    "VAL-SURFACE-002",
+    "VAL-SURFACE-003",
+    "VAL-CROSS-004",
+    "VAL-CROSS-005"
+  ],
+  "failedAssertions": [],
+  "blockedAssertions": [],
+  "keyFindings": [
+    {
+      "area": "Usage Reporting",
+      "finding": "Usage and cost reporting exposes one canonical normalized shape with consistent fields across all surfaces (CLI, HTTP, history). Canonical usage object includes: input_tokens, output_tokens, total_tokens, cache_read_input_tokens, cache_creation_input_tokens, model, provider, source."
+    },
+    {
+      "area": "Cost Provenance",
+      "finding": "Cost selection is deterministic with clear provenance. Vendor-reported cost (estimated:false, source:'vendor_report') wins when present. Estimated cost (estimated:true) includes explicit provenance: source_url (pricing page) and observed_at (pricing observation timestamp)."
+    },
+    {
+      "area": "Multi-Model Aggregation",
+      "finding": "Usage structure supports both single-model and multi-model scenarios with deterministic total tokens calculation (input + output + cache tokens). Per-model breakdown structure is present and ready for multi-model jobs."
+    },
+    {
+      "area": "Catalog and History Rollups",
+      "finding": "Catalog and history surfaces derive usage totals from canonical per-job usage contract. History search includes normalized usage and cost for each turn with job/session/work attribution. No-usage cases correctly omit usage fields rather than guessing."
+    },
+    {
+      "area": "Surface Alignment",
+      "finding": "All machine surfaces (CLI, HTTP, MCP, native) are aligned through shared service layer methods. CLI commands wrap HTTP API endpoints. MCP tools call same service methods (svc.ListWork, svc.UpdateWork, etc.). Native tools use same service layer for check submission and work updates."
+    },
+    {
+      "area": "MCP Contract",
+      "finding": "MCP server exposes 15 documented tools (project_hydrate, work_list, work_show, work_notes, work_update, work_create, work_note_add, work_attest, work_claim, ready_work, check_record_create, check_record_show, check_record_list, session_send, send_escalation_email). All tools call service methods without divergent logic. Channel notifications broadcast work events without creating alternate control flow."
+    },
+    {
+      "area": "Native Tools",
+      "finding": "Native tools are execution helpers and evidence collectors, not a divergent control plane. check_record_create calls service.CreateCheckRecordDirect (evidence-only, no state transition). run_tests, run_playwright, bash, write_file, read_file provide execution environment. No native-only completion path - workers exit through canonical work_update/report."
+    },
+    {
+      "area": "Usage Observability",
+      "finding": "Usage and cost data remain attached to verified work flows through work_id → job_id linkage. Every job record includes work_id when dispatched. Usage and cost are first-class fields in job records. History search preserves job_id, session_id, work_id linkage chain."
+    },
+    {
+      "area": "Retry Attribution",
+      "finding": "Usage and cost attribution survive retries and verifier fan-out via unique job IDs. Each job preserves individual usage independently. Work records track attempt_epoch enabling retry correlation. Jobs are immutable once completed - usage attribution is permanent. Can sum per-job usage for total work cost without losing per-attempt breakdown."
+    }
+  ],
+  "appliedUpdates": [
+    {
+      "target": "user-testing.md",
+      "description": "Added Flow Validator Guidance section for usage-and-surface-cleanup milestone with isolation rules, resource boundaries, assertion descriptions, and testing approach",
+      "source": "setup"
+    }
+  ],
+  "testingNotes": {
+    "environment": "Isolated cogent serve on port 5380 with temporary state directory",
+    "stateDirectory": "/tmp/cogent-usage-contract-eod8f7jr/",
+    "adapters": "Fake CLI adapters (testdata/fake_clis) - no real token usage incurred",
+    "testPrefix": "usage-surface-test-",
+    "toolsUsed": ["curl", "CLI inspection", "code analysis"],
+    "evidenceFiles": [
+      "VAL-USAGE-001-cli-status.json",
+      "VAL-USAGE-001-003-http-status-formatted.json",
+      "VAL-USAGE-001-003-http-job-detail.json",
+      "VAL-USAGE-004-catalog.json",
+      "VAL-SURFACE-002-mcp-tools-list.txt"
+    ]
+  },
+  "previousRound": null
+}

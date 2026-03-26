@@ -10,7 +10,7 @@ import (
 func RenderPrompt(targetAdapter string, packet core.TransferPacket) string {
 	var b strings.Builder
 
-	fmt.Fprintf(&b, "You are receiving a fase context transfer from %s into %s.\n\n", packet.Source.Adapter, targetAdapter)
+	fmt.Fprintf(&b, "You are receiving a cogent context transfer from %s into %s.\n\n", packet.Source.Adapter, targetAdapter)
 	if packet.Disclaimer != "" {
 		fmt.Fprintf(&b, "%s\n\n", packet.Disclaimer)
 	}

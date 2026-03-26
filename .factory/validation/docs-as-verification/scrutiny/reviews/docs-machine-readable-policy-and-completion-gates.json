@@ -1,0 +1,21 @@
+{
+  "featureId": "docs-machine-readable-policy-and-completion-gates",
+  "reviewedAt": "2026-03-25T11:30:00.000Z",
+  "commitId": "e647fe306e5bd657a82c94d89a51cc0893ddd416",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "Comprehensive and well-executed implementation of machine-readable documentation policy. The feature adds RequiredDocs to runtime state with proper SQLite persistence, path normalization, and centralized completion gating logic. Code follows existing patterns, has excellent test coverage across service/store/CLI/E2E layers, and correctly integrates into all terminal-success paths (UpdateWork, AttestWork, ApproveWork, PromoteWork, syncWorkStateFromJob, refreshAttestationParentState). The implementation fully satisfies VAL-DOCS-003, VAL-DOCS-006, and VAL-CROSS-002.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The assigned control-plane-worker skill was unavailable in the worker environment, forcing fallback to mission-worker-base. Worker successfully completed the task but this indicates a potential skill installation or availability gap.",
+      "evidence": "Handoff skillFeedback.followedProcedure=false with deviation: 'functions.Skill returned Skill \"control-plane-worker\" not found'. Worker transcript skeleton shows attempted skill invocation followed by direct implementation."
+    }
+  ],
+  "addressesFailureFrom": null,
+  "summary": "PASS: Feature docs-machine-readable-policy-and-completion-gates is correctly implemented. Added RequiredDocs field to work items with full persistence (schema migration, store CRUD, CLI --required-docs flag), proper repo-relative path normalization with deduplication, and centralized docs-aware completion gating via completionGateIssues(). The gate checks for missing docs, docs not in repo, and stale/mismatched docs, blocking terminal success (done/archived) until all required docs are tracked, exist in the repo, and match the tracked content. Integration is correct across all terminal-success code paths. Test coverage is comprehensive with focused service tests, store tests, and an end-to-end regression proving the blocked-then-pass docs flow. Manual validation confirmed the gate works through local serve/API surface with passing check and attestation evidence. The implementation satisfies all three validation assertions. One shared-state observation: the assigned control-plane-worker skill was not found, indicating a potential skill availability issue to address in mission infrastructure."
+}

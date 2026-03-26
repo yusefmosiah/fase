@@ -19,9 +19,9 @@ func newTestServer() *Server {
 
 func newServiceBackedTestServer(t *testing.T) (*Server, *service.Service) {
 	t.Helper()
-	t.Setenv("FASE_STATE_DIR", t.TempDir())
-	t.Setenv("FASE_CONFIG_DIR", t.TempDir())
-	t.Setenv("FASE_CACHE_DIR", t.TempDir())
+	t.Setenv("COGENT_STATE_DIR", t.TempDir())
+	t.Setenv("COGENT_CONFIG_DIR", t.TempDir())
+	t.Setenv("COGENT_CACHE_DIR", t.TempDir())
 
 	svc, err := service.Open(context.Background(), "")
 	if err != nil {

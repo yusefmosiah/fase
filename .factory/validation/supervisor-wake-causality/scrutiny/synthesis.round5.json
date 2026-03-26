@@ -1,0 +1,60 @@
+{
+  "milestone": "supervisor-wake-causality",
+  "round": 5,
+  "status": "fail",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    },
+    "typecheck": {
+      "passed": true,
+      "command": "go test ./internal/... -run '^$'",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 2,
+    "passed": 1,
+    "failed": 1,
+    "failedFeatures": [
+      "supervisor-streamablehttp-session-isolation-fix"
+    ]
+  },
+  "blockingIssues": [
+    {
+      "featureId": "supervisor-streamablehttp-session-isolation-fix",
+      "severity": "blocking",
+      "description": "The new \"integration\" test never drives the live transport. Its body only builds requests and inspects GetServerForRequest/GetServerInstance; there is no handler.ServeHTTP or session.CallTool invocation, so the requested end-to-end proof for external and supervisor-marked traffic is still missing."
+    },
+    {
+      "featureId": "supervisor-streamablehttp-session-isolation-fix",
+      "severity": "blocking",
+      "description": "SessionManager.SetBroadcastFunc only updates servers that already exist. serve.go installs it before any sessions are materialized, so later-created sessions such as the \"channel-send\" server never inherit the hub broadcast function and SendChannelEvent falls back to stdout instead of reaching serve-mode websocket clients."
+    }
+  ],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Require live transport regression coverage for MCP/StreamableHTTP changes; helper-level provenance assertions are not enough when the production handler path is part of the contract.",
+      "evidence": "Both provenance fix reviews noted that the tests stopped at helper-level request/server inspection and did not drive session.CallTool or StreamableHTTP end to end.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md",
+      "suggestion": "Require explicit CreatedBy=\"service\" labeling on true service-generated follow-on paths so ActorService provenance stays visible and easy to review.",
+      "evidence": "The service-created-by fix passed only after the callsites were explicitly labeled, and the review history shows this is easy to miss without a stronger guidance note.",
+      "isSystemic": true
+    }
+  ],
+  "rejectedObservations": [],
+  "previousRound": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/synthesis.round4.json"
+}
+}

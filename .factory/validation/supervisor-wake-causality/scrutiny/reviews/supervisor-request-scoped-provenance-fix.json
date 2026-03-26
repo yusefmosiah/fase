@@ -1,0 +1,45 @@
+{
+  "featureId": "supervisor-request-scoped-provenance-fix",
+  "reviewedAt": "2026-03-25T02:19:55Z",
+  "commitId": "52bd22e144c61",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit moves provenance in the right direction, but it still does not provide true request-scoped safety on the live shared MCP server, leaves service-generated CreateWork provenance incomplete in the feature diff, and never exercises the production MCP transport end-to-end.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server.go",
+        "line": 124,
+        "severity": "blocking",
+        "description": "CreatedBy(ctx) still falls back to mutable server state, and the shared server is flipped to supervisor mode via SetCallerRole(\"supervisor\") in internal/cli/supervisor_agent.go:107 while the same mcpServer instance is also mounted at /mcp in internal/cli/serve.go:281. WithCallerRole exists only in tests, so concurrent external MCP traffic can still inherit supervisor provenance."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 3908,
+        "severity": "blocking",
+        "description": "The feature changes ActorFromCreatedBy's default behavior, but the feature diff does not update the existing service-generated CreateWork/bootstrap/attestation callsites that omit CreatedBy (see the prior failure at service.go:3908, service.go:6000, and bootstrap.go:204). Those follow-on paths still regress ActorService provenance until the callsites explicitly pass CreatedBy=\"service\"."
+      },
+      {
+        "file": "internal/mcpserver/server_provenance_test.go",
+        "line": 185,
+        "severity": "blocking",
+        "description": "The new regression coverage remains helper-only: it asserts CreatedBy()/ActorFromCreatedBy directly and never drives the production MCP mutation path through session.CallTool or the StreamableHTTP handler, so the requested live-handler end-to-end proof is still missing."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": ".factory/library/contracts.md still frames the provenance gap as a generic session-context problem, but it does not capture the follow-up requirement to explicitly tag true service-generated work creation paths with CreatedBy=\"service\". That omission makes the service-provenance regression easy to rediscover instead of avoiding it.",
+      "evidence": ".factory/library/contracts.md:27-28; internal/service/service.go prior review lines 3908/6000 and internal/service/bootstrap.go:204"
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker procedure asks for provenance verification across CLI, HTTP, MCP, and service-generated follow-on paths, but the transcript skeleton shows the worker stayed at helper-level assertions and build checks instead of exercising the live MCP transport path.",
+      "evidence": "internal/mcpserver/server_provenance_test.go:185-210; transcript skeleton in worker-transcripts.jsonl shows no session.CallTool or serve/HTTP validation steps"
+    }
+  ],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-live-mcp-caller-context-fix.json",
+  "summary": "FAIL: the fix still relies on mutable shared MCP provenance state, leaves service-generated provenance incomplete in the feature diff, and lacks live-handler end-to-end coverage."
+}

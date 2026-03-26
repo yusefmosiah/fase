@@ -195,7 +195,7 @@ func (s *Service) BootstrapCreate(ctx context.Context, req BootstrapCreateReques
 	}
 	objective := strings.TrimSpace(req.Objective)
 	if objective == "" {
-		objective = "Bootstrap a fase work graph from the discovered code/docs entrypoints"
+		objective = "Bootstrap a cogent work graph from the discovered code/docs entrypoints"
 	}
 	kind := strings.TrimSpace(req.Kind)
 	if kind == "" {

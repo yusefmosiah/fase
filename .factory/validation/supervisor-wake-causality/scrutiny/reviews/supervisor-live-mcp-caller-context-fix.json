@@ -1,0 +1,45 @@
+{
+  "featureId": "supervisor-live-mcp-caller-context-fix",
+  "reviewedAt": "2026-03-25T02:15:00Z",
+  "commitId": "e52587beb58a57dc8c6de29b063ee7d330c275f5",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The commit improves supervisor provenance, but the implementation still relies on process-global MCP state and regresses service-generated work creation provenance. The live MCP path is therefore not fully request-scoped, and the new tests still stop short of exercising the production handler end-to-end.",
+    "issues": [
+      {
+        "file": "internal/mcpserver/server.go",
+        "line": 80,
+        "severity": "blocking",
+        "description": "CreatedBy() is driven by a shared internalSessionID on the Server, and serve.go reuses that same server instance for both the supervisor loop and the external /mcp endpoint. That means provenance is still a global switch rather than per-call caller/session context; any concurrent external MCP mutation while the supervisor session is active can be mislabeled ActorSupervisor."
+      },
+      {
+        "file": "internal/service/service.go",
+        "line": 3908,
+        "severity": "blocking",
+        "description": "CreateWork now maps req.CreatedBy through actorFromCreatedBy, but several service-generated CreateWork call sites still omit CreatedBy (for example doc auto-create here and attestation child creation at line 6000, plus bootstrap.go:204). Those paths regress from ActorService to ActorWorker, so service follow-on provenance is no longer trustworthy."
+      },
+      {
+        "file": "internal/mcpserver/server_provenance_test.go",
+        "line": 232,
+        "severity": "non_blocking",
+        "description": "The new provenance tests still only assert CreatedBy()/actorFromCreatedBy() helper behavior. They do not invoke the actual MCP handler via session.CallTool or the serve HTTP transport, so the requested live-path end-to-end coverage is still missing."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": ".factory/library/contracts.md still describes the MCP provenance fix as a session-context problem, but the current implementation uses a process-global internalSessionID instead of request-scoped context. The shared note should be updated once the implementation is corrected.",
+      "evidence": "contracts.md Event Provenance section; internal/mcpserver/server.go:80-99; internal/cli/serve.go:281-295"
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker procedure calls for provenance verification across CLI, HTTP, MCP, and service-generated follow-on paths, but the added tests remain helper-only. A stronger reminder to exercise live MCP session.CallTool behavior would match this feature class better.",
+      "evidence": "internal/mcpserver/server_provenance_test.go:1-297"
+    }
+  ],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-mcp-session-provenance-fix.json",
+  "summary": "FAIL: the fix does not yet provide trustworthy, request-scoped MCP provenance end-to-end; it also regresses provenance for service-generated work creation paths."
+}

@@ -1,0 +1,39 @@
+{
+  "featureId": "supervisor-mcp-provenance-and-regression-fix",
+  "reviewedAt": "2026-03-25T02:00:00Z",
+  "commitId": "17ced41",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "fail",
+  "codeReview": {
+    "summary": "The fix adds more actor mappings and test scaffolding, but it still does not make supervisor-triggered MCP mutations carry trustworthy supervisor provenance. The commit explicitly leaves the MCP provenance gap unresolved, so the original failure is not actually fixed.",
+    "issues": [
+      {
+        "file": "internal/service/events.go",
+        "line": 155,
+        "severity": "blocking",
+        "description": "actorFromCreatedBy now maps CreatedBy=\"mcp\" to ActorMCP, but the feature required supervisor-triggered MCP mutations to preserve supervisor provenance. No caller/session identity is plumbed through the MCP path, and the new TestSupervisorMCPProvenanceGap at internal/service/events_test.go:511-539 explicitly documents that supervisor calls still collapse to the same MCP label instead of ActorSupervisor. The original provenance bug therefore remains."
+      },
+      {
+        "file": "internal/service/events_test.go",
+        "line": 385,
+        "severity": "non_blocking",
+        "description": "The new \"transport-boundary\" tests are still synthetic helper tests: they only call actorFromCreatedBy() and RequiresSupervisorAttention() on hand-built structs. They do not drive the actual CLI/HTTP/MCP handlers, and the idle-backoff test in internal/cli/supervisor_agent_test.go:197-237 only logs the 10-second behavior instead of asserting it, so the requested real regression coverage is still weaker than advertised."
+      }
+    ]
+  },
+  "sharedStateObservations": [
+    {
+      "area": "conventions",
+      "observation": ".factory/library/contracts.md still records the MCP provenance problem as a known gap: CreatedBy=\"mcp\" maps to ActorMCP, and only extra session context would let supervisor-triggered MCP writes be identified as ActorSupervisor. That means the mission's authoritative notes still preserve the unresolved behavior instead of the intended fix.",
+      "evidence": ".factory/library/contracts.md, Event Provenance section"
+    },
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker procedure requires provenance/wake verification across CLI, HTTP, MCP, and service-generated follow-on paths, but the added tests only exercise pure helpers and log-only state checks. The skill guidance could be clearer that this class of feature needs end-to-end handler coverage, not just mapping assertions.",
+      "evidence": "internal/service/events_test.go:385-539 and internal/cli/supervisor_agent_test.go:197-237"
+    }
+  ],
+  "addressesFailureFrom": "/Users/wiz/cogent/.factory/validation/supervisor-wake-causality/scrutiny/reviews/supervisor-event-provenance-and-wake-gate.json",
+  "summary": "FAIL: the fix does not close the original MCP provenance gap; it documents the gap and adds helper tests, but does not make supervisor-triggered MCP mutations carry trustworthy supervisor provenance."
+}

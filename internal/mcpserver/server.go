@@ -22,9 +22,9 @@ type contextKey string
 const (
 	// ContextKeyCallerRole carries the caller role (e.g., "supervisor", "mcp", "host").
 	// This enables request-scoped provenance tracking instead of global state.
-	ContextKeyCallerRole contextKey = "fase.caller.role"
+	ContextKeyCallerRole contextKey = "cogent.caller.role"
 	// ContextKeySessionID carries the session ID for attribution.
-	ContextKeySessionID contextKey = "fase.session.id"
+	ContextKeySessionID contextKey = "cogent.session.id"
 )
 
 // Server wraps the MCP server and provides channel notification support.
@@ -177,9 +177,9 @@ func (sm *SessionManager) GetServerForRequest(req *http.Request) *mcp.Server {
 // New creates an MCP server backed by the given service.
 func New(svc *service.Service) *Server {
 	mcpServer := mcp.NewServer(
-		&mcp.Implementation{Name: "FASE", Version: "0.1.0"},
+		&mcp.Implementation{Name: "Cogent", Version: "0.1.0"},
 		&mcp.ServerOptions{
-			Instructions: "FASE work graph server. Use tools to inspect and manage work items, attestations, and project state.\n\nWhen working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later.",
+			Instructions: "Cogent work graph server. Use tools to inspect and manage work items, attestations, and project state.\n\nWhen working with tool results, write down any important information you might need later in your response, as the original tool result may be cleared later.",
 			Capabilities: &mcp.ServerCapabilities{
 				Experimental: map[string]any{
 					"claude/channel": map[string]any{},

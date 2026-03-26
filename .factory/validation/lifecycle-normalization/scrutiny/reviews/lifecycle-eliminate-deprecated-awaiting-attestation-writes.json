@@ -1,0 +1,26 @@
+{
+  "featureId": "lifecycle-eliminate-deprecated-awaiting-attestation-writes",
+  "reviewedAt": "2026-03-25T05:00:00Z",
+  "commitId": "e28e2d0",
+  "transcriptSkeletonReviewed": true,
+  "diffReviewed": true,
+  "status": "pass",
+  "codeReview": {
+    "summary": "The fix feature successfully addresses all 4 blocking issues from the prior review by replacing every service-layer write site that used WorkExecutionStateAwaitingAttestation with the canonical WorkExecutionStateChecking. The implementation is thorough: service.go contains zero references to the deprecated state constant in write paths, all test assertions have been updated to expect 'checking' instead of 'awaiting_attestation', and the read-normalization infrastructure (IsDeprecatedState, Canonical) remains intact for backward compatibility. The worker systematically searched the entire codebase and addressed all write paths as required by the control-plane-worker skill procedure. All verification steps pass, including the scoped internal test gate, service tests, core state tests, lint, and build. The fix also includes defensive normalization (workState.Canonical() call) and updates a read comparison to use canonical state checking, going beyond the minimum requirements.",
+    "issues": []
+  },
+  "sharedStateObservations": [
+    {
+      "area": "skills",
+      "observation": "The control-plane-worker skill was not available through the Skill tool during the worker session, causing the worker to deviate from the intended procedure and implement the feature directly. However, the worker still followed the skill's guidance from reading the skill file directly, particularly step 6: 'Search the entire codebase for references to the deprecated symbol' and 'Do not consider the feature done until rg for the deprecated constant in write paths returns zero matches.'",
+      "evidence": "Handoff skillFeedback.followedProcedure: false, deviation noted: 'The bootstrap instructions required invoking a control-plane-worker skill, but that skill was not available through the Skill tool in this session.' Transcript shows worker read .factory/skills/control-plane-worker/SKILL.md directly and executed comprehensive grep searches to find all references before making changes."
+    },
+    {
+      "area": "conventions",
+      "observation": "The worker correctly distinguished between write paths (which must not use the deprecated state) and read/display paths (which may retain the deprecated state for backward compatibility). The remaining references to awaiting_attestation in internal/cli/supervisor_agent.go:440 and internal/cli/root.go:2515 are in read/display contexts where the state might appear from legacy persisted data, consistent with the backward compatibility requirement.",
+      "evidence": "Grep results show remaining awaiting_attestation references are limited to: internal/core/types.go (deprecated constant definition), internal/core/work_execution_state_test.go (deprecation tests), internal/cli/supervisor_agent.go (actionable states list for reading), and internal/cli/root.go (status display and deprecation comment). Zero matches in service.go write paths."
+    }
+  ],
+  "addressesFailureFrom": ".factory/validation/lifecycle-normalization/scrutiny/reviews/lifecycle-normalize-canonical-states-and-dispatchability.json",
+  "summary": "PASS: The fix feature comprehensively addresses all 4 blocking issues from the prior failed review. All service-layer write sites in internal/service/service.go that previously persisted WorkExecutionStateAwaitingAttestation now correctly use WorkExecutionStateChecking: (1) worker job completion (line 3772), (2) check submission handler (lines 3897-3900), (3) spawnAttestationChildren parent update (lines 6043 & 6172), and (4) syncWorkStateFromJob (line 8037). The implementation goes beyond minimum requirements by adding defensive canonicalization (workState.Canonical()) and updating a read comparison to use canonical checking. All test assertions were updated to expect 'checking', and the read-normalization infrastructure (IsDeprecatedState, Canonical, Valid) remains intact for backward compatibility with persisted data. Verification confirms zero matches for WorkExecutionStateAwaitingAttestation in service.go write paths, and all tests pass including the scoped internal gate, service tests, core state tests, lint, and build. The feature fully satisfies its expected behavior: 'No service-layer code writes WorkExecutionStateAwaitingAttestation - all 4 sites use WorkExecutionStateChecking instead.'"
+}

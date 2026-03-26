@@ -101,7 +101,7 @@ func BuildWorkCompletionEmail(bundle ProofBundle, message string, isSuccess bool
 			%s
 		</div>
 		<div class="footer">
-			<p>This is an automated notification from FASE work management system.</p>
+			<p>This is an automated notification from Cogent work management system.</p>
 		</div>
 	</div>
 </body>
@@ -128,7 +128,7 @@ func BuildWorkCompletionEmail(bundle ProofBundle, message string, isSuccess bool
 }
 
 // BuildCheckReportEmail renders a CheckReport as an HTML email body for work completion.
-// Subject should be "[FASE] done: <title>".
+// Subject should be "[Cogent] done: <title>".
 func BuildCheckReportEmail(bundle ProofBundle, cr core.CheckRecord) string {
 	work := bundle.Work
 	testStatus := "✓ All tests passed"
@@ -218,7 +218,7 @@ func BuildCheckReportEmail(bundle ProofBundle, cr core.CheckRecord) string {
 			%s
 		</div>
 		<div class="footer">
-			<p>This is an automated notification from FASE work management system.</p>
+			<p>This is an automated notification from Cogent work management system.</p>
 		</div>
 	</div>
 </body>
@@ -347,7 +347,7 @@ func BuildSpecEscalationEmail(bundle ProofBundle, summary, recommendation string
 			%s
 		</div>
 		<div class="footer">
-			<p>This is an automated notification from FASE work management system.</p>
+			<p>This is an automated notification from Cogent work management system.</p>
 		</div>
 	</div>
 </body>
@@ -569,7 +569,7 @@ func BuildAttestationEmail(work *core.WorkItemRecord, attestation core.Attestati
 			%s
 		</div>
 		<div class="footer">
-			<p>This is an automated notification from FASE work management system.</p>
+			<p>This is an automated notification from Cogent work management system.</p>
 		</div>
 	</div>
 </body>

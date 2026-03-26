@@ -1,0 +1,75 @@
+{
+  "milestone": "lifecycle-normalization",
+  "round": 2,
+  "status": "pass",
+  "validatorsRun": {
+    "test": {
+      "passed": true,
+      "command": "go list ./internal/... | grep -v 'github.com/yusefmosiah/cogent/internal/adapters/codex' | grep -v 'github.com/yusefmosiah/cogent/internal/mcpserver' | xargs env GOMAXPROCS=4 go test",
+      "exitCode": 0
+    },
+    "lint": {
+      "passed": true,
+      "command": "make lint",
+      "exitCode": 0
+    },
+    "build": {
+      "passed": true,
+      "command": "make build",
+      "exitCode": 0
+    }
+  },
+  "reviewsSummary": {
+    "total": 1,
+    "passed": 1,
+    "failed": 0,
+    "failedFeatures": []
+  },
+  "blockingIssues": [],
+  "appliedUpdates": [],
+  "suggestedGuidanceUpdates": [
+    {
+      "target": "control-plane-worker skill",
+      "suggestion": "Strengthen step 8 verification guidance to explicitly distinguish 'normalize on read' from 'eliminate deprecated writes'. Current guidance says 'Verify that deprecated/duplicate paths covered by the feature are actually removed or exact aliases, not just left undocumented.' Consider adding a checklist: (1) If normalizing deprecated states, update ALL read paths consistently, not just specific methods. (2) If eliminating deprecated states, update ALL write paths to use canonical states, then normalize or reject on read. (3) Search codebase for deprecated state references and verify each is either intentionally preserved for migration or updated.",
+      "evidence": "Feature lifecycle-normalize-canonical-states-and-dispatchability added normalization infrastructure but left 4+ service layer write sites using the deprecated awaiting_attestation state. Worker reported followedProcedure:true and passed all verification tests, but the implementation only normalized 2 specific read paths while continuing to write deprecated states elsewhere. The skill guidance was present but insufficient to catch this gap. Round 2: Fix feature lifecycle-eliminate-deprecated-awaiting-attestation-writes successfully addressed this by following the skill's step 6 guidance ('Search the entire codebase') and comprehensively updating all write paths.",
+      "isSystemic": true
+    },
+    {
+      "target": "AGENTS.md or control-plane-worker skill",
+      "suggestion": "Clarify the two valid approaches for handling deprecated states: (1) 'Normalize on read': Deprecated states can be written but ALL read paths must normalize them consistently before returning to callers. Database may contain deprecated states but APIs never expose them. (2) 'Reject on write': New writes use only canonical states, read paths either normalize or reject deprecated states found in legacy data. Validation contract VAL-CONTRACT-002 allows both, but implementations must pick one and apply it consistently across all code paths.",
+      "evidence": "Feature lifecycle-normalize-canonical-states-and-dispatchability attempted a hybrid approach: added normalization infrastructure, updated 2 specific read paths (ListReadyWork, ReleaseExpiredWorkClaims), but left GetWorkItem and other read paths unnormalized, and left all service layer write paths using the deprecated state. This suggests the worker understood 'normalization' but not the full implications of either approach. Round 2: Fix feature successfully eliminated writes and preserved read normalization infrastructure, demonstrating the 'Reject on write' approach once the distinction was clarified.",
+      "isSystemic": true
+    },
+    {
+      "target": "control-plane-worker skill",
+      "suggestion": "Create SKILL.md file for control-plane-worker skill or document why it intentionally has no procedure file. Review found that lifecycle-normalize-job-mapping-children-and-retry-epochs worker reported followedProcedure:true with zero deviations, yet no SKILL.md exists for the control-plane-worker skill. If the skill is intentionally minimal/general-purpose, consider documenting this in a minimal SKILL.md that says 'This is a general-purpose worker skill with no fixed procedure—follow mission guidance and feature requirements directly.'",
+      "evidence": "Glob search for control-plane-worker/SKILL.md returned no results. Feature lifecycle-normalize-job-mapping-children-and-retry-epochs handoff reports skillName:control-plane-worker, followedProcedure:true, deviations:[]. Round 2: Fix feature handoff indicates the skill file exists at .factory/skills/control-plane-worker/SKILL.md but was not available through the Skill tool, suggesting a tool/registration issue rather than missing documentation.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/library/contracts.md or leave as code-only",
+      "suggestion": "Consider documenting the attempt epoch mechanism in .factory/library/contracts.md for future worker reference. The mechanism is a significant lifecycle concept (ResetWork increments AttemptEpoch, attestation child fanout is per-epoch, parent aggregation filters by current epoch, stale artifacts from prior epochs cannot satisfy new attempts). However, the mission's precedence rule states 'Runtime code is canonical', so in-code documentation may be sufficient. Orchestrator should decide if cross-referencing the concept in contracts.md would help future workers or if code-as-canonical is adequate.",
+      "evidence": "Feature lifecycle-normalize-job-mapping-children-and-retry-epochs added AttemptEpoch field, ResetWork() method, epoch-aware filtering, and extensive tests. The concept is well-documented in code comments. .factory/library/contracts.md currently documents state deprecations and supervisor wake semantics but not retry/epoch isolation. AGENTS.md states 'Runtime code is canonical'.",
+      "isSystemic": false
+    },
+    {
+      "target": ".factory/library/backward-compatibility-patterns.md",
+      "suggestion": "Consider documenting the 'write canonical, read normalized' pattern for deprecated state handling as a reference for future deprecation work. This pattern emerged successfully from the lifecycle-normalization features: new code writes only canonical states, read paths provide normalization functions (Canonical(), IsDeprecatedState()) for backward compatibility with persisted data, and the deprecated constant remains defined but is never used in new write paths. This allows safe evolution of state vocabularies without breaking existing persisted data.",
+      "evidence": "Fix feature lifecycle-eliminate-deprecated-awaiting-attestation-writes correctly distinguished write paths (which must not use deprecated states) from read/display paths (which may retain deprecated state handling for backward compatibility). Remaining awaiting_attestation references are limited to: type definition (internal/core/types.go), deprecation tests, supervisor actionable states list (read context), and status display (read context). Zero matches in service.go write paths. This pattern could guide future similar deprecations.",
+      "isSystemic": false
+    },
+    {
+      "target": "Infrastructure/Skill tool",
+      "suggestion": "Investigate why the control-plane-worker skill was not available through the Skill tool during the fix feature worker session. The skill file exists at .factory/skills/control-plane-worker/SKILL.md and workers can read it directly as a workaround, but the Skill tool should reliably surface available skills to prevent workers from deviating unnecessarily. This may be a skill registration, discovery, or tool reliability issue.",
+      "evidence": "Fix feature handoff skillFeedback.followedProcedure: false, deviation noted: 'The bootstrap instructions required invoking a control-plane-worker skill, but that skill was not available through the Skill tool in this session.' Worker successfully worked around this by reading .factory/skills/control-plane-worker/SKILL.md directly, but this represents an unnecessary friction in the worker flow.",
+      "isSystemic": false
+    }
+  ],
+  "rejectedObservations": [
+    {
+      "observation": "The .factory/library/contracts.md documents that awaiting_attestation is deprecated and states 'Do not use awaiting_attestation in new code or docs', but the service layer (internal/service/service.go) still actively writes this deprecated state in at least 4 critical paths. This convention is documented but not enforced.",
+      "reason": "Already fixed. This issue was resolved by the fix feature lifecycle-eliminate-deprecated-awaiting-attestation-writes in round 2. The service layer no longer writes the deprecated state."
+    }
+  ],
+  "previousRound": ".factory/validation/lifecycle-normalization/scrutiny/synthesis.json.round1"
+}
