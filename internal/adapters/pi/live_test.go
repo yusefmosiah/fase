@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
-	"github.com/yusefmosiah/fase/internal/adapters/pi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapters/pi"
 )
 
 func piBinary(t *testing.T) string {

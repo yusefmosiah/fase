@@ -26,11 +26,11 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/fase/internal/adapters"
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/mcpserver"
-	"github.com/yusefmosiah/fase/internal/service"
-	"github.com/yusefmosiah/fase/internal/web"
+	"github.com/yusefmosiah/cogent/internal/adapters"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/mcpserver"
+	"github.com/yusefmosiah/cogent/internal/service"
+	"github.com/yusefmosiah/cogent/internal/web"
 )
 
 // wsHub manages WebSocket connections and broadcasts events to all connected clients.

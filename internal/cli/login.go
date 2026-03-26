@@ -8,8 +8,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yusefmosiah/fase/internal/adapters/native"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/adapters/native"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func newLoginCommand(root *rootOptions) *cobra.Command {

@@ -15,7 +15,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 var (

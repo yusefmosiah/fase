@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/yusefmosiah/fase/internal/cli"
+	"github.com/yusefmosiah/cogent/internal/cli"
 )
 
 func main() {

@@ -5,7 +5,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 // TestMCPServerCreatedByDefault verifies that when no caller role is set

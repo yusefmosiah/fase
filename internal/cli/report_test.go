@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/channelmeta"
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/channelmeta"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func TestReportCommandUsesWorkerReportContract(t *testing.T) {

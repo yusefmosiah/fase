@@ -11,9 +11,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/mcpserver"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/mcpserver"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 // agenticSupervisor runs the supervisor as a regular adapter session (ADR-0041).

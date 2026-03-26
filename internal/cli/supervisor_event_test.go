@@ -3,7 +3,7 @@ package cli
 import (
 	"testing"
 
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 // TestFilterNovelEventsFiltersDuplicates verifies that events with the same

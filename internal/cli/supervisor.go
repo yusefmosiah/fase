@@ -10,7 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 // rotationEntry pairs an adapter name with the model to use for that adapter.

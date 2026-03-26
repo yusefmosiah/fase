@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 func TestToolRegistryDefinitionsAndExecute(t *testing.T) {

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 func TestRequireCapabilitiesDefaultsToAudit(t *testing.T) {

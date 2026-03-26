@@ -23,17 +23,17 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
-	"github.com/yusefmosiah/fase/internal/adapters"
-	catalogpkg "github.com/yusefmosiah/fase/internal/catalog"
-	"github.com/yusefmosiah/fase/internal/channelmeta"
-	"github.com/yusefmosiah/fase/internal/core"
-	debriefpkg "github.com/yusefmosiah/fase/internal/debrief"
-	"github.com/yusefmosiah/fase/internal/events"
-	"github.com/yusefmosiah/fase/internal/notify"
-	"github.com/yusefmosiah/fase/internal/pricing"
-	"github.com/yusefmosiah/fase/internal/store"
-	transferpkg "github.com/yusefmosiah/fase/internal/transfer"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapters"
+	catalogpkg "github.com/yusefmosiah/cogent/internal/catalog"
+	"github.com/yusefmosiah/cogent/internal/channelmeta"
+	"github.com/yusefmosiah/cogent/internal/core"
+	debriefpkg "github.com/yusefmosiah/cogent/internal/debrief"
+	"github.com/yusefmosiah/cogent/internal/events"
+	"github.com/yusefmosiah/cogent/internal/notify"
+	"github.com/yusefmosiah/cogent/internal/pricing"
+	"github.com/yusefmosiah/cogent/internal/store"
+	transferpkg "github.com/yusefmosiah/cogent/internal/transfer"
 )
 
 var (

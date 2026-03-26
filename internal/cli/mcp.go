@@ -17,8 +17,8 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
-	"github.com/yusefmosiah/fase/internal/mcpserver"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/mcpserver"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func newMCPCommand(root *rootOptions) *cobra.Command {

@@ -4,8 +4,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func TestAgenticSupervisorPauseResume(t *testing.T) {

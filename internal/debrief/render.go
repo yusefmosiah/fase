@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 func RenderPrompt(session core.SessionRecord, adapter, reason string) string {

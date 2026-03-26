@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 func TestCoAgentManagerSpawnSendListAndClose(t *testing.T) {

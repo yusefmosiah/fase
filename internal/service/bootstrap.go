@@ -8,7 +8,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 type BootstrapInspectRequest struct {

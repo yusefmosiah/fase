@@ -9,7 +9,7 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 // LiveAdapter implements adapterapi.LiveAgentAdapter for the Codex app-server.

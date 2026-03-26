@@ -10,8 +10,8 @@ import (
 	"sync"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 // Context keys for request-scoped provenance tracking.

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 func TestLiveAdapterStartSession(t *testing.T) {

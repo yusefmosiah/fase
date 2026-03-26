@@ -8,7 +8,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func newTestServeAPI(t *testing.T) (*service.Service, *httptest.Server) {

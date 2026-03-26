@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
-	"github.com/yusefmosiah/fase/internal/adapters/codex"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapters/codex"
 )
 
 func codexBinary(t *testing.T) string {

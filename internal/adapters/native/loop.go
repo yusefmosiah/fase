@@ -7,7 +7,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {

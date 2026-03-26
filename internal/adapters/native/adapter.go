@@ -10,11 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
-	"github.com/yusefmosiah/fase/internal/adapters/codex"
-	"github.com/yusefmosiah/fase/internal/adapters/opencode"
-	"github.com/yusefmosiah/fase/internal/adapters/pi"
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapters/codex"
+	"github.com/yusefmosiah/cogent/internal/adapters/opencode"
+	"github.com/yusefmosiah/cogent/internal/adapters/pi"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 type Adapter struct {

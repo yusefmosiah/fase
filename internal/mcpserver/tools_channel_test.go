@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/fase/internal/channelmeta"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/channelmeta"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 func TestReportToolUsesWorkerReportContract(t *testing.T) {

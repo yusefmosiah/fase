@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 // faseBridge is the acyclic interface for FASE service tools.

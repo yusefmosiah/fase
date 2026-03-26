@@ -3,7 +3,7 @@ package gemini
 import (
 	"fmt"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 type builder struct{}

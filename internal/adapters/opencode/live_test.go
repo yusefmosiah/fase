@@ -13,7 +13,7 @@ import (
 
 	opencodesdk "github.com/sst/opencode-sdk-go"
 
-	"github.com/yusefmosiah/fase/internal/adapterapi"
+	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
 type fakeOpenCodeServer struct {

@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 var (

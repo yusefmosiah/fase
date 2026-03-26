@@ -3,7 +3,7 @@ package notify
 import (
 	"testing"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 func TestBuildWorkCompletionEmailSuccess(t *testing.T) {
@@ -214,7 +214,7 @@ func TestBuildAttestationEmailWithCheckRecord(t *testing.T) {
 			TestsPassed:  42,
 			TestsFailed:  0,
 			DiffStat:     "3 files changed, 120 insertions(+), 5 deletions(-)",
-			TestOutput:   "ok  github.com/yusefmosiah/fase/internal/store",
+			TestOutput:   "ok  github.com/yusefmosiah/cogent/internal/store",
 			CheckerNotes: "Implementation is clean, all edge cases handled.",
 		},
 	}

@@ -770,7 +770,7 @@ func TestWorkLifecycleCommands(t *testing.T) {
 		t.Fatalf("expected doc path in doc-set response, got %+v", docSet.Doc)
 	}
 
-	checkOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "check", "create", childWork.WorkID, "--result", "pass", "--build-ok", "--tests-passed", "1", "--test-output", "go test ./cmd/fase\nok\tgithub.com/yusefmosiah/fase/cmd/fase\t0.111s", "--notes", "verified canonical review bundle")
+	checkOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "check", "create", childWork.WorkID, "--result", "pass", "--build-ok", "--tests-passed", "1", "--test-output", "go test ./cmd/fase\nok\tgithub.com/yusefmosiah/cogent/cmd/fase\t0.111s", "--notes", "verified canonical review bundle")
 	var checkRecord struct {
 		CheckID string `json:"check_id"`
 		Result  string `json:"result"`
@@ -1072,7 +1072,7 @@ func TestDocsRequiredWorkBlocksCompletionUntilRepoDocsAlign(t *testing.T) {
 		t.Fatalf("expected tracked doc without repo file yet, got %+v", docSet.Doc)
 	}
 
-	checkOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "check", "create", work.WorkID, "--result", "pass", "--build-ok", "--tests-passed", "1", "--test-output", "go test ./cmd/fase\nok\tgithub.com/yusefmosiah/fase/cmd/fase\t0.111s", "--notes", "verified canonical review bundle")
+	checkOutput := runFaseWithEnv(t, binary, configPath, projectDir, env, "--json", "check", "create", work.WorkID, "--result", "pass", "--build-ok", "--tests-passed", "1", "--test-output", "go test ./cmd/fase\nok\tgithub.com/yusefmosiah/cogent/cmd/fase\t0.111s", "--notes", "verified canonical review bundle")
 	var checkRecord struct {
 		CheckID string `json:"check_id"`
 	}

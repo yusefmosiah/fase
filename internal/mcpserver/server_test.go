@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/fase/internal/core"
-	"github.com/yusefmosiah/fase/internal/service"
+	"github.com/yusefmosiah/cogent/internal/core"
+	"github.com/yusefmosiah/cogent/internal/service"
 )
 
 // newTestServer creates a minimal Server for testing (no DB, events work via zero-value EventBus).
@@ -194,7 +194,7 @@ func TestCheckRecordListMCPToolUsesCanonicalDefaultLimit(t *testing.T) {
 			Report: core.CheckReport{
 				BuildOK:      true,
 				TestsPassed:  1,
-				TestOutput:   "go test ./internal/mcpserver\nok\tgithub.com/yusefmosiah/fase/internal/mcpserver\t0.123s",
+				TestOutput:   "go test ./internal/mcpserver\nok\tgithub.com/yusefmosiah/cogent/internal/mcpserver\t0.123s",
 				CheckerNotes: "canonical default limit",
 			},
 			CreatedBy: "test",

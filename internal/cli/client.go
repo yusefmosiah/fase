@@ -13,7 +13,7 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 // errServeBusy is returned when the serve responds with HTTP 409 (resource busy).

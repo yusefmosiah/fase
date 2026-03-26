@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yusefmosiah/fase/internal/channelmeta"
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/channelmeta"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 func newCheckCommand(root *rootOptions) *cobra.Command {

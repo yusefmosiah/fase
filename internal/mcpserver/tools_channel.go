@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
-	"github.com/yusefmosiah/fase/internal/channelmeta"
+	"github.com/yusefmosiah/cogent/internal/channelmeta"
 )
 
 type reportInput struct {

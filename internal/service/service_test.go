@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/yusefmosiah/fase/internal/core"
+	"github.com/yusefmosiah/cogent/internal/core"
 )
 
 var (
@@ -2261,7 +2261,7 @@ func TestCheckRecordFlow(t *testing.T) {
 		Report: core.CheckReport{
 			BuildOK:      true,
 			TestsPassed:  3,
-			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.123s",
+			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/cogent/internal/service\t0.123s",
 			CheckerNotes: "all good",
 		},
 		CreatedBy: "test",
@@ -2325,7 +2325,7 @@ func TestCheckRecordFlow(t *testing.T) {
 	direct, err := svc.CreateCheckRecordDirect(ctx, work.WorkID, "pass", "glm-5-turbo", "gpt-5.4-mini", core.CheckReport{
 		BuildOK:      true,
 		TestsPassed:  5,
-		TestOutput:   "go test ./...\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.321s",
+		TestOutput:   "go test ./...\nok\tgithub.com/yusefmosiah/cogent/internal/service\t0.321s",
 		CheckerNotes: "via direct bridge",
 	}, "worker")
 	if err != nil {
@@ -2417,7 +2417,7 @@ func TestCreateCheckRecordRejectsMissingDeliverableEvidence(t *testing.T) {
 		Report: core.CheckReport{
 			BuildOK:      true,
 			TestsPassed:  2,
-			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.234s",
+			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/cogent/internal/service\t0.234s",
 			CheckerNotes: "verified screenshots and commands, but omitted explicit deliverable paths",
 		},
 	})
@@ -2528,7 +2528,7 @@ func TestCreateCheckRecordPersistsTextArtifacts(t *testing.T) {
 		Report: core.CheckReport{
 			BuildOK:      true,
 			TestsPassed:  2,
-			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.456s",
+			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/cogent/internal/service\t0.456s",
 			DiffStat:     " internal/service/service.go | 12 +++++++++---",
 			CheckerNotes: "verified internal/service/service.go exists and recorded durable evidence",
 		},
@@ -2606,7 +2606,7 @@ func TestWorkShowIncludesCanonicalReviewBundle(t *testing.T) {
 		Report: core.CheckReport{
 			BuildOK:      true,
 			TestsPassed:  2,
-			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.101s",
+			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/cogent/internal/service\t0.101s",
 			CheckerNotes: "verified canonical review bundle evidence",
 		},
 		CreatedBy: "test",
