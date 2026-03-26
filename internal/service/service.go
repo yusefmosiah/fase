@@ -405,14 +405,6 @@ type WorkAttestRequest struct {
 	SignerPubkey            string         `json:"signer_pubkey,omitempty"`
 }
 
-type WorkCheckRequest struct {
-	WorkID       string           `json:"work_id,omitempty"`
-	Result       string           `json:"result"` // "pass" or "fail"
-	CheckerModel string           `json:"checker_model,omitempty"`
-	WorkerModel  string           `json:"worker_model,omitempty"`
-	Report       core.CheckReport `json:"report"`
-	CreatedBy    string           `json:"created_by,omitempty"`
-}
 
 type WorkShowResult struct {
 	Work         core.WorkItemRecord       `json:"work"`
