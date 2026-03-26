@@ -1,6 +1,7 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -21,8 +22,10 @@ type Paths struct {
 }
 
 const (
-	projectStateDirName = ".cogent"
-	projectSlug         = "cogent"
+	projectStateDirName       = ".cogent"
+	legacyProjectStateDirName = ".fase"
+	projectSlug               = "cogent"
+	legacyProjectSlug         = "fase"
 )
 
 func ResolvePaths() (Paths, error) {
@@ -67,7 +70,9 @@ func ResolvePathsForRepo() (Paths, error) {
 		return ResolvePaths()
 	}
 	if cwd, err := os.Getwd(); err == nil {
-		_ = MigrateLegacyRepoStateDirFrom(cwd, nil)
+		if err := MigrateLegacyRepoStateDirFrom(cwd, nil); err != nil {
+			return Paths{}, err
+		}
 	}
 	repoState := ResolveRepoStateDir()
 	if repoState == "" {
@@ -196,10 +201,70 @@ func stateFilePrefix(_ string) string {
 }
 
 func MigrateLegacyRepoStateDirFrom(startDir string, logf func(string, ...any)) error {
+	repoRoot := repoRootFromStartDir(startDir)
+	if repoRoot == "" {
+		return nil
+	}
+
+	stateDir := filepath.Join(repoRoot, projectStateDirName)
+	if _, err := os.Stat(stateDir); err == nil {
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat repo state dir %q: %w", stateDir, err)
+	}
+
+	legacyStateDir := filepath.Join(repoRoot, legacyProjectStateDirName)
+	info, err := os.Stat(legacyStateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("stat legacy repo state dir %q: %w", legacyStateDir, err)
+	}
+	if !info.IsDir() {
+		return nil
+	}
+
+	if err := os.Rename(legacyStateDir, stateDir); err != nil {
+		return fmt.Errorf("rename legacy repo state dir %q to %q: %w", legacyStateDir, stateDir, err)
+	}
+	logMigration(logf, "migrated legacy repo state dir from %s to %s", legacyStateDir, stateDir)
+
+	if err := migrateLegacyStateFiles(stateDir, logf); err != nil {
+		return err
+	}
 	return nil
 }
 
 func migrateLegacyStateFiles(stateDir string, logf func(string, ...any)) error {
+	entries, err := os.ReadDir(stateDir)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read state dir %q: %w", stateDir, err)
+	}
+
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasPrefix(name, legacyProjectSlug) || !strings.Contains(name, ".db") {
+			continue
+		}
+
+		legacyPath := filepath.Join(stateDir, name)
+		currentName := projectSlug + strings.TrimPrefix(name, legacyProjectSlug)
+		currentPath := filepath.Join(stateDir, currentName)
+		if _, err := os.Stat(currentPath); err == nil {
+			continue
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("stat migrated state file %q: %w", currentPath, err)
+		}
+
+		if err := os.Rename(legacyPath, currentPath); err != nil {
+			return fmt.Errorf("rename legacy state file %q to %q: %w", legacyPath, currentPath, err)
+		}
+		logMigration(logf, "migrated legacy state file from %s to %s", legacyPath, currentPath)
+	}
 	return nil
 }
 

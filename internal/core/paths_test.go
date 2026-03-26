@@ -85,7 +85,7 @@ func TestResolveRepoStateDirFromReturnsCogentDir(t *testing.T) {
 	}
 }
 
-func TestMigrateLegacyRepoStateDirFromLeavesCogentStateUntouched(t *testing.T) {
+func TestMigrationLeavesCogentStateUntouched(t *testing.T) {
 	root := t.TempDir()
 	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
 		t.Fatalf("mkdir git: %v", err)
@@ -129,5 +129,128 @@ func TestMigrateLegacyRepoStateDirFromLeavesCogentStateUntouched(t *testing.T) {
 	}
 	if len(logs) != 0 {
 		t.Fatalf("expected no migration log output, got %v", logs)
+	}
+}
+
+func TestMigrationSkipsLegacyDirWhenCogentStateAlreadyExists(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
+
+	stateDir := filepath.Join(root, ".cogent")
+	if err := os.MkdirAll(stateDir, 0o755); err != nil {
+		t.Fatalf("mkdir state dir: %v", err)
+	}
+	legacyDir := filepath.Join(root, ".fase")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy state dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(stateDir, "cogent.db"), []byte("current"), 0o644); err != nil {
+		t.Fatalf("write current db: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "fase.db"), []byte("legacy"), 0o644); err != nil {
+		t.Fatalf("write legacy db: %v", err)
+	}
+
+	var logs []string
+	if err := MigrateLegacyRepoStateDirFrom(root, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}); err != nil {
+		t.Fatalf("migrate repo state dir: %v", err)
+	}
+
+	if _, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("expected current state dir to remain: %v", err)
+	}
+	if _, err := os.Stat(legacyDir); err != nil {
+		t.Fatalf("expected legacy state dir to remain untouched: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(stateDir, "cogent.db"))
+	if err != nil {
+		t.Fatalf("read current db: %v", err)
+	}
+	if string(data) != "current" {
+		t.Fatalf("unexpected current db contents: %q", string(data))
+	}
+	if len(logs) != 0 {
+		t.Fatalf("expected no migration log output, got %v", logs)
+	}
+}
+
+func TestMigrationRenamesLegacyRepoStateDir(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Mkdir(filepath.Join(root, ".git"), 0o755); err != nil {
+		t.Fatalf("mkdir git: %v", err)
+	}
+
+	legacyDir := filepath.Join(root, ".fase")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatalf("mkdir legacy state dir: %v", err)
+	}
+	files := map[string]string{
+		"fase.db":            "public-db",
+		"fase-private.db":    "private-db",
+		"fase.db-wal":        "wal",
+		"notes.txt":          "keep-me",
+		"subdir/ignored.txt": "nested",
+	}
+	for name, contents := range files {
+		path := filepath.Join(legacyDir, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir parent for %s: %v", name, err)
+		}
+		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+	}
+
+	var logs []string
+	if err := MigrateLegacyRepoStateDirFrom(root, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	}); err != nil {
+		t.Fatalf("migrate repo state dir: %v", err)
+	}
+
+	stateDir := filepath.Join(root, ".cogent")
+	if _, err := os.Stat(filepath.Join(root, ".fase")); !os.IsNotExist(err) {
+		t.Fatalf("expected legacy state dir to be removed, got err=%v", err)
+	}
+	if info, err := os.Stat(stateDir); err != nil {
+		t.Fatalf("expected cogent state dir to exist: %v", err)
+	} else if !info.IsDir() {
+		t.Fatalf("expected %q to be a directory", stateDir)
+	}
+
+	renamedFiles := map[string]string{
+		"cogent.db":         "public-db",
+		"cogent-private.db": "private-db",
+		"cogent.db-wal":     "wal",
+	}
+	for name, want := range renamedFiles {
+		data, err := os.ReadFile(filepath.Join(stateDir, name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if got := string(data); got != want {
+			t.Fatalf("unexpected contents for %s: got %q want %q", name, got, want)
+		}
+	}
+	for _, name := range []string{"fase.db", "fase-private.db", "fase.db-wal"} {
+		if _, err := os.Stat(filepath.Join(stateDir, name)); !os.IsNotExist(err) {
+			t.Fatalf("expected %s to be renamed, got err=%v", name, err)
+		}
+	}
+	for _, name := range []string{"notes.txt", filepath.Join("subdir", "ignored.txt")} {
+		data, err := os.ReadFile(filepath.Join(stateDir, name))
+		if err != nil {
+			t.Fatalf("read preserved file %s: %v", name, err)
+		}
+		if len(data) == 0 {
+			t.Fatalf("expected preserved file %s to keep contents", name)
+		}
+	}
+	if len(logs) == 0 {
+		t.Fatalf("expected migration log output")
 	}
 }
