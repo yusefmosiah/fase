@@ -51,11 +51,6 @@ var osExecutable = os.Executable
 
 var checkerUIEvidencePattern = regexp.MustCompile(`(?i)(\bmind-graph/|\bplaywright\.config(?:\.[[:alnum:]]+)?\b|\bindex\.html\b|\.tsx\b|\.jsx\b|\.css\b|\.html\b|\bfrontend\b|\bfront-end\b|\bweb ui\b|\buser interface\b|\bbrowser ui\b)`)
 
-var uiCheckerModels = []struct{ adapter, model string }{
-	{"claude", "claude-opus-4-6"},
-	{"claude", "claude-sonnet-4-6"},
-}
-
 func workNeedsUIVerification(work core.WorkItemRecord) bool {
 	if workHasUITag(work.Metadata) {
 		return true
@@ -3261,10 +3256,6 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		s.sendWorkFailureNotification(context.Background(), work, req.Message)
 	}
 
-	// Auto-dispatch checker when worker signals checking state.
-	if req.ExecutionState == core.WorkExecutionStateChecking {
-		go s.dispatchChecker(context.Background(), work)
-	}
 
 	return &work, nil
 }
@@ -3376,178 +3367,6 @@ func (s *Service) ResetWork(ctx context.Context, req WorkResetRequest) (*core.Wo
 
 	return &work, nil
 }
-
-// checkerModels is the ordered pool of adapter+model pairs used for checker dispatch.
-// Checkers intentionally use a different model from the worker to provide independent verification.
-var checkerModels = []struct{ adapter, model string }{
-	{"claude", "claude-opus-4-6"},
-	{"claude", "claude-sonnet-4-6"},
-}
-
-// dispatchChecker spawns a checker job for the given work item.
-// It resolves the main repo CWD from the work item's last job, picks a model
-// different from the worker, and runs the checker briefing.
-func (s *Service) dispatchChecker(ctx context.Context, work core.WorkItemRecord) {
-	jobs, err := s.store.ListJobsByWork(ctx, work.WorkID, 5)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "dispatchChecker: list jobs for %s: %v\n", work.WorkID, err)
-		return
-	}
-
-	cwd := s.checkerDispatchCWD(ctx, jobs)
-	workerModel := ""
-	if len(jobs) > 0 {
-		lastJob := jobs[0]
-		_ = lastJob.Adapter // kept for future use
-		if m, ok := lastJob.Summary["model"].(string); ok {
-			workerModel = m
-		}
-	}
-
-	// Pick a checker model that differs from the worker's last model.
-	// Only require the model to differ — same adapter is fine (avoids
-	// skipping claude/opus just because the worker also used claude adapter).
-	checkerPool := checkerModels
-	if workNeedsUIVerification(work) {
-		checkerPool = uiCheckerModels
-	}
-	checkerAdapter := checkerPool[0].adapter
-	checkerModel := checkerPool[0].model
-	for _, cm := range checkerPool {
-		if cm.model != workerModel {
-			checkerAdapter = cm.adapter
-			checkerModel = cm.model
-			break
-		}
-	}
-
-	briefing := s.buildCheckerBriefing(work)
-
-	_, runErr := s.Run(ctx, RunRequest{
-		Adapter: checkerAdapter,
-		CWD:     cwd,
-		Prompt:  briefing,
-		Model:   checkerModel,
-		WorkID:  work.WorkID,
-		Label:   "checker",
-	})
-	if runErr != nil {
-		fmt.Fprintf(os.Stderr, "dispatchChecker: run for %s: %v\n", work.WorkID, runErr)
-	}
-}
-
-func (s *Service) checkerDispatchCWD(ctx context.Context, jobs []core.JobRecord) string {
-	// Default to the main repo root derived from the repository-local state dir.
-	cwd := filepath.Dir(s.Paths.StateDir)
-	if len(jobs) == 0 {
-		return cwd
-	}
-
-	workerCWD := strings.TrimSpace(jobs[0].CWD)
-	if workerCWD == "" {
-		return cwd
-	}
-
-	// Checkers should run from the main repo root so adapter auth/config resolves
-	// from the canonical repository location rather than a nested worktree path.
-	if repoRoot, err := gitMainRepoRoot(ctx, workerCWD); err == nil && repoRoot != "" {
-		return repoRoot
-	}
-	return cwd
-}
-
-// buildCheckerBriefing produces a prompt for the checker agent.
-func (s *Service) buildCheckerBriefing(work core.WorkItemRecord) string {
-	uiWork := workNeedsUIVerification(work)
-	uiInstructions := ""
-	if uiWork {
-		uiInstructions = fmt.Sprintf(`
-5. This work is UI-tagged, so treat Playwright evidence as mandatory.
-   - Run the local service before testing so the browser has a live app to inspect.
-   - Run Playwright e2e from the app root with a strong multimodal model (Claude Sonnet/Opus).
-   - Capture screenshots and videos for the flows that matter, then verify they were persisted under .fase/artifacts/%s/screenshots/.
-   - Compare the rendered UI against the acceptance criteria and fail on broken filters, duplicate sections, fallback/placeholder data, or other visible regressions.
-   - If you cannot run Playwright or the persisted artifact directory is empty, report FAIL.
-`, work.WorkID)
-	}
-	return fmt.Sprintf(`# Checker Assignment
-
-Work ID: %s
-Title: %s
-
-You are a checker. Your job is to verify the worker's output independently and submit a check record.
-
-## Your Tasks
-
-1. Review the objective and diff first: git diff main...HEAD --stat
-2. Verify deliverables exist. Read the objective below, identify every explicit file path it mentions, and check each one with: test -e <path>
-   - If the objective says a file should exist and it is missing or empty, report FAIL.
-   - Record the verified paths, missing paths, and the commands you ran in checker_notes.
-3. Build check: run go build ./...
-   - If go build fails, report FAIL.
-   - A passing check record must only be submitted with build_ok=true.
-4. Run targeted tests for the files or behavior touched by the diff.
-   - Prefer focused commands first, then expand only as needed.
-   - Include the exact commands and key output in test_output or checker_notes.
-   - If targeted tests fail, report FAIL.
-5. Check for UI work by reviewing the objective and diff for browser-facing files such as mind-graph/, index.html, playwright.config.*, .tsx, .jsx, .css, or other web UI paths.
-   - If UI work is involved, you MUST run Playwright.
-   - Use the app-local command when available, for example: cd mind-graph && npx playwright test --screenshot=on
-   - After Playwright, persist screenshots and videos under .fase/artifacts/%s/screenshots/ and confirm they exist there before you pass the check.
-   - If UI work is involved and you do not have persisted screenshots, report FAIL.
-%s
-6. Note any issues, warnings, test failures, missing deliverables, or visual regressions.
-
-## Collecting Screenshots
-
-After running Playwright (REQUIRED for UI work), persist and verify artifacts:
-  mkdir -p .fase/artifacts/%s/screenshots
-  find . -path "*/test-results/*" \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" -o -name "*.webm" \) -type f -exec cp {} .fase/artifacts/%s/screenshots/ \;
-  find "$(pwd)/.fase/artifacts/%s/screenshots" -type f
-
-Include ALL absolute screenshot paths in your check record via the screenshots parameter, and include any videos via the videos parameter.
-If Playwright is present but you could not run it, or the persisted screenshot directory is empty, report that as a failure with checker_notes explaining why.
-
-## CRITICAL: Do NOT pass without evidence
-
-- If build fails → FAIL
-- If tests fail → FAIL
-- If the objective required code changes but only artifacts were committed → FAIL
-- If UI work but no persisted Playwright screenshots → FAIL
-- You must include checker_notes explaining what files you verified, what commands you ran, and what evidence you found.
-
-## Submitting Your Check Record
-
-After completing your review, submit a check record using ONE of the following methods:
-
-### Method A — MCP tool (preferred for claude adapters with MCP access):
-Call the check_record_create MCP tool with:
-  - work_id: %s
-  - result: "pass" or "fail"
-  - build_ok: true/false
-  - tests_passed: <count>
-  - tests_failed: <count>
-  - screenshots: [<list of absolute paths to PNG/JPG files>] (REQUIRED if Playwright ran)
-  - videos: [<list of absolute video paths>] (if any)
-  - checker_notes: "<your observations, including file verification, build/test commands, whether Playwright ran, and where screenshots were persisted>"
-
-### Method B — CLI (for all adapters with bash access):
-  Pass:  fase check create %s --result pass  --build-ok --tests-passed <N> --test-output "<commands and output>" --screenshots "/abs/path/one.png,/abs/path/two.png" --videos "/abs/path/run.webm" --notes "<summary>"
-  Fail:  fase check create %s --result fail           --tests-failed <N> --test-output "<commands and output>" --notes "<what failed>"
-
-## Rules
-
-- You are read-only. Do NOT modify code.
-- Do NOT call fase work attest.
-- Do NOT create new work items.
-- Do NOT call fase work update — use check_record_create or fase check create instead.
-
-## Work Objective
-
-%s
-`, work.WorkID, work.Title, work.WorkID, uiInstructions, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.WorkID, work.Objective)
-}
-
 func (s *Service) ApproveWork(ctx context.Context, workID, createdBy, message string) (*core.WorkItemRecord, error) {
 	work, err := s.store.GetWorkItem(ctx, workID)
 	if err != nil {
@@ -3929,19 +3748,6 @@ func (s *Service) SignAttestationRecord(ctx context.Context, attestationID, sign
 	return s.store.UpdateAttestationSignature(ctx, attestationID, signature)
 }
 
-// WorkCheck is a legacy alias for CreateCheckRecord kept for backward-compatible
-// CLI/HTTP surfaces while all check submission semantics route through the
-// canonical check-record contract.
-func (s *Service) WorkCheck(ctx context.Context, req WorkCheckRequest) (core.CheckRecord, error) {
-	return s.CreateCheckRecord(ctx, CheckRecordCreateRequest{
-		WorkID:       req.WorkID,
-		Result:       req.Result,
-		CheckerModel: req.CheckerModel,
-		WorkerModel:  req.WorkerModel,
-		Report:       req.Report,
-		CreatedBy:    req.CreatedBy,
-	})
-}
 
 func (s *Service) AddWorkNote(ctx context.Context, req WorkNoteRequest) (*core.WorkNoteRecord, error) {
 	if strings.TrimSpace(req.Body) == "" {

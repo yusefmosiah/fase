@@ -2557,62 +2557,6 @@ func TestCreateCheckRecordPersistsTextArtifacts(t *testing.T) {
 	}
 }
 
-func TestWorkCheckUsesCreateCheckRecordAlias(t *testing.T) {
-	svc := newTestService(t)
-	ctx := context.Background()
-
-	work, err := svc.CreateWork(ctx, WorkCreateRequest{
-		Title:     "legacy work check alias",
-		Objective: "verify canonical alias behavior",
-	})
-	if err != nil {
-		t.Fatalf("CreateWork: %v", err)
-	}
-	work.ExecutionState = core.WorkExecutionStateChecking
-	if err := svc.store.UpdateWorkItem(ctx, *work); err != nil {
-		t.Fatalf("UpdateWorkItem: %v", err)
-	}
-
-	record, err := svc.WorkCheck(ctx, WorkCheckRequest{
-		WorkID:       work.WorkID,
-		Result:       "pass",
-		CheckerModel: "claude-sonnet-4-6",
-		WorkerModel:  "glm-5-turbo",
-		Report: core.CheckReport{
-			BuildOK:      true,
-			TestsPassed:  2,
-			TestOutput:   "go test ./internal/service\nok\tgithub.com/yusefmosiah/fase/internal/service\t0.111s",
-			CheckerNotes: "verified canonical alias behavior",
-		},
-		CreatedBy: "test",
-	})
-	if err != nil {
-		t.Fatalf("WorkCheck: %v", err)
-	}
-	if record.Result != "pass" {
-		t.Fatalf("expected pass result, got %q", record.Result)
-	}
-
-	reloaded, err := svc.store.GetWorkItem(ctx, work.WorkID)
-	if err != nil {
-		t.Fatalf("GetWorkItem: %v", err)
-	}
-	if reloaded.ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("expected work state to remain checking, got %s", reloaded.ExecutionState)
-	}
-
-	records, err := svc.ListCheckRecords(ctx, work.WorkID, 10)
-	if err != nil {
-		t.Fatalf("ListCheckRecords: %v", err)
-	}
-	if len(records) != 1 {
-		t.Fatalf("expected 1 record, got %d", len(records))
-	}
-	if records[0].CheckID != record.CheckID {
-		t.Fatalf("expected check_id %q, got %q", record.CheckID, records[0].CheckID)
-	}
-}
-
 func TestWorkShowIncludesCanonicalReviewBundle(t *testing.T) {
 	svc := newTestService(t)
 	ctx := context.Background()
@@ -2750,54 +2694,6 @@ func TestSupervisorReviewGuidanceKeepsChecksEvidenceOnly(t *testing.T) {
 	} {
 		if strings.Contains(joined, old) {
 			t.Fatalf("check flow still contains legacy completion guidance %q:\n%s", old, joined)
-		}
-	}
-}
-
-func TestBuildCheckerBriefingIncludesEvidenceRequirements(t *testing.T) {
-	svc := newTestService(t)
-
-	briefing := svc.buildCheckerBriefing(core.WorkItemRecord{
-		WorkID:    "work_123",
-		Title:     "checker evidence update",
-		Objective: "verify mind-graph/index.html and docs/spec-check-flow.md",
-	})
-
-	for _, want := range []string{
-		"Verify deliverables exist.",
-		"go build ./...",
-		"Run targeted tests for the files or behavior touched by the diff.",
-		".fase/artifacts/work_123/screenshots",
-		"--screenshots",
-	} {
-		if !strings.Contains(briefing, want) {
-			t.Fatalf("expected briefing to contain %q", want)
-		}
-	}
-}
-
-func TestBuildCheckerBriefingIncludesUIPlaywrightRequirements(t *testing.T) {
-	svc := newTestService(t)
-
-	briefing := svc.buildCheckerBriefing(core.WorkItemRecord{
-		WorkID:    "work_ui_123",
-		Title:     "UI attestation",
-		Objective: "review mind-graph/index.html, filters, and screenshots",
-		Metadata: map[string]any{
-			"tags": []string{"ui"},
-		},
-	})
-
-	for _, want := range []string{
-		"UI-tagged",
-		"strong multimodal model",
-		"broken filters",
-		"duplicate sections",
-		"fallback/placeholder data",
-		".fase/artifacts/work_ui_123/screenshots",
-	} {
-		if !strings.Contains(briefing, want) {
-			t.Fatalf("expected UI briefing to contain %q", want)
 		}
 	}
 }
@@ -3851,63 +3747,6 @@ func TestGitMainRepoRoot(t *testing.T) {
 	}
 }
 
-func TestCheckerDispatchCWDUsesMainRepoRootForWorktreeJobs(t *testing.T) {
-	mainRepo := t.TempDir()
-	workID := "work_testcheckercwd"
-
-	for _, args := range [][]string{
-		{"init", mainRepo},
-		{"-C", mainRepo, "config", "user.email", "test@test.com"},
-		{"-C", mainRepo, "config", "user.name", "Test"},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-	if err := os.WriteFile(filepath.Join(mainRepo, "sentinel.txt"), []byte("hi"), 0o644); err != nil {
-		t.Fatalf("write sentinel: %v", err)
-	}
-	for _, args := range [][]string{
-		{"-C", mainRepo, "add", "sentinel.txt"},
-		{"-C", mainRepo, "commit", "-m", "init"},
-		{"-C", mainRepo, "branch", "-M", "main"},
-	} {
-		if out, err := exec.Command("git", args...).CombinedOutput(); err != nil {
-			t.Fatalf("git %v: %v\n%s", args, err, out)
-		}
-	}
-
-	worktreeDir := filepath.Join(mainRepo, ".fase", "worktrees", workID)
-	branch := "fase/work/" + workID
-	if err := os.MkdirAll(filepath.Dir(worktreeDir), 0o755); err != nil {
-		t.Fatalf("mkdir worktrees dir: %v", err)
-	}
-	if out, err := exec.Command("git", "-C", mainRepo, "worktree", "add", "-b", branch, worktreeDir).CombinedOutput(); err != nil {
-		t.Fatalf("git worktree add: %v\n%s", err, out)
-	}
-	t.Cleanup(func() {
-		_ = exec.Command("git", "-C", mainRepo, "worktree", "remove", "--force", worktreeDir).Run()
-	})
-
-	svc := &Service{
-		Paths: core.Paths{StateDir: filepath.Join(mainRepo, ".fase")},
-	}
-	got := svc.checkerDispatchCWD(context.Background(), []core.JobRecord{{CWD: worktreeDir}})
-
-	realCheckerCWD, _ := filepath.EvalSymlinks(got)
-	realMainRepo, _ := filepath.EvalSymlinks(mainRepo)
-	if realCheckerCWD != realMainRepo {
-		t.Fatalf("checker cwd = %q, want main repo root %q", got, mainRepo)
-	}
-	if strings.Contains(got, filepath.Join(".fase", "worktrees")) {
-		t.Fatalf("checker cwd should not point at a worktree path: %q", got)
-	}
-}
-
-// TestIsStricterContract tests the isStricterContract function which validates
-// that proposed attestation changes are stricter than existing ones.
-// Per ADR-0036: a stricter contract adds more required attestations or makes
-// non-blocking ones blocking.
 func TestIsStricterContract(t *testing.T) {
 	existing := []core.RequiredAttestation{
 		{VerifierKind: "attestation", Method: "automated_review", Blocking: true},

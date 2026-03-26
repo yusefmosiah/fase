@@ -1323,7 +1323,14 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 				return
 			}
 			req.WorkID = workID
-			record, err := svc.WorkCheck(r.Context(), req)
+			record, err := svc.CreateCheckRecord(r.Context(), service.CheckRecordCreateRequest{
+				WorkID:       req.WorkID,
+				Result:       req.Result,
+				CheckerModel: req.CheckerModel,
+				WorkerModel:  req.WorkerModel,
+				Report:       req.Report,
+				CreatedBy:    req.CreatedBy,
+			})
 			if err != nil {
 				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
 				return
