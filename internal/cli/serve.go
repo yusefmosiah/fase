@@ -534,14 +534,28 @@ func cleanupWorktree(repoRoot, workID string) {
 	_ = delCmd.Run()
 }
 
+func digestInterval() time.Duration {
+	if v := os.Getenv("DIGEST_INTERVAL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return time.Hour
+}
+
 func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub *wsHub, sup *agenticSupervisor, sm *mcpserver.SessionManager) {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+
+	digestTicker := time.NewTicker(digestInterval())
+	defer digestTicker.Stop()
 
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case <-digestTicker.C:
+			svc.FlushDigest(ctx)
 		case <-ticker.C:
 			// Periodic WAL checkpoint to prevent unbounded WAL growth
 			// and ensure durability even if the process crashes.

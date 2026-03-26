@@ -114,12 +114,13 @@ func metadataStringSlice(value any) []string {
 }
 
 type Service struct {
-	Paths         core.Paths
-	Config        core.Config
-	ConfigPath    string
-	ConfigPresent bool
-	store         *store.Store
-	Events        EventBus
+	Paths           core.Paths
+	Config          core.Config
+	ConfigPath      string
+	ConfigPresent   bool
+	store           *store.Store
+	Events          EventBus
+	DigestCollector *notify.DigestCollector
 }
 
 type RunRequest struct {
@@ -563,52 +564,24 @@ func openWithStateDirOverride(ctx context.Context, configPath, stateDirOverride 
 	}
 
 	return &Service{
-		Paths:         paths,
-		Config:        cfg,
-		ConfigPath:    resolvedConfigPath,
-		ConfigPresent: configPresent,
-		store:         db,
+		Paths:           paths,
+		Config:          cfg,
+		ConfigPath:      resolvedConfigPath,
+		ConfigPresent:   configPresent,
+		store:           db,
+		DigestCollector: notify.NewDigestCollector(os.Getenv("RESEND_API_KEY"), os.Getenv("EMAIL_TO")),
 	}, nil
 }
 
-// sendWorkNotification sends an email when work items transition to done.
-// It renders the checker's CheckReport as HTML with inline screenshots.
-func (s *Service) sendWorkNotification(ctx context.Context, work core.WorkItemRecord, message string) {
-	apiKey := os.Getenv("RESEND_API_KEY")
-	to := os.Getenv("EMAIL_TO")
-	if apiKey == "" || to == "" {
-		return
-	}
-
-	subject := fmt.Sprintf("[FASE] done: %s", work.Title)
-	bundle := s.notificationProofBundle(ctx, work)
-
-	// Try to find the latest passing check record to render as proof.
-	checkRecords := bundle.CheckRecords
-	var html string
-	var attachments []notify.ResendEmailAttachment
-
-	if len(checkRecords) > 0 {
-		// Find the most recent passing check record.
-		for _, cr := range checkRecords {
-			if cr.Result == "pass" {
-				// Ensure all screenshot paths (including fallback) are in the report for inlining.
-				// This handles cases where cr.Report.Screenshots might not have been populated fully.
-				cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, cr)
-				html = notify.BuildCheckReportEmail(bundle, cr)
-				attachments = s.collectCheckArtifacts(ctx, work.WorkID, cr)
-				break
-			}
-		}
-	}
-
-	if html == "" {
-		// Fallback: basic completion email without check report.
-		html = notify.BuildWorkCompletionEmail(bundle, message, true)
-		attachments = s.collectPlaywrightAttachments(ctx, work.WorkID)
-	}
-
-	notify.SendEmail(ctx, apiKey, to, subject, html, attachments)
+// sendWorkNotification collects a "done" event into the digest.
+func (s *Service) sendWorkNotification(_ context.Context, work core.WorkItemRecord, message string) {
+	s.DigestCollector.Collect(notify.DigestItem{
+		Time:    time.Now(),
+		WorkID:  work.WorkID,
+		Title:   work.Title,
+		Event:   "done",
+		Summary: message,
+	})
 }
 
 // collectCheckArtifacts collects screenshots from the check report's artifact paths
@@ -1077,69 +1050,34 @@ func (s *Service) CreateCheckRecordDirect(ctx context.Context, workID, result, c
 	})
 }
 
-// sendAttestationNotification sends an email when a work item is attested (passed or failed).
-// It includes the attestation result, verifier details, check record summary, and Playwright artifacts.
-func (s *Service) sendAttestationNotification(ctx context.Context, work core.WorkItemRecord, attestation core.AttestationRecord) {
-	apiKey := os.Getenv("RESEND_API_KEY")
-	to := os.Getenv("EMAIL_TO")
-	if apiKey == "" || to == "" {
-		return
-	}
-
-	// Skip emails for internal work items (attest children, cleanup tasks).
+// sendAttestationNotification collects an attestation event into the digest.
+func (s *Service) sendAttestationNotification(_ context.Context, work core.WorkItemRecord, attestation core.AttestationRecord) {
+	// Skip internal work items (attest children, cleanup tasks).
 	if strings.EqualFold(work.Kind, "attest") || strings.EqualFold(work.Kind, "task") {
 		return
 	}
-
-	resultLabel := "failed"
+	event := "check_fail"
 	if attestation.Result == "passed" {
-		resultLabel = "passed"
+		event = "check_pass"
 	}
-	subject := fmt.Sprintf("[FASE] attestation %s: %s", resultLabel, work.Title)
-
-	// Find the most recent check record to include test results and diff stat.
-	var checkRecord *core.CheckRecord
-	checkRecords, err := s.store.ListCheckRecords(ctx, work.WorkID, 10)
-	if err == nil && len(checkRecords) > 0 {
-		// Prefer passing check record when attestation passed; otherwise use the most recent.
-		for i := range checkRecords {
-			cr := &checkRecords[i]
-			if attestation.Result == "passed" && cr.Result == "pass" {
-				cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, *cr)
-				checkRecord = cr
-				break
-			}
-		}
-		if checkRecord == nil {
-			cr := &checkRecords[0]
-			cr.Report.Screenshots = s.collectScreenshotPaths(ctx, work.WorkID, *cr)
-			checkRecord = cr
-		}
-	}
-
-	html := notify.BuildAttestationEmail(&work, attestation, checkRecord)
-
-	var attachments []notify.ResendEmailAttachment
-	if checkRecord != nil {
-		attachments = s.collectCheckArtifacts(ctx, work.WorkID, *checkRecord)
-	}
-	if len(attachments) == 0 {
-		attachments = s.collectPlaywrightAttachments(ctx, work.WorkID)
-	}
-
-	notify.SendEmail(ctx, apiKey, to, subject, html, attachments)
+	s.DigestCollector.Collect(notify.DigestItem{
+		Time:    time.Now(),
+		WorkID:  work.WorkID,
+		Title:   work.Title,
+		Event:   event,
+		Summary: attestation.Summary,
+	})
 }
 
-// sendWorkFailureNotification sends an email when a work item transitions to failed.
-func (s *Service) sendWorkFailureNotification(ctx context.Context, work core.WorkItemRecord, message string) {
-	apiKey := os.Getenv("RESEND_API_KEY")
-	to := os.Getenv("EMAIL_TO")
-	if apiKey == "" || to == "" {
-		return
-	}
-	subject := fmt.Sprintf("[FASE] failed: %s", work.Title)
-	html := notify.BuildWorkCompletionEmail(s.notificationProofBundle(ctx, work), message, false)
-	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
+// sendWorkFailureNotification collects a "failed" event into the digest.
+func (s *Service) sendWorkFailureNotification(_ context.Context, work core.WorkItemRecord, message string) {
+	s.DigestCollector.Collect(notify.DigestItem{
+		Time:    time.Now(),
+		WorkID:  work.WorkID,
+		Title:   work.Title,
+		Event:   "failed",
+		Summary: message,
+	})
 }
 
 // SendSpecEscalationEmail emails the human when a work item has failed checks 3+ times.
@@ -1156,6 +1094,12 @@ func (s *Service) SendSpecEscalationEmail(ctx context.Context, workID, summary, 
 	subject := fmt.Sprintf("[FASE] spec question: %s", work.Title)
 	html := notify.BuildSpecEscalationEmail(s.notificationProofBundle(ctx, work), summary, recommendation)
 	notify.SendEmail(ctx, apiKey, to, subject, html, nil)
+}
+
+// FlushDigest sends the accumulated digest email if there are any collected events.
+// Called periodically by the housekeeping timer.
+func (s *Service) FlushDigest(ctx context.Context) {
+	s.DigestCollector.Flush(ctx)
 }
 
 // Edge operations — direct, no proposal ceremony.
