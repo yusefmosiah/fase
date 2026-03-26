@@ -309,7 +309,7 @@ const (
 	WorkExecutionStateClaimed             WorkExecutionState = "claimed"
 	WorkExecutionStateInProgress          WorkExecutionState = "in_progress"
 	WorkExecutionStateChecking            WorkExecutionState = "checking"
-	WorkExecutionStateAwaitingAttestation WorkExecutionState = "awaiting_attestation" // deprecated alias for checking
+	WorkExecutionStateAwaitingAttestation WorkExecutionState = "awaiting_attestation" // deprecated alias for legacy checking; both normalize to in_progress
 	WorkExecutionStateBlocked             WorkExecutionState = "blocked"
 	WorkExecutionStateDone                WorkExecutionState = "done"
 	WorkExecutionStateFailed              WorkExecutionState = "failed"
@@ -317,9 +317,11 @@ const (
 	WorkExecutionStateArchived            WorkExecutionState = "archived"
 )
 
-// Valid returns true for canonical states that should be used for new writes.
-// Deprecated aliases (e.g., awaiting_attestation) return false to prevent new writes
-// with legacy state names while still allowing backward-compatible reads.
+// Valid returns true for execution state values the system still accepts on
+// write. Deprecated aliases (e.g., awaiting_attestation) return false to
+// prevent new writes with legacy state names while still allowing
+// backward-compatible reads. Legacy "checking" remains accepted for backward
+// compatibility but canonicalizes to in_progress.
 func (s WorkExecutionState) Valid() bool {
 	switch s {
 	case WorkExecutionStateReady, WorkExecutionStateClaimed, WorkExecutionStateInProgress,
@@ -328,9 +330,9 @@ func (s WorkExecutionState) Valid() bool {
 		WorkExecutionStateArchived:
 		return true
 	case WorkExecutionStateAwaitingAttestation:
-		// Deprecated: awaiting_attestation is a deprecated alias for checking.
-		// New writes should use checking. This is still accepted for backward
-		// compatibility but will be normalized.
+		// Deprecated: awaiting_attestation is a deprecated alias for the old
+		// checking state. New writes should use in_progress or done depending on
+		// whether completion gates are resolved.
 		return false
 	default:
 		return false
@@ -349,11 +351,12 @@ func (s WorkExecutionState) IsDeprecatedState() bool {
 }
 
 // Canonical returns the canonical state for this value.
-// Deprecated aliases are normalized to their canonical equivalents.
+// Deprecated aliases and legacy checking states are normalized to their
+// canonical equivalents.
 func (s WorkExecutionState) Canonical() WorkExecutionState {
 	switch s {
-	case WorkExecutionStateAwaitingAttestation:
-		return WorkExecutionStateChecking
+	case WorkExecutionStateChecking, WorkExecutionStateAwaitingAttestation:
+		return WorkExecutionStateInProgress
 	default:
 		return s
 	}

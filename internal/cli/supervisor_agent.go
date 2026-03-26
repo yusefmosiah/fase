@@ -433,7 +433,8 @@ func parseSupervisorBrief(stateDir string) (adapter, model string) {
 	return adapter, model
 }
 
-// hasActionableWork checks if there are ready, in_progress, or checking work items.
+// hasActionableWork checks if there are ready or in-progress work items, plus
+// legacy pre-simplification state aliases that should still keep the supervisor active.
 // Used to suppress idle churn: if the queue is empty, don't fire a turn just
 // because side-effect events were collected during the last turn.
 func (s *agenticSupervisor) hasActionableWork(ctx context.Context) bool {

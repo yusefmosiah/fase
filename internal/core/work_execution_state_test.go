@@ -85,7 +85,7 @@ func TestWorkExecutionStateCanonical(t *testing.T) {
 		{"ready stays ready", WorkExecutionStateReady, WorkExecutionStateReady},
 		{"claimed stays claimed", WorkExecutionStateClaimed, WorkExecutionStateClaimed},
 		{"in_progress stays in_progress", WorkExecutionStateInProgress, WorkExecutionStateInProgress},
-		{"checking stays checking", WorkExecutionStateChecking, WorkExecutionStateChecking},
+		{"checking normalizes to in_progress", WorkExecutionStateChecking, WorkExecutionStateInProgress},
 		{"blocked stays blocked", WorkExecutionStateBlocked, WorkExecutionStateBlocked},
 		{"done stays done", WorkExecutionStateDone, WorkExecutionStateDone},
 		{"failed stays failed", WorkExecutionStateFailed, WorkExecutionStateFailed},
@@ -93,7 +93,7 @@ func TestWorkExecutionStateCanonical(t *testing.T) {
 		{"archived stays archived", WorkExecutionStateArchived, WorkExecutionStateArchived},
 
 		// Deprecated states - normalized to canonical equivalents
-		{"awaiting_attestation normalizes to checking", WorkExecutionStateAwaitingAttestation, WorkExecutionStateChecking},
+		{"awaiting_attestation normalizes to in_progress", WorkExecutionStateAwaitingAttestation, WorkExecutionStateInProgress},
 
 		// Invalid/unknown states - unchanged (they don't have canonical forms)
 		{"unknown state stays unknown", WorkExecutionState("unknown"), WorkExecutionState("unknown")},
@@ -146,8 +146,8 @@ func TestWorkExecutionStateMarshalJSONCanonicalizesDeprecatedState(t *testing.T)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if string(payload) != `"checking"` {
-		t.Fatalf("Marshal = %s, want %q", payload, `"checking"`)
+	if string(payload) != `"in_progress"` {
+		t.Fatalf("Marshal = %s, want %q", payload, `"in_progress"`)
 	}
 }
 
@@ -156,7 +156,7 @@ func TestWorkExecutionStateMarshalTextCanonicalizesDeprecatedState(t *testing.T)
 	if err != nil {
 		t.Fatalf("MarshalText: %v", err)
 	}
-	if string(payload) != "checking" {
-		t.Fatalf("MarshalText = %q, want %q", payload, "checking")
+	if string(payload) != "in_progress" {
+		t.Fatalf("MarshalText = %q, want %q", payload, "in_progress")
 	}
 }

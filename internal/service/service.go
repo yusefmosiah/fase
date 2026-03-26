@@ -2103,7 +2103,7 @@ func (s *Service) CompileWorkerBriefing(ctx context.Context, workID, mode string
 		"cogent work update <work-id>",
 		"cogent work note-add <work-id>",
 	}
-	updateDoneCmd := fmt.Sprintf("cogent work update %s --execution-state checking --message \"<summary of what you did>\"", workID)
+	updateDoneCmd := fmt.Sprintf("cogent work update %s --execution-state done --message \"<summary of what you did>\"", workID)
 	gitCommitCmd := fmt.Sprintf("git add -A && git commit -m \"cogent(%s): <summary>\"", workID)
 	updateFailCmd := fmt.Sprintf("cogent work update %s --execution-state failed --message \"<what went wrong>\"", workID)
 	contractRules := []string{
@@ -2320,7 +2320,7 @@ func (s *Service) ProjectHydrate(ctx context.Context, req ProjectHydrateRequest)
 	// Pending attestations — work awaiting review.
 	var pendingAttestations []map[string]any
 	for _, w := range allWork {
-		if w.ExecutionState.Canonical() == core.WorkExecutionStateChecking {
+		if w.ExecutionState.Canonical() == core.WorkExecutionStateInProgress && len(w.RequiredAttestations) > 0 {
 			pendingAttestations = append(pendingAttestations, map[string]any{
 				"work_id":               w.WorkID,
 				"title":                 w.Title,
@@ -2626,7 +2626,7 @@ func supervisorRolePrompt() string {
 	return `You are the Cogent supervisor. Your job is to manage the work queue using SEQUENTIAL dispatch:
 1. NEVER dispatch multiple features in parallel. Complete one feature at a time.
 2. Dispatch a single ready work item to a worker agent (choosing the right adapter and model).
-3. Monitor worker progress. When a worker signals "checking", a checker is auto-dispatched.
+3. Monitor worker progress. Work stays in_progress until completion gates are resolved and the worker can signal done.
 4. When [check:pass] or [check:fail] events arrive, use work_show to review the canonical evidence bundle (work state, checks, attestations, artifacts, docs, approvals, promotions).
 5. A passing check is evidence only. NEVER call work update <id> --execution-state done just because a check passed.
 6. If check result is FAIL: count failures with check_record_list. If < 3: use session_send to send feedback to original worker; do NOT mark done. If >= 3: use send_escalation_email to notify human; mark work failed.
@@ -2640,13 +2640,13 @@ func supervisorDispatchProtocol() map[string]any {
 	return map[string]any{
 		"dispatch_flow": []string{
 			"SEQUENTIAL DISPATCH (not parallel): One feature at a time.",
-			"1. Check active_work — if any item is in_progress or checking, wait for it to complete.",
+			"1. Check active_work — if any item is in_progress, wait for it to complete.",
 			"2. Only when no active work: select the next highest-priority ready item.",
 			"3. For the selected item, choose adapter+model based on preferred_adapters/preferred_models, or round-robin.",
 			"4. Claim the work item (cogent work claim <work-id>).",
 			"5. Hydrate the worker briefing (cogent work hydrate <work-id>).",
 			"6. Dispatch: spawn a worker session on the chosen adapter with the briefing as prompt.",
-			"7. Monitor the worker. When they signal 'checking', a checker is auto-dispatched.",
+			"7. Monitor the worker until they resolve completion gates and signal 'done' or 'failed'.",
 			"8. Wait for [check:pass] or [check:fail] events.",
 			"CRITICAL: Do not dispatch the next feature until the current feature passes a check.",
 		},
@@ -2670,9 +2670,9 @@ func supervisorDispatchProtocol() map[string]any {
 		"model_preferences": []string{
 			"Workers: prefer zai/glm-5-turbo (fast, unlimited, excellent at implementation including UI). claude/claude-haiku-4-5 as secondary. claude/claude-sonnet-4-6 for complex work.",
 			"GLM-5-turbo is preferred over haiku for both cost and quality.",
-			"Attestation/checking: use multimodal models — claude-opus-4-6, claude-sonnet-4-6, or chatgpt/gpt-5.4-mini. These can verify screenshots.",
-			"GLM is text-only: great for writing code but CANNOT verify visual output. Never use GLM for Playwright-based checking.",
-			"DIVERSITY: always use a different model for checking than was used for implementation. Avoid mode collapse — one model verifying another catches more bugs.",
+			"Verification/review: use multimodal models — claude-opus-4-6, claude-sonnet-4-6, or chatgpt/gpt-5.4-mini. These can verify screenshots.",
+			"GLM is text-only: great for writing code but CANNOT verify visual output. Never use GLM for Playwright-based review.",
+			"DIVERSITY: always use a different model for review than was used for implementation. Avoid mode collapse — one model verifying another catches more bugs.",
 			"AVOID bedrock adapter unless explicitly requested — use claude adapter for Claude models instead.",
 			"AVOID codex/chatgpt for workers unless other adapters are unavailable.",
 		},
@@ -3091,9 +3091,10 @@ func (s *Service) UpdateWork(ctx context.Context, req WorkUpdateRequest) (*core.
 		if !req.ExecutionState.Valid() {
 			return nil, fmt.Errorf("%w: invalid execution state %q", ErrInvalidInput, req.ExecutionState)
 		}
+		req.ExecutionState = req.ExecutionState.Canonical()
 		// Guard: cannot transition to done or archived via UpdateWork if
-		// attestation is unresolved. Terminal-success transitions require
-		// satisfied attestations; failed/cancelled are exempt.
+		// completion gates are unresolved. Terminal-success transitions require
+		// canonical completion checks to pass; failed/cancelled are exempt.
 		if req.ExecutionState == core.WorkExecutionStateDone || req.ExecutionState == core.WorkExecutionStateArchived {
 			if req.ForceDone {
 				emitForceDoneWarning(req.WorkID, req.CreatedBy)
@@ -8058,7 +8059,7 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 		if issues, err := s.completionGateIssues(ctx, work); err != nil {
 			return err
 		} else if len(issues) > 0 {
-			workState = core.WorkExecutionStateChecking
+			workState = core.WorkExecutionStateInProgress
 		} else {
 			workState = core.WorkExecutionStateDone
 			if shouldSetPendingApproval(work) {
@@ -8084,12 +8085,6 @@ func (s *Service) syncWorkStateFromJob(ctx context.Context, job core.JobRecord, 
 	}
 	workState = workState.Canonical()
 	work.ExecutionState = workState
-	if workState == core.WorkExecutionStateChecking {
-		if work.AttestationFrozenAt == nil {
-			frozenAt := now
-			work.AttestationFrozenAt = &frozenAt
-		}
-	}
 	if payload != nil {
 		message = summaryString(payload, "message")
 	}

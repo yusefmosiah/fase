@@ -166,8 +166,8 @@ func TestGetWorkItemCanonicalizesDeprecatedExecutionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetWorkItem: %v", err)
 	}
-	if got.ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("ExecutionState = %q, want %q", got.ExecutionState, core.WorkExecutionStateChecking)
+	if got.ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("ExecutionState = %q, want %q", got.ExecutionState, core.WorkExecutionStateInProgress)
 	}
 }
 
@@ -265,8 +265,8 @@ func TestListWorkItemsCanonicalizesDeprecatedExecutionState(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateChecking)
+	if items[0].ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateInProgress)
 	}
 }
 
@@ -297,8 +297,8 @@ func TestListWorkUpdatesCanonicalizesDeprecatedExecutionState(t *testing.T) {
 	if len(updates) != 1 {
 		t.Fatalf("len(updates) = %d, want 1", len(updates))
 	}
-	if updates[0].ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("ExecutionState = %q, want %q", updates[0].ExecutionState, core.WorkExecutionStateChecking)
+	if updates[0].ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("ExecutionState = %q, want %q", updates[0].ExecutionState, core.WorkExecutionStateInProgress)
 	}
 }
 

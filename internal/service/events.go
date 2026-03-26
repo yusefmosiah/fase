@@ -80,7 +80,7 @@ func (ev WorkEvent) RequiresSupervisorAttention() bool {
 		return false
 	}
 	// Worker progress without a state change is noise — supervisor only cares
-	// about terminal transitions (done, failed, checking), not mid-run updates.
+	// about meaningful transitions (done, failed), not mid-run updates.
 	if ev.Cause == CauseWorkerProgress && ev.State == ev.PrevState {
 		return false
 	}

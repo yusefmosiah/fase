@@ -123,8 +123,8 @@ func TestFilterNovelEvents(t *testing.T) {
 	seen["work-1"] = "done"
 
 	events := []service.WorkEvent{
-		{WorkID: "work-1", State: "done"},  // echo - should be filtered
-		{WorkID: "work-2", State: "done"},  // novel - should be kept
+		{WorkID: "work-1", State: "done"},   // echo - should be filtered
+		{WorkID: "work-2", State: "done"},   // novel - should be kept
 		{WorkID: "work-1", State: "failed"}, // different state - should be kept
 	}
 
@@ -206,9 +206,9 @@ func TestIdleBackoff(t *testing.T) {
 	//     }
 	// }
 
-	// Verify hasActionableWork checks the correct states
-	// The function checks for: ready, in_progress, checking, awaiting_attestation
-	// These are the states that represent actionable work items
+	// Verify hasActionableWork checks the correct states.
+	// The function treats ready and in_progress as actionable and also includes
+	// legacy checking aliases so older persisted work still keeps the supervisor active.
 
 	// Test that the function signature exists and has correct behavior
 	// We can't directly test hasActionableWork without a service mock,

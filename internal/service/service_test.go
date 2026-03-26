@@ -2977,13 +2977,13 @@ func TestRequiredDocsGateBlocksDoneUntilRepoDocAligned(t *testing.T) {
 	}
 }
 
-func TestSyncWorkStateFromJobLeavesDocsRequiredWorkCheckingUntilDocsAlign(t *testing.T) {
+func TestSyncWorkStateFromJobLeavesDocsRequiredWorkInProgressUntilDocsAlign(t *testing.T) {
 	svc, repoRoot := newRepoBackedTestService(t)
 	ctx := context.Background()
 
 	work, err := svc.CreateWork(ctx, WorkCreateRequest{
 		Title:        "sync docs gate",
-		Objective:    "completed jobs stay checking until required docs align",
+		Objective:    "completed jobs stay in_progress until required docs align",
 		Kind:         "attest",
 		RequiredDocs: []string{"docs/runtime.md"},
 	})
@@ -3007,8 +3007,8 @@ func TestSyncWorkStateFromJobLeavesDocsRequiredWorkCheckingUntilDocsAlign(t *tes
 	if err != nil {
 		t.Fatalf("GetWorkItem: %v", err)
 	}
-	if current.ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("expected checking with unresolved required docs, got %s", current.ExecutionState)
+	if current.ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("expected in_progress with unresolved required docs, got %s", current.ExecutionState)
 	}
 
 	repoFile := filepath.Join(repoRoot, "docs", "runtime.md")
@@ -3078,8 +3078,8 @@ func TestAttestAndApproveWorkRespectRequiredDocsGate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AttestWork: %v", err)
 	}
-	if updated.ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("expected checking while required docs drift, got %s", updated.ExecutionState)
+	if updated.ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("expected in_progress while required docs drift, got %s", updated.ExecutionState)
 	}
 
 	if _, err := svc.ApproveWork(ctx, work.WorkID, "approver", "attempt approval with drifted docs"); !errors.Is(err, ErrInvalidInput) || !strings.Contains(err.Error(), "docs/review.md") {
@@ -3144,14 +3144,14 @@ func TestWorkJSONNormalizesDeprecatedExecutionState(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Work: %v", err)
 	}
-	if show.Work.ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("Work.ExecutionState = %q, want %q", show.Work.ExecutionState, core.WorkExecutionStateChecking)
+	if show.Work.ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("Work.ExecutionState = %q, want %q", show.Work.ExecutionState, core.WorkExecutionStateInProgress)
 	}
 	if len(show.Updates) != 1 {
 		t.Fatalf("len(Updates) = %d, want 1", len(show.Updates))
 	}
-	if show.Updates[0].ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("Updates[0].ExecutionState = %q, want %q", show.Updates[0].ExecutionState, core.WorkExecutionStateChecking)
+	if show.Updates[0].ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("Updates[0].ExecutionState = %q, want %q", show.Updates[0].ExecutionState, core.WorkExecutionStateInProgress)
 	}
 
 	showJSON, err := json.Marshal(show)
@@ -3169,8 +3169,8 @@ func TestWorkJSONNormalizesDeprecatedExecutionState(t *testing.T) {
 	if len(items) != 1 {
 		t.Fatalf("len(items) = %d, want 1", len(items))
 	}
-	if items[0].ExecutionState != core.WorkExecutionStateChecking {
-		t.Fatalf("items[0].ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateChecking)
+	if items[0].ExecutionState != core.WorkExecutionStateInProgress {
+		t.Fatalf("items[0].ExecutionState = %q, want %q", items[0].ExecutionState, core.WorkExecutionStateInProgress)
 	}
 
 	listJSON, err := json.Marshal(items)
@@ -4262,7 +4262,7 @@ func TestSyncWorkStateFromJobMapping(t *testing.T) {
 		{"starting maps to in_progress", "", nil, core.JobStateStarting, core.WorkExecutionStateInProgress},
 		{"running maps to in_progress", "", nil, core.JobStateRunning, core.WorkExecutionStateInProgress},
 		{"waiting_input maps to in_progress", "", nil, core.JobStateWaitingInput, core.WorkExecutionStateInProgress},
-		{"completed task maps to checking", "", nil, core.JobStateCompleted, core.WorkExecutionStateChecking},
+		{"completed task maps to in_progress until completion gates clear", "", nil, core.JobStateCompleted, core.WorkExecutionStateInProgress},
 		{"failed maps to failed", "", nil, core.JobStateFailed, core.WorkExecutionStateFailed},
 		{"cancelled maps to cancelled", "", nil, core.JobStateCancelled, core.WorkExecutionStateCancelled},
 		{"blocked maps to blocked", "", nil, core.JobStateBlocked, core.WorkExecutionStateBlocked},

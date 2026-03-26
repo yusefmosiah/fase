@@ -1250,14 +1250,14 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	updateCmd := &cobra.Command{
 		Use:   "update <work-id>",
 		Short: "Append a structured work update and mutate current work state",
-		Example: `  # Transition work to checking (worker finished implementation)
-  cogent work update work_123 --execution-state checking --message "Implementation complete"
+		Example: `  # Keep work in progress while implementation or verification is still ongoing
+  cogent work update work_123 --execution-state in_progress --message "Implementation complete; waiting on review"
 
-  # Mark work as done (requires all attestations resolved)
+  # Mark work as done (requires a passing check and any required docs to align)
   cogent work update work_123 --execution-state done --message "All checks passed"
 
-  # Valid execution states: ready, claimed, in_progress, checking, blocked, done, failed, cancelled, archived
-  # Note: awaiting_attestation is deprecated; use checking instead`,
+  # Valid execution states: ready, claimed, in_progress, blocked, done, failed, cancelled, archived
+  # Legacy aliases accepted for backward compatibility and normalized to in_progress: checking, awaiting_attestation`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := checkCapability(core.CapWorkUpdate); err != nil {
@@ -2548,7 +2548,7 @@ func newDashboardCommand(root *rootOptions) *cobra.Command {
 				fmt.Fprintln(cmd.OutOrStdout(), "SUPERVISOR: not running")
 			}
 			fmt.Fprintf(cmd.OutOrStdout(), "WORK: %d total", result.TotalItems)
-			for _, s := range []string{"ready", "claimed", "in_progress", "checking", "awaiting_attestation", "blocked", "done", "failed", "cancelled", "archived"} {
+			for _, s := range []string{"ready", "claimed", "in_progress", "blocked", "done", "failed", "cancelled", "archived"} {
 				if n, ok := result.WorkStates[s]; ok && n > 0 {
 					fmt.Fprintf(cmd.OutOrStdout(), ", %d %s", n, s)
 				}
