@@ -2080,7 +2080,14 @@ The repo file at that path remains authoritative; doc-set is an import/bootstrap
 		Short: "Submit a check record (legacy alias of `fase check create`)",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			req := service.WorkCheckRequest{
+			req := struct {
+				WorkID       string           `json:"work_id,omitempty"`
+				Result       string           `json:"result"`
+				CheckerModel string           `json:"checker_model,omitempty"`
+				WorkerModel  string           `json:"worker_model,omitempty"`
+				Report       core.CheckReport `json:"report"`
+				CreatedBy    string           `json:"created_by,omitempty"`
+			}{
 				WorkID:       args[0],
 				Result:       checkOpts.result,
 				CheckerModel: checkOpts.checkerModel,

@@ -1317,14 +1317,20 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
 				return
 			}
-			var req service.WorkCheckRequest
+			var req struct {
+				WorkID       string           `json:"work_id,omitempty"`
+				Result       string           `json:"result"`
+				CheckerModel string           `json:"checker_model,omitempty"`
+				WorkerModel  string           `json:"worker_model,omitempty"`
+				Report       core.CheckReport `json:"report"`
+				CreatedBy    string           `json:"created_by,omitempty"`
+			}
 			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
 				return
 			}
-			req.WorkID = workID
 			record, err := svc.CreateCheckRecord(r.Context(), service.CheckRecordCreateRequest{
-				WorkID:       req.WorkID,
+				WorkID:       workID,
 				Result:       req.Result,
 				CheckerModel: req.CheckerModel,
 				WorkerModel:  req.WorkerModel,
