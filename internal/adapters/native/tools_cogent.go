@@ -109,7 +109,7 @@ func newCheckRecordCreateTool(svc cogentBridge) Tool {
 			}
 			// Determine provenance: check if this is a supervisor session via profile flag in context
 			createdBy := "worker"
-			if isSupervisor, ok := ctx.Value("supervisor_session").(bool); ok && isSupervisor {
+			if isSupervisor, ok := ctx.Value(ctxKeySupervisorSession).(bool); ok && isSupervisor {
 				createdBy = "supervisor"
 			}
 			rec, err := svc.CreateCheckRecordDirect(ctx, in.WorkID, in.Result, in.CheckerModel, in.WorkerModel, report, createdBy)

@@ -616,7 +616,7 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 						Actor:   service.ActorHousekeeping,
 						Cause:   service.CauseHousekeepingStall,
 						Metadata: map[string]string{
-							"reason": fmt.Sprintf("no output for 30 minutes and worker process is dead"),
+							"reason": "no output for 30 minutes and worker process is dead",
 						},
 					})
 					hub.broadcast("work_updated", map[string]string{"work_id": workID})

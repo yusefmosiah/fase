@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 )
 
 // historyCompressor manages proactive history compression to prevent
@@ -24,16 +23,7 @@ import (
 //  4. Keep the summary + recent turns within budget.
 //  5. Persist a supervisor context file (.cogent/supervisor-context.md)
 //     that survives session restarts.
-type historyCompressor struct {
-	client      LLMClient
-	modelID     string
-	apiFormat   string
-	mu          sync.Mutex
-	compressed  bool   // whether compression has been applied this session
-	lastSummary string // last generated summary (for reuse)
-	cwd         string // working directory for supervisor context file
-}
-
+//
 // compressionThreshold is the fraction of the context window at which
 // compression is triggered. 0.5 = 50%.
 const compressionThreshold = 0.5
@@ -45,9 +35,6 @@ const minRecentTurns = 6 // ~3 user messages + 3 assistant/tool messages
 // minTurnsToCompress is the minimum number of messages beyond the recent window
 // that must exist before compression is worthwhile.
 const minTurnsToCompress = 4
-
-// maxSummaryTokens is the target maximum token count for the compressed summary.
-const maxSummaryTokens = 2000
 
 // contextWindowForModel returns the known context window size for common models.
 // Returns a conservative default (128K) for unknown models.
@@ -110,11 +97,6 @@ func estimateTokens(messages []Message) int {
 		}
 	}
 	return total
-}
-
-// estimateMessageTokens estimates tokens for a single message.
-func estimateMessageTokens(msg Message) int {
-	return estimateTokens([]Message{msg})
 }
 
 // needsCompression checks if the history exceeds the compression threshold.
@@ -282,10 +264,7 @@ func saveSupervisorContext(cwd string, summary string) error {
 		return fmt.Errorf("create supervisor context dir: %w", err)
 	}
 	// Strip the summary header for the persistent file
-	content := summary
-	if strings.HasPrefix(content, "[Previous conversation summary]\n") {
-		content = strings.TrimPrefix(content, "[Previous conversation summary]\n")
-	}
+	content := strings.TrimPrefix(summary, "[Previous conversation summary]\n")
 	content = "# Supervisor Context (auto-generated)\n\n" +
 		"This file contains a compressed summary of previous conversation turns.\n" +
 		"It is automatically updated when history compression occurs.\n\n" +

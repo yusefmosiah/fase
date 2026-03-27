@@ -10,6 +10,14 @@ import (
 	"github.com/yusefmosiah/cogent/internal/adapterapi"
 )
 
+type contextKey string
+
+const (
+	ctxKeyNativeSessionID   contextKey = "native_session_id"
+	ctxKeyNativeSessionRole contextKey = "native_session_role"
+	ctxKeySupervisorSession contextKey = "supervisor_session"
+)
+
 func (s *nativeSession) runToolLoop(ctx context.Context, turnID string) error {
 	for {
 		response, err := s.client.Call(ctx, LLMRequest{
@@ -160,10 +168,10 @@ func (s *nativeSession) executeTools(ctx context.Context, calls []ToolCall) (Mes
 		go func(idx int, c ToolCall) {
 			defer wg.Done()
 			// Inject supervisor context for provenance tracking
-			toolCtx := context.WithValue(ctx, "native_session_id", s.id)
-			toolCtx = context.WithValue(toolCtx, "native_session_role", s.profile)
+			toolCtx := context.WithValue(ctx, ctxKeyNativeSessionID, s.id)
+			toolCtx = context.WithValue(toolCtx, ctxKeyNativeSessionRole, s.profile)
 			if s.profile == "supervisor" {
-				toolCtx = context.WithValue(toolCtx, "supervisor_session", true)
+				toolCtx = context.WithValue(toolCtx, ctxKeySupervisorSession, true)
 			}
 			output, err := s.registry.Execute(toolCtx, c.Name, c.Arguments)
 			if err != nil {

@@ -168,10 +168,6 @@ func ActorFromCreatedBy(createdBy string) EventActor {
 	}
 }
 
-func (b *EventBus) publish(ev WorkEvent) {
-	b.Publish(ev)
-}
-
 func (b *EventBus) Publish(ev WorkEvent) {
 	b.published.Add(1)
 	b.mu.Lock()

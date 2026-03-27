@@ -47,13 +47,6 @@ func metadataInt(metadata map[string]any, key string) (int, bool) {
 	}
 }
 
-func nonEmptySlice(value string) []string {
-	if strings.TrimSpace(value) == "" {
-		return []string{}
-	}
-	return []string{value}
-}
-
 func shouldSetPendingApproval(work core.WorkItemRecord) bool {
 	if work.ExecutionState != core.WorkExecutionStateDone {
 		return false

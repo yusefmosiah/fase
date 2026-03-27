@@ -465,6 +465,7 @@ func BuildAttestationEmail(work *core.WorkItemRecord, attestation core.Attestati
 	if verifierIdentity == "" {
 		verifierIdentity = attestation.CreatedBy
 	}
+	_ = verifierIdentity
 
 	verifierSection := fmt.Sprintf(`
 		<div class="metadata">
@@ -601,7 +602,7 @@ func escapeHTML(s string) string {
 }
 
 func buildMetadataSection(work *core.WorkItemRecord) string {
-	if work.Metadata == nil || len(work.Metadata) == 0 {
+	if len(work.Metadata) == 0 {
 		return ""
 	}
 

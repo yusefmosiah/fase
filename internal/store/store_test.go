@@ -26,11 +26,6 @@ func openTestDB(t *testing.T) *Store {
 	return s
 }
 
-func mustParseTime(s string) time.Time {
-	t, _ := time.Parse(time.RFC3339Nano, s)
-	return t
-}
-
 func sampleWorkItem(workID string) core.WorkItemRecord {
 	now := time.Now().UTC()
 	return core.WorkItemRecord{

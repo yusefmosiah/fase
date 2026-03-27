@@ -345,9 +345,3 @@ func defaultCoAgentAdapters(svc any, codexBinary string) map[string]adapterapi.L
 	return live
 }
 
-func defaultBinary(value, fallback string) string {
-	if strings.TrimSpace(value) == "" {
-		return fallback
-	}
-	return value
-}

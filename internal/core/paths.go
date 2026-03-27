@@ -282,11 +282,6 @@ func repoRootFromStartDir(startDir string) string {
 	}
 }
 
-func fileExists(path string) bool {
-	_, err := os.Stat(path)
-	return err == nil
-}
-
 func logMigration(logf func(string, ...any), format string, args ...any) {
 	if logf != nil {
 		logf(format, args...)

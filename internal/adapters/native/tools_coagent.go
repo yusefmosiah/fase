@@ -119,8 +119,8 @@ func newPostMessageTool(manager *coAgentManager) Tool {
 			if err := json.Unmarshal(raw, &in); err != nil {
 				return "", fmt.Errorf("decode post_message args: %w", err)
 			}
-			from := fallbackString(in.From, ctx.Value("native_session_id"))
-			role := fallbackString(in.Role, ctx.Value("native_session_role"))
+			from := fallbackString(in.From, ctx.Value(ctxKeyNativeSessionID))
+			role := fallbackString(in.Role, ctx.Value(ctxKeyNativeSessionRole))
 			if from == "" {
 				from = "host"
 			}
@@ -467,16 +467,6 @@ func (m *coAgentManager) removeSession(sessionID string) {
 	if co, ok := m.sessions[sessionID]; ok && co.session.SessionID() == sessionID {
 		delete(m.sessions, sessionID)
 	}
-}
-
-func (m *coAgentManager) lookup(sessionID string) (*coAgentSession, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	co, ok := m.sessions[sessionID]
-	if !ok {
-		return nil, fmt.Errorf("peer agent %q not found", sessionID)
-	}
-	return co, nil
 }
 
 func (m *coAgentManager) closeAll() error {
