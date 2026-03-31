@@ -84,20 +84,6 @@ func TestRequiresSupervisorAttentionTruthTable(t *testing.T) {
 			},
 			expected: false,
 		},
-		{
-			name: "reconciler noise does not wake",
-			ev: WorkEvent{
-				Actor: ActorReconciler,
-			},
-			expected: false,
-		},
-		{
-			name: "lease renew does not wake",
-			ev: WorkEvent{
-				Kind: WorkEventLeaseRenew,
-			},
-			expected: false,
-		},
 		// VAL-SUPERVISOR-001: Worker progress without state change is noise
 		{
 			name: "worker progress without state change does not wake",
@@ -116,17 +102,6 @@ func TestRequiresSupervisorAttentionTruthTable(t *testing.T) {
 				Actor: ActorWorker,
 				Cause: CauseJobLifecycle,
 				State: "in_progress",
-			},
-			expected: false,
-		},
-		// VAL-SUPERVISOR-001: Claim change without state change is noise
-		{
-			name: "claim change without state change does not wake",
-			ev: WorkEvent{
-				Actor:     ActorWorker,
-				Cause:     CauseClaimChanged,
-				State:     "ready",
-				PrevState: "ready",
 			},
 			expected: false,
 		},
@@ -172,7 +147,7 @@ func TestActorMCPMapping(t *testing.T) {
 		{"mcp maps to ActorMCP", "mcp", ActorMCP},
 		{"supervisor maps to ActorSupervisor", "supervisor", ActorSupervisor},
 		{"housekeeping maps to ActorHousekeeping", "housekeeping", ActorHousekeeping},
-		{"reconciler maps to ActorReconciler", "reconciler", ActorReconciler},
+		{"reconciler maps to ActorWorker", "reconciler", ActorWorker},
 		{"unknown maps to ActorWorker", "unknown", ActorWorker},
 		{"empty maps to ActorWorker", "", ActorWorker},
 	}
@@ -293,23 +268,12 @@ func TestHousekeepingOrphanRecovery(t *testing.T) {
 }
 
 // TestHousekeepingNoiseDoesNotWake verifies that non-actionable housekeeping
-// events (lease renewals, routine maintenance) do not wake the supervisor
+// events (routine maintenance) do not wake the supervisor
 // (VAL-SUPERVISOR-001: non-actionable events do not create supervisor turns).
 func TestHousekeepingNoiseDoesNotWake(t *testing.T) {
-	// Lease renewals should not wake the supervisor
-	leaseRenewEvent := WorkEvent{
-		Kind:  WorkEventLeaseRenew,
-		Cause: CauseLeaseReconcile,
-		Actor: ActorHousekeeping,
-	}
-	if leaseRenewEvent.RequiresSupervisorAttention() {
-		t.Error("lease renewal should not wake supervisor")
-	}
-
-	// Routine housekeeping without stall/orphan cause should not wake
+	// Routine housekeeping should not wake the supervisor
 	routineEvent := WorkEvent{
 		Kind:  WorkEventUpdated,
-		Cause: CauseLeaseReconcile,
 		Actor: ActorHousekeeping,
 		State: "in_progress",
 	}
@@ -693,7 +657,7 @@ func TestActorMappingsComplete(t *testing.T) {
 		{"housekeeping", ActorHousekeeping},
 		{"host", ActorHost},
 		{"service", ActorService},
-		{"reconciler", ActorReconciler},
+		{"reconciler", ActorWorker}, // reconciler no longer has dedicated actor
 		{"mcp", ActorMCP},
 		{"cli", ActorWorker}, // CLI maps to worker (it's a client like any other)
 		{"checker", ActorWorker}, // Checker is a worker role

@@ -108,13 +108,6 @@ type workReadyOptions struct {
 	includeArchived bool
 }
 
-type workClaimOptions struct {
-	claimant string
-	lease    time.Duration
-	limit    int
-	force    bool
-}
-
 type workDiscoverOptions struct {
 	title     string
 	objective string
@@ -938,7 +931,6 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	noteOpts := &workNoteOptions{}
 	showOpts := &workShowOptions{limit: 50}
 	readyOpts := &workReadyOptions{limit: 50}
-	claimOpts := &workClaimOptions{lease: 15 * time.Minute, limit: 25}
 	discoverOpts := &workDiscoverOptions{}
 	proposalListOpts := &workProposalListOptions{}
 	proposalCreateOpts := &workProposalCreateOptions{}
@@ -1146,105 +1138,6 @@ func newWorkCommand(root *rootOptions) *cobra.Command {
 	}
 	readyCmd.Flags().IntVar(&readyOpts.limit, "limit", 50, "maximum number of work items")
 	readyCmd.Flags().BoolVar(&readyOpts.includeArchived, "include-archived", false, "include archived work items")
-
-	claimCmd := &cobra.Command{
-		Use:   "claim <work-id>",
-		Short: "Claim a work item for a lease interval",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c := connectOrDie()
-			data, err := c.doPost("/api/work/"+args[0]+"/claim", service.WorkClaimRequest{
-				WorkID:        args[0],
-				Claimant:      claimOpts.claimant,
-				LeaseDuration: claimOpts.lease,
-			})
-			if err != nil {
-				return mapServiceError(err)
-			}
-			var work core.WorkItemRecord
-			if err := json.Unmarshal(data, &work); err != nil {
-				return fmt.Errorf("decoding response: %w", err)
-			}
-			return renderWorkItem(cmd, root.jsonOutput, &work)
-		},
-	}
-	claimCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
-	claimCmd.Flags().DurationVar(&claimOpts.lease, "lease", 15*time.Minute, "lease duration")
-
-	claimNextCmd := &cobra.Command{
-		Use:   "claim-next",
-		Short: "Claim the next compatible ready work item",
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c := connectOrDie()
-			data, err := c.doPost("/api/work/claim-next", service.WorkClaimNextRequest{
-				Claimant:      claimOpts.claimant,
-				LeaseDuration: claimOpts.lease,
-				Limit:         claimOpts.limit,
-			})
-			if err != nil {
-				return mapServiceError(err)
-			}
-			var work core.WorkItemRecord
-			if err := json.Unmarshal(data, &work); err != nil {
-				return fmt.Errorf("decoding response: %w", err)
-			}
-			return renderWorkItem(cmd, root.jsonOutput, &work)
-		},
-	}
-	claimNextCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime claiming the work")
-	claimNextCmd.Flags().DurationVar(&claimOpts.lease, "lease", 15*time.Minute, "lease duration")
-	claimNextCmd.Flags().IntVar(&claimOpts.limit, "limit", 25, "maximum compatible ready candidates to inspect")
-
-	releaseCmd := &cobra.Command{
-		Use:   "release <work-id>",
-		Short: "Release a work claim",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c := connectOrDie()
-			data, err := c.doPost("/api/work/"+args[0]+"/release", service.WorkReleaseRequest{
-				WorkID:    args[0],
-				Claimant:  claimOpts.claimant,
-				CreatedBy: "cli",
-				Force:     claimOpts.force,
-			})
-			if err != nil {
-				return mapServiceError(err)
-			}
-			var work core.WorkItemRecord
-			if err := json.Unmarshal(data, &work); err != nil {
-				return fmt.Errorf("decoding response: %w", err)
-			}
-			return renderWorkItem(cmd, root.jsonOutput, &work)
-		},
-	}
-	releaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime releasing the claim")
-	releaseCmd.Flags().BoolVar(&claimOpts.force, "force", false, "force release even if claimed by another worker (requires expired lease)")
-
-	renewLeaseCmd := &cobra.Command{
-		Use:   "renew-lease <work-id>",
-		Short: "Extend the lease on a claimed work item",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			c, err := connectServe()
-			if err != nil {
-				return err
-			}
-			data, err := c.doPost("/api/work/"+args[0]+"/renew-lease", service.WorkRenewLeaseRequest{
-				Claimant:      claimOpts.claimant,
-				LeaseDuration: claimOpts.lease,
-			})
-			if err != nil {
-				return err
-			}
-			var work core.WorkItemRecord
-			if err := json.Unmarshal(data, &work); err != nil {
-				return fmt.Errorf("decoding response: %w", err)
-			}
-			return renderWorkItem(cmd, root.jsonOutput, &work)
-		},
-	}
-	renewLeaseCmd.Flags().StringVar(&claimOpts.claimant, "claimant", "cli", "worker or runtime renewing the lease")
-	renewLeaseCmd.Flags().DurationVar(&claimOpts.lease, "lease", 15*time.Minute, "lease duration")
 
 	updateCmd := &cobra.Command{
 		Use:   "update <work-id>",
@@ -2141,7 +2034,7 @@ The repo file at that path remains authoritative; doc-set is an import/bootstrap
 	checkCmd.Flags().StringVar(&checkOpts.videos, "videos", "", "comma-separated video paths")
 	_ = checkCmd.MarkFlagRequired("result")
 
-	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, claimCmd, claimNextCmd, releaseCmd, renewLeaseCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, verifyCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd, checkCmd)
+	cmd.AddCommand(createCmd, showCmd, listCmd, readyCmd, updateCmd, blockCmd, archiveCmd, retryCmd, lockCmd, unlockCmd, approveCmd, rejectCmd, promoteCmd, notesCmd, noteAddCmd, privateNoteCmd, docSetCmd, childrenCmd, discoverCmd, attestCmd, verifyCmd, hydrateCmd, proposalCmd, projectionCmd, edgeCmd, checkCmd)
 	return cmd
 }
 
@@ -2962,11 +2855,6 @@ func renderWorkItem(cmd *cobra.Command, jsonOutput bool, work *core.WorkItemReco
 	}
 	if work.CurrentJobID != "" || work.CurrentSessionID != "" {
 		if err := writef(cmd.OutOrStdout(), "  session=%s job=%s\n", emptyDash(work.CurrentSessionID), emptyDash(work.CurrentJobID)); err != nil {
-			return err
-		}
-	}
-	if work.ClaimedBy != "" || work.ClaimedUntil != nil {
-		if err := writef(cmd.OutOrStdout(), "  claim=%s until=%s\n", emptyDash(work.ClaimedBy), timeStringPtr(work.ClaimedUntil)); err != nil {
 			return err
 		}
 	}

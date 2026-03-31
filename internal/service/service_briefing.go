@@ -787,7 +787,7 @@ func (s *Service) HydrateWork(ctx context.Context, req WorkHydrateRequest) (Work
 	return briefing, nil
 }
 
-// ReconcileExpiredLeases releases work items whose lease has expired.
+// RenderWorkerBriefingMarkdown renders a hydrated work briefing as markdown.
 func RenderWorkerBriefingMarkdown(r WorkHydrateResult) string {
 	var b strings.Builder
 

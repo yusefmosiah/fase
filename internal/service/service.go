@@ -411,30 +411,6 @@ type WorkShowResult struct {
 	Docs         []core.DocContentRecord   `json:"docs,omitempty"`
 }
 
-type WorkClaimRequest struct {
-	WorkID        string        `json:"work_id"`
-	Claimant      string        `json:"claimant,omitempty"`
-	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
-}
-
-type WorkClaimNextRequest struct {
-	Claimant      string        `json:"claimant,omitempty"`
-	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
-	Limit         int           `json:"limit,omitempty"`
-}
-
-type WorkReleaseRequest struct {
-	WorkID    string `json:"work_id,omitempty"`
-	Claimant  string `json:"claimant,omitempty"`
-	CreatedBy string `json:"created_by,omitempty"`
-	Force     bool   `json:"force,omitempty"`
-}
-
-type WorkRenewLeaseRequest struct {
-	WorkID        string        `json:"work_id,omitempty"`
-	Claimant      string        `json:"claimant,omitempty"`
-	LeaseDuration time.Duration `json:"lease_duration,omitempty"`
-}
 
 // WorkResetRequest resets a work item to start a new attempt epoch.
 // This clears stale state and begins a fresh attempt while preserving history.

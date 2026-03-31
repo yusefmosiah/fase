@@ -10,10 +10,7 @@ type WorkEventKind string
 const (
 	WorkEventCreated       WorkEventKind = "work_created"
 	WorkEventUpdated       WorkEventKind = "work_updated"
-	WorkEventClaimed       WorkEventKind = "work_claimed"
-	WorkEventReleased      WorkEventKind = "work_released"
 	WorkEventAttested      WorkEventKind = "work_attested"
-	WorkEventLeaseRenew    WorkEventKind = "work_lease_renewed"
 	WorkEventCheckRecorded WorkEventKind = "check_recorded"
 )
 
@@ -26,7 +23,6 @@ const (
 	ActorHousekeeping EventActor = "housekeeping"
 	ActorHost         EventActor = "host"
 	ActorService      EventActor = "service"
-	ActorReconciler   EventActor = "reconciler"
 	ActorMCP          EventActor = "mcp"
 )
 
@@ -43,9 +39,7 @@ const (
 	CauseHousekeepingStall   EventCause = "housekeeping_stall"
 	CauseHousekeepingOrphan  EventCause = "housekeeping_orphan"
 	CauseSupervisorMutation  EventCause = "supervisor_mutation"
-	CauseLeaseReconcile      EventCause = "lease_reconcile"
-	CauseHostManual          EventCause = "host_manual"
-	CauseClaimChanged        EventCause = "claim_changed"
+	CauseHostManual EventCause = "host_manual"
 	CauseJobLifecycle        EventCause = "job_lifecycle"
 )
 
@@ -72,11 +66,8 @@ func (ev WorkEvent) RequiresSupervisorAttention() bool {
 	if ev.Cause == CauseHousekeepingStall || ev.Cause == CauseHousekeepingOrphan {
 		return true
 	}
-	// Housekeeping, lease maintenance, and job lifecycle are noise.
-	if ev.Actor == ActorHousekeeping || ev.Actor == ActorReconciler {
-		return false
-	}
-	if ev.Kind == WorkEventLeaseRenew {
+	// Housekeeping and job lifecycle are noise.
+	if ev.Actor == ActorHousekeeping {
 		return false
 	}
 	// Worker progress without a state change is noise — supervisor only cares
@@ -86,10 +77,6 @@ func (ev WorkEvent) RequiresSupervisorAttention() bool {
 	}
 	// Job lifecycle events (started, running) are noise unless terminal.
 	if ev.Cause == CauseJobLifecycle && ev.State == "in_progress" {
-		return false
-	}
-	// Claim changes without state transition are noise.
-	if ev.Cause == CauseClaimChanged && ev.State == ev.PrevState {
 		return false
 	}
 	// Everything else is actionable: terminal state changes, attestations,
@@ -131,18 +118,6 @@ func (b *EventBus) Unsubscribe(ch chan WorkEvent) {
 	}
 }
 
-// actorFromClaimant maps a claimant string to an EventActor.
-func actorFromClaimant(claimant string) EventActor {
-	switch claimant {
-	case "supervisor":
-		return ActorSupervisor
-	case "housekeeping":
-		return ActorHousekeeping
-	default:
-		return ActorWorker
-	}
-}
-
 // ActorFromCreatedBy maps a createdBy string to an EventActor.
 // Empty string defaults to ActorWorker to match canonical test expectations.
 // True service-generated paths must explicitly pass CreatedBy="service" to
@@ -151,8 +126,6 @@ func ActorFromCreatedBy(createdBy string) EventActor {
 	switch createdBy {
 	case "housekeeping":
 		return ActorHousekeeping
-	case "reconciler":
-		return ActorReconciler
 	case "supervisor":
 		return ActorSupervisor
 	case "mcp":

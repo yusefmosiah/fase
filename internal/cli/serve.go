@@ -6,7 +6,6 @@ import (
 	"crypto/sha1"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io/fs"
 	"net"
@@ -199,7 +198,7 @@ func newServeCommand(root *rootOptions) *cobra.Command {
 		Use:   "serve",
 		Short: "Run the cogent service: web UI, API, and housekeeping",
 		Long: `Starts the cogent service: mind-graph web UI, HTTP API, and background
-housekeeping (lease reconciliation, stall detection).
+housekeeping (stall detection, WAL checkpointing).
 
 By default, no work is auto-dispatched. Use --auto to enable autonomous
 claiming and execution of ready work items.
@@ -343,7 +342,7 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 
 	var wg sync.WaitGroup
 
-	// Always run housekeeping (reconcile leases, detect stalls)
+	// Always run housekeeping (detect stalls, WAL checkpoints)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
@@ -425,7 +424,6 @@ func runServe(cmd *cobra.Command, root *rootOptions, port int, host string, auto
 }
 
 // runHousekeeping runs periodic maintenance without dispatching work:
-// - Reconcile expired leases (orphaned claims)
 // - Detect stalled jobs (no output for 10 minutes)
 // - Dispatch verification for completed jobs (from cogent dispatch)
 // loadDotEnv reads a .env file and sets environment variables.
@@ -461,66 +459,6 @@ func loadDotEnv(paths ...string) {
 	}
 }
 
-// createWorktree creates a git worktree for isolated worker execution.
-// Returns the worktree path. Branch name: cogent/work/<work-id>.
-func createWorktree(repoRoot, workID string) (string, error) {
-	worktreeDir := filepath.Join(repoRoot, ".cogent", "worktrees", workID)
-	branch := "cogent/work/" + workID
-
-	// Clean up stale branch/worktree from previous failed dispatch.
-	rmCmd := exec.Command("git", "worktree", "remove", "--force", worktreeDir)
-	rmCmd.Dir = repoRoot
-	_ = rmCmd.Run()
-	delCmd := exec.Command("git", "branch", "-D", branch)
-	delCmd.Dir = repoRoot
-	_ = delCmd.Run()
-
-	cmd := exec.Command("git", "worktree", "add", "-b", branch, worktreeDir)
-	cmd.Dir = repoRoot
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return "", fmt.Errorf("git worktree add: %s: %w", strings.TrimSpace(string(out)), err)
-	}
-	return worktreeDir, nil
-}
-
-// mergeWorktree merges a worktree branch back to main and cleans up.
-func mergeWorktree(repoRoot, workID string) error {
-	branch := "cogent/work/" + workID
-	worktreeDir := filepath.Join(repoRoot, ".cogent", "worktrees", workID)
-
-	// Merge branch into current HEAD (main).
-	mergeCmd := exec.Command("git", "merge", "--no-ff", "-m", fmt.Sprintf("cogent: merge %s", workID), branch)
-	mergeCmd.Dir = repoRoot
-	if out, err := mergeCmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git merge %s: %s: %w", branch, strings.TrimSpace(string(out)), err)
-	}
-
-	// Remove worktree.
-	rmCmd := exec.Command("git", "worktree", "remove", worktreeDir)
-	rmCmd.Dir = repoRoot
-	_ = rmCmd.Run() // best-effort
-
-	// Delete branch.
-	delCmd := exec.Command("git", "branch", "-d", branch)
-	delCmd.Dir = repoRoot
-	_ = delCmd.Run() // best-effort
-
-	return nil
-}
-
-// cleanupWorktree removes a worktree without merging (for failed work).
-func cleanupWorktree(repoRoot, workID string) {
-	worktreeDir := filepath.Join(repoRoot, ".cogent", "worktrees", workID)
-	branch := "cogent/work/" + workID
-
-	rmCmd := exec.Command("git", "worktree", "remove", "--force", worktreeDir)
-	rmCmd.Dir = repoRoot
-	_ = rmCmd.Run()
-
-	delCmd := exec.Command("git", "branch", "-D", branch)
-	delCmd.Dir = repoRoot
-	_ = delCmd.Run()
-}
 
 func digestInterval() time.Duration {
 	if v := os.Getenv("DIGEST_INTERVAL"); v != "" {
@@ -548,9 +486,6 @@ func runHousekeeping(ctx context.Context, svc *service.Service, cwd string, hub 
 			// Periodic WAL checkpoint to prevent unbounded WAL growth
 			// and ensure durability even if the process crashes.
 			svc.CheckpointWAL()
-
-			// Reconcile expired leases (safe every tick)
-			_, _ = svc.ReconcileExpiredLeases(ctx)
 
 			// Check for stalled jobs and completed jobs needing verification
 			rawDir := filepath.Join(cwd, ".cogent", "raw", "stdout")
@@ -696,28 +631,8 @@ func runChangeWatcher(ctx context.Context, svc *service.Service, hub *wsHub, rep
 					hub.broadcast("job_started", event)
 				case "done":
 					hub.broadcast("job_completed", event)
-					// Merge worktree branch into main after attestation pass.
-					if ev.WorkID != "" && repoRoot != "" {
-						go func(workID string) {
-							worktreeDir := filepath.Join(repoRoot, ".cogent", "worktrees", workID)
-							if _, statErr := os.Stat(worktreeDir); statErr == nil {
-								if mergeErr := mergeWorktree(repoRoot, workID); mergeErr != nil {
-									fmt.Fprintf(os.Stderr, "worktree merge failed for %s: %v — cleaning up\n", workID, mergeErr)
-									cleanupWorktree(repoRoot, workID)
-								}
-							}
-						}(ev.WorkID)
-					}
 				case "failed", "cancelled":
-					// Cleanup worktree without merging on failure.
-					if ev.WorkID != "" && repoRoot != "" {
-						go func(workID string) {
-							worktreeDir := filepath.Join(repoRoot, ".cogent", "worktrees", workID)
-							if _, statErr := os.Stat(worktreeDir); statErr == nil {
-								cleanupWorktree(repoRoot, workID)
-							}
-						}(ev.WorkID)
-					}
+					// no-op: broadcast already sent above
 				}
 			}
 
@@ -775,7 +690,6 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			}
 		}
 		includeArchived := r.URL.Query().Get("include_archived") == "1"
-		_, _ = svc.ReconcileExpiredLeases(r.Context())
 		items, err := svc.ReadyWork(r.Context(), limit, includeArchived)
 		if err != nil {
 			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
@@ -846,26 +760,6 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			return
 		}
 		work, err := svc.CreateWork(r.Context(), req)
-		if err != nil {
-			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		writeJSONHTTP(w, 200, work)
-	})
-
-	// Claim next ready work item
-	mux.HandleFunc("/api/work/claim-next", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
-			return
-		}
-		var req service.WorkClaimNextRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
-			return
-		}
-		_, _ = svc.ReconcileExpiredLeases(r.Context())
-		work, err := svc.ClaimNextWork(r.Context(), req)
 		if err != nil {
 			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
 			return
@@ -1031,7 +925,7 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			return
 		}
 
-		// Concurrency guard — worktrees allow parallel workers, cap at 4.
+		// Concurrency guard — cap parallel workers at 4.
 		const maxParallelWorkers = 4
 		if !req.Force {
 			inProgress, _ := svc.ListWork(r.Context(), service.WorkListRequest{
@@ -1093,30 +987,9 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 		}
 		briefingJSON := []byte(service.RenderWorkerBriefingMarkdown(briefing))
 
-		// Claim and run
-		_, _ = svc.ClaimWork(r.Context(), service.WorkClaimRequest{
-			WorkID:        workID,
-			Claimant:      "dispatch",
-			LeaseDuration: 30 * time.Minute,
-		})
-
-		// Create worktree for isolated worker execution.
-		workerCWD := cwd
-		worktreePath := ""
-		if item.Work.Kind == "implement" {
-			wt, wtErr := createWorktree(cwd, workID)
-			if wtErr != nil {
-				// Log but don't fail — fall back to main.
-				fmt.Fprintf(os.Stderr, "worktree create failed for %s: %v (falling back to main)\n", workID, wtErr)
-			} else {
-				workerCWD = wt
-				worktreePath = wt
-			}
-		}
-
 		runResult, runErr := svc.Run(r.Context(), service.RunRequest{
 			Adapter: adapter,
-			CWD:     workerCWD,
+			CWD:     cwd,
 			Prompt:  string(briefingJSON),
 			Model:   model,
 			WorkID:  workID,
@@ -1128,11 +1001,10 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 		}
 
 		resp := map[string]any{
-			"work_id":  workID,
-			"title":    item.Work.Title,
-			"adapter":  adapter,
-			"model":    model,
-			"worktree": worktreePath,
+			"work_id": workID,
+			"title":   item.Work.Title,
+			"adapter": adapter,
+			"model":   model,
 		}
 		if runResult != nil {
 			resp["job_id"] = runResult.Job.JobID
@@ -1544,65 +1416,6 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 				return
 			}
 			writeJSONHTTP(w, 200, proposal)
-		case "claim":
-			if r.Method != http.MethodPost {
-				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
-				return
-			}
-			var req service.WorkClaimRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
-				return
-			}
-			req.WorkID = workID
-			work, err := svc.ClaimWork(r.Context(), req)
-			if err != nil {
-				if errors.Is(err, service.ErrBusy) {
-					writeJSONHTTP(w, 409, map[string]string{"error": err.Error()})
-				} else {
-					writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
-				}
-				return
-			}
-			writeJSONHTTP(w, 200, work)
-		case "release":
-			if r.Method != http.MethodPost {
-				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
-				return
-			}
-			var req service.WorkReleaseRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
-				return
-			}
-			req.WorkID = workID
-			work, err := svc.ReleaseWork(r.Context(), req)
-			if err != nil {
-				if errors.Is(err, service.ErrBusy) {
-					writeJSONHTTP(w, 409, map[string]string{"error": err.Error()})
-				} else {
-					writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
-				}
-				return
-			}
-			writeJSONHTTP(w, 200, work)
-		case "renew-lease":
-			if r.Method != http.MethodPost {
-				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
-				return
-			}
-			var req service.WorkRenewLeaseRequest
-			if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-				writeJSONHTTP(w, 400, map[string]string{"error": "invalid request: " + err.Error()})
-				return
-			}
-			req.WorkID = workID
-			work, err := svc.RenewWorkLease(r.Context(), req)
-			if err != nil {
-				writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
-				return
-			}
-			writeJSONHTTP(w, 200, work)
 		case "verify":
 			if r.Method != http.MethodPost {
 				writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
@@ -2254,23 +2067,6 @@ func registerAPIHandlers(mux *http.ServeMux, svc *service.Service, cwd string, h
 			return
 		}
 		writeJSONHTTP(w, 200, result)
-	})
-
-	// POST /api/reconcile — release orphaned work items with expired leases
-	mux.HandleFunc("/api/reconcile", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost {
-			writeJSONHTTP(w, 405, map[string]string{"error": "method not allowed"})
-			return
-		}
-		ids, err := svc.ReconcileOnStartup(r.Context())
-		if err != nil {
-			writeJSONHTTP(w, 500, map[string]string{"error": err.Error()})
-			return
-		}
-		if ids == nil {
-			ids = []string{}
-		}
-		writeJSONHTTP(w, 200, map[string]any{"reconciled_work_ids": ids, "count": len(ids)})
 	})
 
 	// GET /api/dashboard — show live supervisor and work graph status

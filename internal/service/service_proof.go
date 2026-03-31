@@ -444,22 +444,6 @@ func inferArtifactKind(path string) string {
 	}
 }
 
-func normalizeWorkClaimError(workID string, err error) error {
-	if errors.Is(err, store.ErrNotFound) {
-		return normalizeStoreError("work", workID, err)
-	}
-	if errors.Is(err, store.ErrBusy) {
-		return fmt.Errorf("%w: work %s is claimed by another worker", ErrBusy, workID)
-	}
-	return err
-}
-
-func timeStringPtr(value *time.Time) string {
-	if value == nil {
-		return ""
-	}
-	return value.UTC().Format(time.RFC3339Nano)
-}
 
 func streamFromRawRef(rawRef string) string {
 	parts := strings.Split(filepath.ToSlash(rawRef), "/")
